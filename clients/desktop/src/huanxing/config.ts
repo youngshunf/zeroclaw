@@ -1,0 +1,133 @@
+/**
+ * 唤星桌面端配置
+ *
+ * 所有环境相关的地址、默认值集中在此文件管理。
+ * 后期修改只需改这一个文件。
+ */
+
+export const HUANXING_CONFIG = {
+  /** 唤星后端服务基地址（本地开发） */
+  backendBaseUrl: 'http://127.0.0.1:8020',
+
+  /** 唤星云服务基地址（线上） */
+  cloudBaseUrl: 'https://api.huanxing.dcfuture.cn',
+
+  /** LLM 网关基地址（从 backendBaseUrl 派生） */
+  get llmGatewayUrl() { return `${this.backendBaseUrl}/api/v1/llm/proxy`; },
+
+  /** LLM 网关 v1 路径（用于 ZeroClaw openai_compat provider） */
+  get llmGatewayV1() { return `${this.backendBaseUrl}/api/v1/llm/proxy/v1`; },
+
+  /** 默认 LLM 模型 */
+  defaultModel: 'claude-sonnet-4-6',
+
+  /** 默认 LLM provider 名称（从 backendBaseUrl 派生） */
+  get defaultProvider() { return `custom:${this.backendBaseUrl}/api/v1/llm/proxy`; },
+
+  /** 默认温度 */
+  defaultTemperature: 0.7,
+
+  /** ZeroClaw sidecar 本地地址（唤星专属端口） */
+  sidecarBaseUrl: 'http://localhost:42620',
+
+  /** 产品名称 */
+  productName: '唤星',
+
+  /** Agent 默认名称 */
+  defaultAgentName: '小星',
+} as const;
+
+/** 登录成功后后端返回的完整数据 */
+export interface HuanxingLoginData {
+  access_token: string;
+  access_token_expire_time: string;
+  refresh_token: string;
+  refresh_token_expire_time: string;
+  llm_token: string;
+  gateway_token: string;
+  is_new_user: boolean;
+  user: {
+    uuid: string;
+    username: string;
+    nickname: string;
+    phone: string;
+    email?: string;
+    avatar?: string;
+    is_new_user: boolean;
+  };
+}
+
+/** 本地存储的唤星会话信息 */
+export interface HuanxingSession {
+  accessToken: string;
+  accessTokenExpireTime: string;   // ISO datetime
+  refreshToken: string;
+  refreshTokenExpireTime: string;  // ISO datetime
+  llmToken: string;
+  gatewayToken: string;
+  user: HuanxingLoginData['user'];
+  isNewUser: boolean;
+  loginAt: string;  // ISO timestamp
+}
+
+const SESSION_KEY = 'huanxing_session';
+
+/** 保存唤星会话（用 localStorage 持久化，关标签页不丢） */
+export function saveHuanxingSession(data: HuanxingLoginData): HuanxingSession {
+  const session: HuanxingSession = {
+    accessToken: data.access_token,
+    accessTokenExpireTime: data.access_token_expire_time,
+    refreshToken: data.refresh_token,
+    refreshTokenExpireTime: data.refresh_token_expire_time,
+    llmToken: data.llm_token,
+    gatewayToken: data.gateway_token,
+    user: data.user,
+    isNewUser: data.is_new_user,
+    loginAt: new Date().toISOString(),
+  };
+  try {
+    localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+  } catch {
+    // ignore
+  }
+  return session;
+}
+
+/** 读取唤星会话 */
+export function getHuanxingSession(): HuanxingSession | null {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as HuanxingSession;
+  } catch {
+    return null;
+  }
+}
+
+/** 更新 access token（refresh 后调用） */
+export function updateAccessToken(newToken: string, expireTime: string, newRefreshToken?: string, newRefreshExpireTime?: string): void {
+  const session = getHuanxingSession();
+  if (!session) return;
+  session.accessToken = newToken;
+  session.accessTokenExpireTime = expireTime;
+  if (newRefreshToken) {
+    session.refreshToken = newRefreshToken;
+  }
+  if (newRefreshExpireTime) {
+    session.refreshTokenExpireTime = newRefreshExpireTime;
+  }
+  try {
+    localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+  } catch {
+    // ignore
+  }
+}
+
+/** 清除唤星会话 */
+export function clearHuanxingSession(): void {
+  try {
+    localStorage.removeItem(SESSION_KEY);
+  } catch {
+    // ignore
+  }
+}

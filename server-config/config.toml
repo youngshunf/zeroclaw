@@ -1,0 +1,152 @@
+# ═══════════════════════════════════════════════════════════════
+# ZeroClaw HuanXing — 本地测试配置
+# 路径: huanxing-zeroclaw/server-config/config.toml
+# ═══════════════════════════════════════════════════════════════
+
+workspace_dir = "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-zeroclaw/server-config/guardian"
+
+api_key = "sk-cf-1qwouDM8SdBbSRca_Us89hUMkW1zOwSzUrl32TxsNWE"
+default_provider = "anthropic-custom:https://llm.dcfuture.cn"
+default_model = "claude-sonnet-4-6"
+default_temperature = 0.7
+
+[model_providers]
+openai_compat = { api_key = "sk-cf-1qwouDM8SdBbSRca_Us89hUMkW1zOwSzUrl32TxsNWE", base_url = "https://llm.dcfuture.cn/v1" }
+
+# ── Agent 核心设置 ────────────────────────────────────────────
+[agent]
+compact_context = true          # 用大模型，不需要压缩模式
+max_tool_iterations = 15
+max_history_messages = 100       # 压缩阈值提高到100
+
+# ── 全局 Session 默认 ────────────────────────────────────────
+[agent.session]
+backend = "sqlite"               # 全局启用 SQLite 持久化
+strategy = "per-sender"          # 每用户独立会话
+ttl_seconds = 604800             # 7天
+max_messages = 200               # 每会话保留200条
+
+# ── 记忆 ──────────────────────────────────────────────────────
+[memory]
+backend = "sqlite"
+auto_save = true
+hygiene_enabled = true
+archive_after_days = 14
+purge_after_days = 90
+conversation_retention_days = 90
+snapshot_enabled = true
+snapshot_on_hygiene = true
+auto_hydrate = true
+
+# ── 向量记忆（语义搜索） ──────────────────────────────────────
+embedding_provider = "custom:https://llm.dcfuture.cn/v1"
+embedding_model = "text-embedding-v4"
+embedding_dimensions = 1024
+vector_weight = 0.7
+keyword_weight = 0.3
+min_relevance_score = 0.4
+embedding_cache_size = 2000
+chunk_max_tokens = 512
+
+# ── HuanXing 多租户 ──────────────────────────────────────────
+[huanxing]
+enabled = true
+db_path = "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-zeroclaw/server-config/data/users.db"
+agents_dir = "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-zeroclaw/server-config/agents"
+guardian_workspace = "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-zeroclaw/server-config/guardian"
+admin_workspace = "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-zeroclaw/server-config/admin"
+admin_channels = ["feishu"]
+templates_dir = "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-zeroclaw/templates/huanxing"
+default_model = "claude-sonnet-4-6"
+default_provider = "anthropic-custom:https://llm.dcfuture.cn"
+default_template = "finance"
+guardian_only_tools = ["hx_register_user", "hx_invalidate_cache", "hx_local_update_user", "hx_local_list_users", "hx_local_stats"]
+
+api_base_url = "https://api.huanxing.dcfuture.cn"
+agent_key = "wNYPBNNl61kwVLWgFW7N1yFJKb4yCqJxjSKy__RtG94"
+server_id = "huanxing-local-test"
+hasn_base_url = "https://api.huanxing.dcfuture.cn"
+common_skills_dir = "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-zeroclaw/server-config/common-skills"
+hub_dir = "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-hub"
+
+# ── 多租户心跳（Agent 向后端注册和保活）──────────────────────
+[huanxing.tenant_heartbeat]
+enabled = true
+scan_interval_minutes = 5          # 测试用：5分钟扫描一次（生产建议30）
+max_concurrent = 2                 # 本地测试并发数
+per_tenant_timeout_secs = 60       # 单租户超时
+
+# ── 技能 ──────────────────────────────────────────────────────
+[skills]
+allow_scripts = true
+prompt_injection_mode = "compact"
+open_skills_enabled = false
+open_skills_dir = "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-zeroclaw/server-config/huanxing-skills"
+
+
+# ── 网关 ──────────────────────────────────────────────────────
+[gateway]
+port = 42618
+
+# ── 频道 ──────────────────────────────────────────────────────
+[channels_config]
+cli = true
+message_timeout_secs = 300
+
+# 飞书渠道 — WebSocket 模式（从115服务器获取的凭证）
+[channels_config.feishu]
+app_id = "cli_a91dacdaca38dcd2"
+app_secret = "tjX2bliFmFB5wsJd9jiL1gDOuDT0Llha"
+allowed_users = ["*"]
+receive_mode = "websocket"
+
+# NapCat QQ渠道 — 通过SSH隧道连接115服务器的NapCat Docker（QQ: 2060719493）
+# SSH隧道: ssh -f -N -L 3002:127.0.0.1:3002 root@115.191.47.200
+# HTTP API通过隧道 3001，WebSocket通过隧道 3002
+[channels_config.napcat]
+websocket_url = "ws://127.0.0.1:3002"
+api_base_url = "http://127.0.0.1:3001"
+allowed_users = ["*"]
+
+# ── 自治与安全（全局默认）──────────────────────────────────────
+[autonomy]
+level = "full"
+workspace_only = false
+allowed_commands = []
+forbidden_paths = []
+max_actions_per_hour = 1000
+max_cost_per_day_cents = 10000
+auto_approve = [
+  "file_read", "memory_recall",
+  "hx_lookup_sender", "hx_local_find_user", "hx_send_sms", "hx_verify_sms",
+  "hx_register_user", "hx_local_bind_channel", "hx_invalidate_cache",
+  "hx_get_user", "hx_check_quota", "hx_get_subscription", "hx_usage_stats",
+  "hx_local_list_users", "hx_local_update_user", "hx_local_stats",
+  "hasn_send", "hasn_contacts", "hasn_add_friend", "hasn_inbox", "hasn_respond_request",
+]
+
+# ── 安全 ──────────────────────────────────────────────────────
+[security]
+
+[security.otp]
+enabled = false
+
+[security.outbound_leak_guard]
+enabled = true
+action = "redact"
+sensitivity = 0.5
+
+# ── 心跳（全局调度器）────────────────────────────────────────
+[heartbeat]
+enabled = true
+interval_minutes = 60
+max_tasks_per_tick = 3
+
+# ── 代理（本地 Clash 7890）──────────────────────────────────
+[proxy]
+enabled = false
+
+# ── 搜索 ──────────────────────────────────────────────────────
+[web_search]
+enabled = true
+provider = "tavily"

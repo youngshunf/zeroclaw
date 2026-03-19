@@ -1,0 +1,45 @@
+# HuanXing ZeroClaw 配置
+# 路径: /opt/huanxing/zeroclaw/config/config.toml
+
+workspace_dir = "/opt/huanxing/zeroclaw/workspace/guardian"
+default_provider = "deepseek"
+default_model = "deepseek-chat"
+default_temperature = 0.7
+
+[huanxing]
+enabled = true
+db_path = "/opt/huanxing/data/users.db"
+agents_dir = "/opt/huanxing/zeroclaw/workspace/agents"
+guardian_workspace = "/opt/huanxing/zeroclaw/workspace/guardian"
+default_model = "deepseek-chat"
+default_provider = "deepseek"
+default_template = "finance"
+guardian_only_tools = ["hx_register_user", "hx_invalidate_cache"]
+
+[huanxing.templates.finance]
+soul = "/opt/huanxing/zeroclaw/templates/finance/SOUL.md"
+model = "deepseek-chat"
+provider = "deepseek"
+
+[huanxing.templates.assistant]
+soul = "/opt/huanxing/zeroclaw/templates/assistant/SOUL.md"
+model = "deepseek-chat"
+provider = "deepseek"
+
+[channels_config]
+message_timeout_secs = 300
+
+[channels_config.napcat]
+ws_url = "ws://127.0.0.1:3001"
+allowed_users = ["*"]
+
+[memory]
+backend = "sqlite"
+auto_save = true
+
+[agent]
+max_tool_iterations = 15
+
+[security]
+[security.otp]
+enabled = false

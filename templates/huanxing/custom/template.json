@@ -1,0 +1,41 @@
+{
+  "id": "custom",
+  "name": "自定义",
+  "emoji": "✨",
+  "description": "一张白纸，由你定义——基于 OpenClaw 官方原版模板，自己决定 AI 是谁、怎么说话、能做什么",
+  "tags": [
+    "自定义",
+    "DIY",
+    "原版",
+    "OpenClaw"
+  ],
+  "model": "anthropic/claude-sonnet-4-6",
+  "skills": [
+    "tavily-search",
+    "summarize",
+    "best-image-generation",
+    "data-analysis",
+    "self-improving",
+    "truth-search",
+    "scrapling"
+  ],
+  "tools_allow": [
+    "huanxing_get_user",
+    "huanxing_get_subscription",
+    "huanxing_check_quota",
+    "huanxing_usage_stats",
+    "huanxing_set_secret",
+    "huanxing_list_secrets",
+    "huanxing_delete_secret"
+  ],
+  "files": [
+    "SOUL.md",
+    "IDENTITY.md",
+    "AGENTS.md",
+    "USER.md.template",
+    "TOOLS.md",
+    "HEARTBEAT.md",
+    "BOOTSTRAP.md",
+    "MEMORY.md"
+  ]
+}

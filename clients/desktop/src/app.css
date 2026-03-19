@@ -1,0 +1,18 @@
+/*
+ * 唤星桌面端 — 统一 CSS 入口
+ * 包含 Tailwind + @source 指向 web/src + 主题变量
+ *
+ * app.css 位于 clients/desktop/src/
+ * web/src 位于 zeroclaw/web/src/ → 相对路径 ../../../web/src
+ */
+@import "tailwindcss";
+@source "../../../web/src";
+
+@theme {
+  --color-electric-50: #eaf3ff;
+  --color-electric-100: #d8e8ff;
+  --color-electric-300: #87b8ff;
+  --color-electric-500: #2f8fff;
+  --color-electric-700: #0f57dd;
+  --color-electric-900: #031126;
+}

@@ -1,0 +1,144 @@
+# ═══════════════════════════════════════════════════════════════
+# Guardian — 迎宾 Agent，负责注册引导
+# 路径: server-config/guardian/config.toml
+# ═══════════════════════════════════════════════════════════════
+
+default_provider = "anthropic-custom:https://llm.dcfuture.cn"
+default_model = "claude-sonnet-4-6"
+default_temperature = 0.7
+api_key = "sk-cf-1qwouDM8SdBbSRca_Us89hUMkW1zOwSzUrl32TxsNWE"
+
+[model_providers.openai_compat]
+base_url = "https://llm.dcfuture.cn/v1"
+api_key = "sk-cf-1qwouDM8SdBbSRca_Us89hUMkW1zOwSzUrl32TxsNWE"
+requires_openai_auth = false
+
+# ── Agent ─────────────────────────────────────────────────────
+[agent]
+compact_context = true           # 压缩上下文，减少 prompt tokens
+max_tool_iterations = 10
+max_history_messages = 50        # Guardian 对话较短，50条够用
+
+[agent.session]
+backend = "sqlite"               # 持久化！用户中途离开再回来能继续注册
+strategy = "per-sender"
+ttl_seconds = 86400              # 1天 — Guardian 对话不需要太长
+max_messages = 100
+
+# ── 记忆（积累注册经验）──────────────────────────────────────
+[memory]
+backend = "sqlite"
+auto_save = true
+auto_hydrate = true
+hygiene_enabled = true
+archive_after_days = 14
+purge_after_days = 90
+
+# ── 向量记忆 ──────────────────────────────────────────────────
+embedding_provider = "custom:https://llm.dcfuture.cn/v1"
+embedding_model = "text-embedding-v4"
+embedding_dimensions = 1024
+vector_weight = 0.7
+keyword_weight = 0.3
+min_relevance_score = 0.4
+
+# ── 自治与安全 ────────────────────────────────────────────────
+[autonomy]
+level = "supervised"
+workspace_only = true
+allowed_commands = []
+forbidden_paths = [
+    "/etc", "/root", "/home", "/usr", "/bin", "/sbin",
+    "/lib", "/opt", "/boot", "/dev", "/proc", "/sys",
+    "/var", "/tmp", "/mnt",
+    "~/.ssh", "~/.gnupg", "~/.aws", "~/.config", "~/.zeroclaw",
+]
+max_actions_per_hour = 200
+max_cost_per_day_cents = 2000
+block_high_risk_commands = true
+auto_approve = [
+    "file_read", "memory_recall", "memory_store",
+    "hx_lookup_sender", "hx_local_find_user",
+    "hx_send_sms", "hx_verify_sms",
+    "hx_register_user", "hx_local_bind_channel",
+    "hx_invalidate_cache",
+]
+non_cli_excluded_tools = [
+    # ── 系统工具 ──
+    "shell", "process", "git_operations",
+    "browser", "browser_open",
+    "http_request", "web_fetch", "web_search",
+    "schedule", "screenshot", "image_info",
+    "proxy_config", "web_search_config", "web_access_config",
+    "model_routing_config", "channel_ack_config", "quota_tools",
+    "composio", "delegate",
+    "cron_add", "cron_list", "cron_remove", "cron_update", "cron_run", "cron_runs",
+    "file_write", "file_create",
+    # ── 唤星非注册工具（Guardian 只做注册引导）──
+    "hx_get_user", "hx_check_quota", "hx_get_subscription", "hx_usage_stats",
+    "hx_local_list_users", "hx_local_update_user", "hx_local_stats",
+    # ── HASN 社交 ──
+    "hasn_send", "hasn_contacts", "hasn_add_friend", "hasn_inbox", "hasn_respond_request",
+    # ── 文档工具 ──
+    "hx_folder_tree", "hx_folder_create", "hx_folder_delete", "hx_folder_move",
+    "hx_doc_list", "hx_doc_get", "hx_doc_create", "hx_doc_update", "hx_doc_delete", "hx_doc_move", "hx_doc_share",
+    # ── 技能市场 ──
+    "hx_skill_search", "hx_skill_info", "hx_skill_install", "hx_skill_uninstall", "hx_skill_list", "hx_skill_update",
+    # ── Secret 管理 ──
+    "hx_set_secret", "hx_list_secrets", "hx_delete_secret",
+]
+
+# ── 安全 ──────────────────────────────────────────────────────
+[security]
+canary_tokens = true
+semantic_guard = false
+
+[security.otp]
+enabled = false
+
+[security.outbound_leak_guard]
+enabled = true
+action = "redact"
+sensitivity = 0.8
+
+# ── 心跳 ─────────────────────────────────────────────────────
+[heartbeat]
+enabled = true
+interval_minutes = 120           # 2小时一次
+max_tasks_per_tick = 2
+
+# ── Cron ──────────────────────────────────────────────────────
+[cron]
+enabled = false
+
+# ── 禁用功能 ──────────────────────────────────────────────────
+[browser]
+enabled = false
+
+[http_request]
+enabled = false
+
+[web_fetch]
+enabled = false
+
+[web_search]
+enabled = false
+
+[proxy]
+enabled = false
+
+[composio]
+enabled = false
+
+[mcp]
+enabled = false
+
+[wasm]
+enabled = false
+
+[plugins]
+enabled = false
+
+[channels_config]
+cli = false
+message_timeout_secs = 300

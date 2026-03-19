@@ -1,0 +1,102 @@
+/**
+ * 唤星主题样式
+ *
+ * 品牌色：星紫 #7C3AED / 星蓝 #4F46E5 / 极光青 #06B6D4
+ * 深空黑 #050816
+ */
+
+/* ─── 自定义动画 ─── */
+@keyframes pulse-slow {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.6;
+  }
+  50% {
+    transform: scale(1.15);
+    opacity: 1;
+  }
+}
+@keyframes pulse-medium {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.5;
+  }
+  50% {
+    transform: scale(1.12);
+    opacity: 0.85;
+  }
+}
+@keyframes pulse-fast {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.85;
+  }
+  50% {
+    transform: scale(1.4);
+    opacity: 1;
+  }
+}
+
+.animate-pulse-slow {
+  animation: pulse-slow 3s ease-in-out infinite;
+}
+.animate-pulse-medium {
+  animation: pulse-medium 2.2s ease-in-out infinite;
+}
+.animate-pulse-fast {
+  animation: pulse-fast 1.5s ease-in-out infinite;
+}
+
+/* ─── 登录卡片增强 ─── */
+.huanxing-login-card {
+  background: linear-gradient(160deg, rgba(10,17,40,0.85), rgba(5,8,22,0.92));
+  border: 1px solid rgba(30,45,90,0.6);
+  box-shadow:
+    0 0 80px -20px rgba(124,58,237,0.15),
+    inset 0 1px 0 rgba(165,180,252,0.08);
+}
+
+/* ─── 唤星按钮 ─── */
+.huanxing-button {
+  background: linear-gradient(135deg, #7C3AED, #4F46E5, #06B6D4);
+  box-shadow: 0 4px 20px -4px rgba(124,58,237,0.4);
+  transition: all 0.3s ease;
+}
+.huanxing-button:hover:not(:disabled) {
+  box-shadow: 0 6px 30px -4px rgba(124,58,237,0.6);
+  filter: brightness(1.1);
+  transform: translateY(-1px);
+}
+.huanxing-button:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+/* ─── Sidebar 品牌标记 ─── */
+.huanxing-brand-mark {
+  background: linear-gradient(135deg, #7C3AED, #4F46E5);
+  box-shadow: 0 0 20px -4px rgba(124,58,237,0.6);
+}
+
+/* ─── 分组分隔线 ─── */
+.huanxing-nav-divider {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(124,58,237,0.3), transparent);
+  margin: 0.5rem 0;
+}
+
+/* ─── 分组标签 ─── */
+.huanxing-nav-group-label {
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #7c7faa;
+  padding: 0.25rem 0.75rem;
+}
+
+/* ─── 全屏布局模式 ─── */
+/* 当页面组件包含 .layout-full 时，取消 main 的 padding 和滚动 */
+main:has(.layout-full) {
+  padding: 0 !important;
+  overflow: hidden !important;
+}

@@ -34,6 +34,8 @@ pub mod nextcloud_talk;
 pub mod nostr;
 pub mod notion;
 pub mod qq;
+#[cfg(feature = "huanxing")]
+pub mod napcat;
 pub mod reddit;
 pub mod session_backend;
 pub mod session_sqlite;
@@ -74,6 +76,8 @@ pub use nextcloud_talk::NextcloudTalkChannel;
 pub use nostr::NostrChannel;
 pub use notion::NotionChannel;
 pub use qq::QQChannel;
+#[cfg(feature = "huanxing")]
+pub use napcat::NapcatChannel;
 pub use reddit::RedditChannel;
 pub use signal::SignalChannel;
 pub use slack::SlackChannel;
@@ -3641,6 +3645,17 @@ fn collect_configured_channels(
                 wc.allowed_users.clone(),
             )),
         });
+    }
+
+    #[cfg(feature = "huanxing")]
+    if let Some(ref napcat_cfg) = config.channels_config.napcat {
+        match NapcatChannel::from_config(napcat_cfg.clone()) {
+            Ok(channel) => channels.push(ConfiguredChannel {
+                display_name: "Napcat",
+                channel: Arc::new(channel),
+            }),
+            Err(err) => tracing::warn!("Napcat channel configuration invalid: {err}"),
+        }
     }
 
     if let Some(ref ct) = config.channels_config.clawdtalk {

@@ -1,0 +1,185 @@
+/**
+ * chatscope 深色主题覆盖
+ *
+ * 将 chatscope 默认的白色主题改为唤星深色风格。
+ * 仅覆盖颜色相关变量，保留布局和交互逻辑。
+ */
+
+/* 全局容器 */
+.hasn-chat-container .cs-main-container {
+  background: #050b1a;
+  border: none;
+  border-radius: 0;
+}
+
+/* Sidebar */
+.hasn-chat-container .cs-sidebar {
+  background: #070f22;
+  border-right: 1px solid #1e2f5d;
+}
+
+/* 搜索框 */
+.hasn-chat-container .cs-search {
+  background: #0a1630;
+  border-bottom: 1px solid #1e2f5d;
+}
+
+.hasn-chat-container .cs-search__input {
+  background: #0d1d42;
+  color: #e0e8f5;
+  border: 1px solid #29509c;
+}
+
+.hasn-chat-container .cs-search__input::placeholder {
+  color: #5f7fb8;
+}
+
+.hasn-chat-container .cs-search__search-icon,
+.hasn-chat-container .cs-search__clear-icon {
+  color: #5f7fb8;
+}
+
+/* 会话列表 */
+.hasn-chat-container .cs-conversation-list {
+  background: transparent;
+}
+
+.hasn-chat-container .cs-conversation {
+  background: transparent;
+  border-bottom: 1px solid #111d3a;
+}
+
+.hasn-chat-container .cs-conversation:hover {
+  background: #0b1a3a;
+}
+
+.hasn-chat-container .cs-conversation--active,
+.hasn-chat-container .cs-conversation--active:hover {
+  background: rgba(124, 58, 237, 0.15);
+  border-left: 3px solid #7c3aed;
+}
+
+.hasn-chat-container .cs-conversation__name {
+  color: #e0e8f5;
+}
+
+.hasn-chat-container .cs-conversation__info {
+  color: #7a9bd0;
+}
+
+.hasn-chat-container .cs-conversation__last-activity-time {
+  color: #5f7fb8;
+}
+
+.hasn-chat-container .cs-conversation__unread-dot {
+  background: #7c3aed;
+}
+
+/* Avatar 状态 */
+.hasn-chat-container .cs-status--available .cs-status__bullet {
+  background: #10b981;
+}
+
+/* 聊天容器 */
+.hasn-chat-container .cs-chat-container {
+  background: #050b1a;
+}
+
+/* 会话头部 */
+.hasn-chat-container .cs-conversation-header {
+  background: #070f22;
+  border-bottom: 1px solid #1e2f5d;
+  padding: 0.5rem 1rem;
+}
+
+.hasn-chat-container .cs-conversation-header__user-name {
+  color: #e0e8f5;
+}
+
+.hasn-chat-container .cs-conversation-header__info {
+  color: #7a9bd0;
+}
+
+.hasn-chat-container .cs-conversation-header__back {
+  color: #7a9bd0;
+}
+
+/* 消息列表 */
+.hasn-chat-container .cs-message-list {
+  background: #050b1a;
+}
+
+/* 消息气泡 */
+.hasn-chat-container .cs-message--incoming .cs-message__content {
+  background: #0d1d42;
+  color: #e0e8f5;
+  border: 1px solid #1e2f5d;
+}
+
+.hasn-chat-container .cs-message--outgoing .cs-message__content {
+  background: linear-gradient(135deg, #7c3aed, #2563eb);
+  color: #ffffff;
+}
+
+.hasn-chat-container .cs-message__footer {
+  color: #5f7fb8;
+}
+
+/* 消息分隔线 */
+.hasn-chat-container .cs-message-separator {
+  color: #5f7fb8;
+}
+
+.hasn-chat-container .cs-message-separator::before,
+.hasn-chat-container .cs-message-separator::after {
+  background: #1e2f5d;
+}
+
+/* 输入框 */
+.hasn-chat-container .cs-message-input {
+  background: #070f22;
+  border-top: 1px solid #1e2f5d;
+}
+
+.hasn-chat-container .cs-message-input__content-editor-wrapper {
+  background: #0d1d42;
+  border: 1px solid #29509c;
+  border-radius: 0.75rem;
+}
+
+.hasn-chat-container .cs-message-input__content-editor {
+  color: #e0e8f5;
+  background: transparent;
+}
+
+.hasn-chat-container .cs-message-input__content-editor[data-placeholder]::before {
+  color: #5f7fb8;
+}
+
+/* 发送按钮 */
+.hasn-chat-container .cs-button--send {
+  color: #7c3aed;
+}
+
+.hasn-chat-container .cs-button--send:hover {
+  color: #8b5cf6;
+}
+
+/* 打字指示器 */
+.hasn-chat-container .cs-typing-indicator {
+  background: #0d1d42;
+  color: #7a9bd0;
+}
+
+.hasn-chat-container .cs-typing-indicator__dot {
+  background: #7c3aed;
+}
+
+/* 滚动条 */
+.hasn-chat-container .ps__thumb-y {
+  background: #29509c;
+}
+
+.hasn-chat-container .ps__rail-y:hover .ps__thumb-y {
+  background: #3a6de0;
+}

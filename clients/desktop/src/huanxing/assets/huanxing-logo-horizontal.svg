@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 56" width="280" height="56">
+  <defs>
+    <linearGradient id="brand" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#8B5CF6"/>
+      <stop offset="45%" stop-color="#6366F1"/>
+      <stop offset="100%" stop-color="#38BDF8"/>
+    </linearGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="2" result="og"/>
+      <feFlood flood-color="white" flood-opacity="0.3" result="wc"/>
+      <feComposite in="wc" in2="og" operator="in" result="wg"/>
+      <feGaussianBlur in="SourceGraphic" stdDeviation="0.8" result="ig"/>
+      <feMerge><feMergeNode in="wg"/><feMergeNode in="ig"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="cg" x="-100%" y="-100%" width="300%" height="300%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="1.5" result="c1"/>
+      <feGaussianBlur in="SourceGraphic" stdDeviation="0.5" result="c2"/>
+      <feMerge><feMergeNode in="c1"/><feMergeNode in="c2"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="dg" x="-200%" y="-200%" width="500%" height="500%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="1"/>
+    </filter>
+  </defs>
+
+  <!-- 轨道圆圈 -->
+  <circle cx="28" cy="28" r="24" fill="none" stroke="#6366F1" stroke-width="0.4" stroke-opacity="0.15"/>
+
+  <!-- 八角星芒 -->
+  <g transform="translate(28, 28)" filter="url(#glow)">
+    <path d="M0 -20 C2.2 -3.8, 3.8 -2.2, 20 0 C3.8 2.2, 2.2 3.8, 0 20 C-2.2 3.8, -3.8 2.2, -20 0 C-3.8 -2.2, -2.2 -3.8, 0 -20 Z" fill="url(#brand)"/>
+    <path d="M0 -14 C1.5 -2.5, 2.5 -1.5, 14 0 C2.5 1.5, 1.5 2.5, 0 14 C-1.5 2.5, -2.5 1.5, -14 0 C-2.5 -1.5, -1.5 -2.5, 0 -14 Z" fill="url(#brand)" transform="rotate(45)"/>
+  </g>
+
+  <!-- 中心光点 -->
+  <g filter="url(#cg)">
+    <circle cx="28" cy="28" r="2.5" fill="white" opacity="0.25"/>
+    <circle cx="28" cy="28" r="1.5" fill="white" opacity="0.6"/>
+    <circle cx="28" cy="28" r="0.8" fill="white"/>
+  </g>
+
+  <!-- 小星星 -->
+  <circle cx="49" cy="15" r="1" fill="#A78BFA" filter="url(#dg)" opacity="0.5"/>
+  <circle cx="49" cy="15" r="0.5" fill="#A78BFA" opacity="0.85"/>
+
+  <circle cx="10" cy="12" r="0.8" fill="#38BDF8" filter="url(#dg)" opacity="0.45"/>
+  <circle cx="10" cy="12" r="0.4" fill="#38BDF8" opacity="0.8"/>
+
+  <circle cx="48" cy="42" r="0.7" fill="#FBBF24" filter="url(#dg)" opacity="0.4"/>
+  <circle cx="48" cy="42" r="0.35" fill="#FBBF24" opacity="0.75"/>
+
+  <circle cx="8" cy="40" r="0.8" fill="#818CF8" filter="url(#dg)" opacity="0.35"/>
+  <circle cx="8" cy="40" r="0.4" fill="#818CF8" opacity="0.7"/>
+
+  <!-- 中文品牌名 -->
+  <text x="62" y="34" font-family="'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif" font-weight="700" font-size="24" fill="white" letter-spacing="2">唤星</text>
+
+  <!-- 英文品牌名 -->
+  <text x="128" y="34" font-family="'Inter', 'Helvetica Neue', sans-serif" font-weight="400" font-size="16" fill="#818CF8" opacity="0.85" letter-spacing="3">STELLARA</text>
+</svg>

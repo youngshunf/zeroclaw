@@ -124,6 +124,29 @@ pub async fn run(config: Config, host: String, port: u16) -> Result<()> {
         tracing::info!("Cron disabled; scheduler supervisor not started");
     }
 
+    // ── Multi-tenant heartbeat (唤星) ──────────────────────────────────
+    #[cfg(feature = "huanxing")]
+    {
+        if config.huanxing.enabled && config.huanxing.tenant_heartbeat.enabled {
+            let th_config = config.clone();
+            handles.push(spawn_component_supervisor(
+                "tenant-heartbeat",
+                initial_backoff,
+                max_backoff,
+                move || {
+                    let cfg = th_config.clone();
+                    async move {
+                        let manager =
+                            crate::huanxing::tenant_heartbeat::TenantHeartbeatManager::new(cfg)?;
+                        manager.run().await
+                    }
+                },
+            ));
+        } else {
+            crate::health::mark_component_ok("tenant-heartbeat");
+        }
+    }
+
     println!("🧠 ZeroClaw daemon started");
     println!("   Gateway:  http://{host}:{port}");
     println!("   Components: gateway, channels, heartbeat, scheduler");

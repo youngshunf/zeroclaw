@@ -1,0 +1,192 @@
+/**
+ * chatscope Light 主题覆盖
+ *
+ * 适配唤星 Light 主题风格
+ */
+
+/* 全局容器 */
+.hasn-chat-container .cs-main-container {
+  background: var(--hx-bg-main, #FFFFFF);
+  border: none;
+  border-radius: 0;
+}
+
+/* Sidebar */
+.hasn-chat-container .cs-sidebar {
+  background: var(--hx-bg-panel, #FAFAFA);
+  border-right: 1px solid var(--hx-border, #E5E7EB);
+}
+
+/* 搜索框 */
+.hasn-chat-container .cs-search {
+  background: var(--hx-bg-panel, #FAFAFA);
+  border-bottom: 1px solid var(--hx-border, #E5E7EB);
+}
+
+.hasn-chat-container .cs-search__input {
+  background: var(--hx-bg-main, #FFFFFF);
+  color: var(--hx-text-primary, #111827);
+  border: 1px solid var(--hx-border, #E5E7EB);
+  border-radius: 8px;
+}
+
+.hasn-chat-container .cs-search__input:focus {
+  border-color: var(--hx-purple, #7C3AED);
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.1);
+}
+
+.hasn-chat-container .cs-search__input::placeholder {
+  color: var(--hx-text-tertiary, #9CA3AF);
+}
+
+.hasn-chat-container .cs-search__search-icon,
+.hasn-chat-container .cs-search__clear-icon {
+  color: var(--hx-text-tertiary, #9CA3AF);
+}
+
+/* 会话列表 */
+.hasn-chat-container .cs-conversation-list {
+  background: transparent;
+}
+
+.hasn-chat-container .cs-conversation {
+  background: transparent;
+  border-bottom: 1px solid var(--hx-border-light, #F3F4F6);
+}
+
+.hasn-chat-container .cs-conversation:hover {
+  background: var(--hx-bg-hover, #F3F0FF);
+}
+
+.hasn-chat-container .cs-conversation--active,
+.hasn-chat-container .cs-conversation--active:hover {
+  background: rgba(124, 58, 237, 0.08);
+  border-left: none;
+}
+
+.hasn-chat-container .cs-conversation__name {
+  color: var(--hx-text-primary, #111827);
+  font-weight: 600;
+}
+
+.hasn-chat-container .cs-conversation__info {
+  color: var(--hx-text-secondary, #6B7280);
+}
+
+.hasn-chat-container .cs-conversation__last-activity-time {
+  color: var(--hx-text-tertiary, #9CA3AF);
+}
+
+.hasn-chat-container .cs-conversation__unread-dot {
+  background: var(--hx-red, #EF4444);
+}
+
+/* Avatar 状态 */
+.hasn-chat-container .cs-status--available .cs-status__bullet {
+  background: var(--hx-green, #10B981);
+}
+
+/* 聊天容器 */
+.hasn-chat-container .cs-chat-container {
+  background: var(--hx-bg-main, #FFFFFF);
+}
+
+/* 会话头部 */
+.hasn-chat-container .cs-conversation-header {
+  background: var(--hx-bg-main, #FFFFFF);
+  border-bottom: 1px solid var(--hx-border, #E5E7EB);
+  padding: 0.5rem 1rem;
+}
+
+.hasn-chat-container .cs-conversation-header__user-name {
+  color: var(--hx-text-primary, #111827);
+  font-weight: 600;
+}
+
+.hasn-chat-container .cs-conversation-header__info {
+  color: var(--hx-text-secondary, #6B7280);
+}
+
+.hasn-chat-container .cs-conversation-header__back {
+  color: var(--hx-text-secondary, #6B7280);
+}
+
+/* 消息列表 */
+.hasn-chat-container .cs-message-list {
+  background: var(--hx-bg-main, #FFFFFF);
+}
+
+/* 消息气泡 */
+.hasn-chat-container .cs-message--incoming .cs-message__content {
+  background: var(--hx-bg-bubble-agent, #F3F4F6);
+  color: var(--hx-text-primary, #111827);
+  border: none;
+}
+
+.hasn-chat-container .cs-message--outgoing .cs-message__content {
+  background: var(--hx-bg-bubble-user, #6366F1);
+  color: var(--hx-text-on-purple, #FFFFFF);
+}
+
+.hasn-chat-container .cs-message__footer {
+  color: var(--hx-text-tertiary, #9CA3AF);
+}
+
+/* 消息分隔线 */
+.hasn-chat-container .cs-message-separator {
+  color: var(--hx-text-tertiary, #9CA3AF);
+}
+
+.hasn-chat-container .cs-message-separator::before,
+.hasn-chat-container .cs-message-separator::after {
+  background: var(--hx-border, #E5E7EB);
+}
+
+/* 输入框 */
+.hasn-chat-container .cs-message-input {
+  background: var(--hx-bg-main, #FFFFFF);
+  border-top: 1px solid var(--hx-border, #E5E7EB);
+}
+
+.hasn-chat-container .cs-message-input__content-editor-wrapper {
+  background: var(--hx-bg-input, #F9FAFB);
+  border: 1px solid var(--hx-border, #E5E7EB);
+  border-radius: 12px;
+}
+
+.hasn-chat-container .cs-message-input__content-editor {
+  color: var(--hx-text-primary, #111827);
+  background: transparent;
+}
+
+.hasn-chat-container .cs-message-input__content-editor[data-placeholder]::before {
+  color: var(--hx-text-tertiary, #9CA3AF);
+}
+
+/* 发送按钮 */
+.hasn-chat-container .cs-button--send {
+  color: var(--hx-purple, #7C3AED);
+}
+
+.hasn-chat-container .cs-button--send:hover {
+  color: var(--hx-purple-hover, #6D28D9);
+}
+
+/* 打字指示器 */
+.hasn-chat-container .cs-typing-indicator {
+  background: var(--hx-bg-bubble-agent, #F3F4F6);
+  color: var(--hx-text-secondary, #6B7280);
+}
+
+.hasn-chat-container .cs-typing-indicator__dot {
+  background: var(--hx-purple, #7C3AED);
+}
+
+/* 滚动条 */
+.hasn-chat-container .ps__thumb-y {
+  background: var(--hx-border, #E5E7EB);
+}
+
+.hasn-chat-container .ps__rail-y:hover .ps__thumb-y {
+  background: var(--hx-text-tertiary, #9CA3AF);
+}

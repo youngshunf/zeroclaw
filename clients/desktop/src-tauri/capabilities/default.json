@@ -1,0 +1,12 @@
+{
+  "identifier": "default",
+  "description": "唤星桌面端默认权限",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "shell:allow-open",
+    "shell:allow-execute",
+    "process:default",
+    "notification:default"
+  ]
+}

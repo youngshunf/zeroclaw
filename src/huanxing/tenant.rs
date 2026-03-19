@@ -165,8 +165,19 @@ impl TenantContext {
 
         // Load skills from tenant workspace
         let _common_skills_dir = global_config.huanxing.resolve_common_skills_dir(&global_config.workspace_dir);
-        let skills =
+        // Load skills from tenant workspace + common skills directory
+        let common_skills_dir = global_config.huanxing.resolve_common_skills_dir(&global_config.workspace_dir);
+        let mut skills =
             crate::skills::load_skills_with_config(&workspace_dir, global_config);
+        if common_skills_dir.exists() {
+            let ws_names: std::collections::HashSet<String> =
+                skills.iter().map(|s| s.name.clone()).collect();
+            for skill in crate::skills::load_skills(&common_skills_dir) {
+                if !ws_names.contains(&skill.name) {
+                    skills.push(skill);
+                }
+            }
+        }
 
         let tool_descs: Vec<(&str, &str)> = Vec::new();
 
@@ -252,9 +263,19 @@ impl TenantContext {
             .or(global_config.default_model.as_deref())
             .unwrap_or("claude-sonnet-4-6");
 
-        // Load skills from guardian workspace (if any)
-        let skills =
+        // Load skills from guardian workspace + common skills directory
+        let common_skills_dir = global_config.huanxing.resolve_common_skills_dir(&global_config.workspace_dir);
+        let mut skills =
             crate::skills::load_skills_with_config(&workspace_dir, global_config);
+        if common_skills_dir.exists() {
+            let ws_names: std::collections::HashSet<String> =
+                skills.iter().map(|s| s.name.clone()).collect();
+            for skill in crate::skills::load_skills(&common_skills_dir) {
+                if !ws_names.contains(&skill.name) {
+                    skills.push(skill);
+                }
+            }
+        }
 
         let tool_descs: Vec<(&str, &str)> = Vec::new();
 

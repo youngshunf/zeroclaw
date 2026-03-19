@@ -1,0 +1,11 @@
+/* 唤星桌面端样式入口 */
+/* 告诉 Tailwind v4 扫描 web/src 中的所有源文件 */
+@import "tailwindcss" source(none);
+@source "../../web/src/**/*.{tsx,ts,jsx,js,css}";
+@source "../src/**/*.{tsx,ts,jsx,js,css}";
+
+/* 复用 web/src/index.css 中的自定义样式（跳过其 @import tailwindcss） */
+@import "../../web/src/index.css" layer(base);
+
+/* 唤星主题覆盖 */
+@import "../../web/src/huanxing/styles/huanxing-theme.css";

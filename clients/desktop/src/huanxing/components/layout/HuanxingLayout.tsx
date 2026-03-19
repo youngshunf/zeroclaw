@@ -1,0 +1,71 @@
+import { Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { useState, useEffect, Suspense } from 'react';
+import NavRail, { type TabKey } from './NavRail';
+
+// Settings-related paths
+const settingsPaths = ['/dashboard', '/config', '/cost', '/logs', '/doctor', '/devices', '/integrations', '/tools', '/cron', '/memory', '/about'];
+
+// Routes that don't belong to any tab (profile, etc.) — return null to keep current tab
+const independentPaths = ['/profile'];
+
+// Map routes to tabs
+function routeToTab(pathname: string): TabKey | null {
+  if (pathname.startsWith('/hasn-chat')) return 'hasn';
+  if (pathname.startsWith('/contacts')) return 'contacts';
+  if (pathname.startsWith('/agents')) return 'agents';
+  // Settings pages
+  if (settingsPaths.some((p) => pathname.startsWith(p))) return 'settings';
+  // Independent pages — don't change active tab
+  if (independentPaths.some((p) => pathname.startsWith(p))) return null;
+  // Default: agent
+  return 'agent';
+}
+
+// Map tabs to default routes
+const tabRoutes: Record<TabKey, string> = {
+  agent: '/agent',
+  hasn: '/hasn-chat',
+  contacts: '/contacts',
+  agents: '/agents',
+  settings: '/dashboard',
+};
+
+export default function HuanxingLayout() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [activeTab, setActiveTab] = useState<TabKey>(() => routeToTab(location.pathname) ?? 'agent');
+
+  // Sync tab with route changes (skip for independent pages like /profile)
+  useEffect(() => {
+    const tab = routeToTab(location.pathname);
+    if (tab !== null) {
+      setActiveTab(tab);
+    }
+  }, [location.pathname]);
+
+  const handleTabChange = (tab: TabKey) => {
+    setActiveTab(tab);
+    navigate(tabRoutes[tab]);
+  };
+
+  return (
+    <div className="hx-app">
+      <NavRail
+        activeTab={activeTab}
+        onTabChange={handleTabChange}
+        badges={{ agent: 3, hasn: 5, contacts: 1 }}
+      />
+      <div className="hx-content">
+        <Suspense
+          fallback={
+            <div className="hx-loading">
+              <div className="hx-loader" />
+            </div>
+          }
+        >
+          <Outlet />
+        </Suspense>
+      </div>
+    </div>
+  );
+}

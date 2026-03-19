@@ -4331,6 +4331,10 @@ pub struct ChannelsConfig {
     pub wecom: Option<WeComConfig>,
     /// QQ Official Bot channel configuration.
     pub qq: Option<QQConfig>,
+    /// Napcat (QQ via OneBot) channel configuration.
+    #[cfg(feature = "huanxing")]
+    #[serde(default)]
+    pub napcat: Option<crate::huanxing::config::NapcatConfig>,
     /// X/Twitter channel configuration.
     pub twitter: Option<TwitterConfig>,
     /// Mochat customer service channel configuration.
@@ -4510,6 +4514,8 @@ impl Default for ChannelsConfig {
             dingtalk: None,
             wecom: None,
             qq: None,
+            #[cfg(feature = "huanxing")]
+            napcat: None,
             twitter: None,
             mochat: None,
             #[cfg(feature = "channel-nostr")]

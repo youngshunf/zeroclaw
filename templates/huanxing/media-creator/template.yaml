@@ -1,0 +1,65 @@
+# ─── 基础信息 ─────────────────────────────────────────
+id: "media-creator"
+name: "自媒体赚钱"
+version: "1.0.0"
+emoji: "📱"
+description: "比你更会做内容的运营大脑——追踪热点、生成爆款、多平台发布、数据优化，帮你涨粉变现"
+
+# ─── 标签 ─────────────────────────────────────────────
+tags:
+  - "超级大脑"
+  - "自媒体"
+  - "内容创作"
+  - "涨粉"
+  - "变现"
+
+# ─── 模型配置 ─────────────────────────────────────────
+model: "claude-sonnet-4-6"
+temperature: 0.7
+
+# ─── 技能声明 ─────────────────────────────────────────
+skills:
+  # 模板专属技能（只有选了这个模板才有）
+  exclusive:
+    - "xiaohongshu-cn"
+  # 公共技能（所有模板共享）
+  common:
+    - "hasn-social"
+    - "newsnow"
+    - "tavily-search"
+    - "summarize"
+    - "best-image-generation"
+    - "data-analysis"
+    - "self-improving"
+    - "truth-search"
+    - "scrapling"
+
+# ─── 文件列表 ─────────────────────────────────────────
+files:
+  - "SOUL.md"
+  - "IDENTITY.md"
+  - "AGENTS.md"
+  - "USER.md.template"
+  - "TOOLS.md"
+  - "HEARTBEAT.md"
+  - "BOOTSTRAP.md"
+  - "MEMORY.md"
+
+# ─── 工具配置 ─────────────────────────────────────────
+tools_allow:
+  - "huanxing_get_user"
+  - "huanxing_get_subscription"
+  - "huanxing_check_quota"
+  - "huanxing_usage_stats"
+  - "huanxing_set_secret"
+  - "huanxing_list_secrets"
+  - "huanxing_delete_secret"
+  - "hasn_send"
+  - "hasn_contacts"
+  - "hasn_add_friend"
+  - "hasn_inbox"
+  - "hasn_respond_request"
+
+# ─── 商业 ─────────────────────────────────────────────
+pricing:
+  tier: "free"

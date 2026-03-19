@@ -111,7 +111,7 @@ mod tunnel;
 mod util;
 
 #[cfg(feature = "huanxing")]
-pub use zeroclaw::huanxing;
+mod huanxing;
 
 use config::Config;
 

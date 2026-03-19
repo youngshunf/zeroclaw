@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <!-- 更高级的渐变：深紫 → 靛蓝 → 冰蓝 -->
+    <linearGradient id="brand" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#8B5CF6"/>
+      <stop offset="45%" stop-color="#6366F1"/>
+      <stop offset="100%" stop-color="#38BDF8"/>
+    </linearGradient>
+    <!-- 星芒白色边缘发光 -->
+    <filter id="starGlow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="10" result="outerGlow"/>
+      <feFlood flood-color="white" flood-opacity="0.35" result="whiteColor"/>
+      <feComposite in="whiteColor" in2="outerGlow" operator="in" result="whiteGlow"/>
+      <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="innerGlow"/>
+      <feMerge>
+        <feMergeNode in="whiteGlow"/>
+        <feMergeNode in="innerGlow"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <!-- 中心光点发光 -->
+    <filter id="centerGlow" x="-100%" y="-100%" width="300%" height="300%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="cg1"/>
+      <feGaussianBlur in="SourceGraphic" stdDeviation="2.5" result="cg2"/>
+      <feMerge>
+        <feMergeNode in="cg1"/>
+        <feMergeNode in="cg2"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <!-- 小星星发光 -->
+    <filter id="dotGlow" x="-200%" y="-200%" width="500%" height="500%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="3"/>
+    </filter>
+    <filter id="dotGlowSm" x="-200%" y="-200%" width="500%" height="500%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="2"/>
+    </filter>
+  </defs>
+
+  <!-- 深色背景 -->
+  <rect width="512" height="512" fill="#08090D"/>
+
+  <!-- 外圈轨道 -->
+  <circle cx="256" cy="220" r="135" fill="none" stroke="#6366F1" stroke-width="0.8" stroke-opacity="0.15"/>
+
+  <!-- 八角星芒（带发光） -->
+  <g filter="url(#starGlow)" transform="translate(256,220)">
+    <path d="M0 -95 C10 -17, 17 -10, 95 0 C17 10, 10 17, 0 95 C-10 17, -17 10, -95 0 C-17 -10, -10 -17, 0 -95 Z" fill="url(#brand)"/>
+    <path d="M0 -66 C7 -12, 12 -7, 66 0 C12 7, 7 12, 0 66 C-7 12, -12 7, -66 0 C-12 -7, -7 -12, 0 -66 Z" fill="url(#brand)" transform="rotate(45)"/>
+  </g>
+
+  <!-- 中心光点（两层+发光） -->
+  <g filter="url(#centerGlow)">
+    <circle cx="256" cy="220" r="14" fill="white" opacity="0.25"/>
+    <circle cx="256" cy="220" r="8" fill="white" opacity="0.6"/>
+    <circle cx="256" cy="220" r="4" fill="white"/>
+  </g>
+
+  <!-- 发光小星星：轨道与星芒之间，不同颜色 -->
+  <!-- 紫色星 -->
+  <circle cx="370" cy="145" r="4" fill="#A78BFA" filter="url(#dotGlow)" opacity="0.6"/>
+  <circle cx="370" cy="145" r="2" fill="#A78BFA" opacity="0.9"/>
+  <!-- 蓝色星 -->
+  <circle cx="155" cy="155" r="3.5" fill="#38BDF8" filter="url(#dotGlow)" opacity="0.5"/>
+  <circle cx="155" cy="155" r="1.8" fill="#38BDF8" opacity="0.85"/>
+  <!-- 金色星 -->
+  <circle cx="365" cy="300" r="3" fill="#FBBF24" filter="url(#dotGlowSm)" opacity="0.5"/>
+  <circle cx="365" cy="300" r="1.5" fill="#FBBF24" opacity="0.85"/>
+  <!-- 靛蓝星 -->
+  <circle cx="145" cy="285" r="3.5" fill="#818CF8" filter="url(#dotGlow)" opacity="0.45"/>
+  <circle cx="145" cy="285" r="1.8" fill="#818CF8" opacity="0.8"/>
+  <!-- 冰蓝小星 -->
+  <circle cx="310" cy="105" r="2.5" fill="#67E8F9" filter="url(#dotGlowSm)" opacity="0.4"/>
+  <circle cx="310" cy="105" r="1.2" fill="#67E8F9" opacity="0.75"/>
+  <!-- 淡紫小星 -->
+  <circle cx="200" cy="340" r="2" fill="#C4B5FD" filter="url(#dotGlowSm)" opacity="0.35"/>
+  <circle cx="200" cy="340" r="1" fill="#C4B5FD" opacity="0.7"/>
+
+  <!-- 远处微光 -->
+  <circle cx="420" cy="100" r="0.8" fill="white" opacity="0.15"/>
+  <circle cx="85" cy="370" r="0.8" fill="white" opacity="0.12"/>
+  <circle cx="440" cy="370" r="0.6" fill="white" opacity="0.1"/>
+  <circle cx="75" cy="100" r="0.7" fill="white" opacity="0.1"/>
+
+  <!-- 品牌文字 -->
+  <text x="256" y="400" text-anchor="middle" font-family="'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif" font-weight="700" font-size="50" fill="white" letter-spacing="8">唤星</text>
+  <text x="256" y="440" text-anchor="middle" font-family="'Inter', 'Helvetica Neue', sans-serif" font-weight="400" font-size="18" fill="#818CF8" opacity="0.85" letter-spacing="6">STELLARA</text>
+</svg>

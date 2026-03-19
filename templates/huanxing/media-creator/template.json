@@ -1,0 +1,50 @@
+{
+  "id": "media-creator",
+  "name": "自媒体赚钱",
+  "emoji": "📱",
+  "description": "比你更会做内容的运营大脑——追踪热点、生成爆款、多平台发布、数据优化，帮你涨粉变现",
+  "tags": [
+    "超级大脑",
+    "自媒体",
+    "内容创作",
+    "涨粉",
+    "变现"
+  ],
+  "model": "anthropic/claude-sonnet-4-6",
+  "skills": [
+    "xiaohongshu-cn",
+    "hasn-social",
+    "newsnow",
+    "tavily-search",
+    "summarize",
+    "best-image-generation",
+    "data-analysis",
+    "self-improving",
+    "truth-search",
+    "scrapling"
+  ],
+  "tools_allow": [
+    "huanxing_get_user",
+    "huanxing_get_subscription",
+    "huanxing_check_quota",
+    "huanxing_usage_stats",
+    "hasn_send",
+    "hasn_contacts",
+    "hasn_add_friend",
+    "hasn_inbox",
+    "hasn_respond_request",
+    "huanxing_set_secret",
+    "huanxing_list_secrets",
+    "huanxing_delete_secret"
+  ],
+  "files": [
+    "SOUL.md",
+    "IDENTITY.md",
+    "AGENTS.md",
+    "USER.md.template",
+    "TOOLS.md",
+    "HEARTBEAT.md",
+    "BOOTSTRAP.md",
+    "MEMORY.md"
+  ]
+}

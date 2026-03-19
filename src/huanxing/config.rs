@@ -276,3 +276,19 @@ pub struct TemplateConfig {
     /// Provider override for this template.
     pub provider: Option<String>,
 }
+
+/// Napcat (QQ via OneBot) channel configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct NapcatConfig {
+    /// Napcat WebSocket endpoint (for example `ws://127.0.0.1:3001`)
+    #[serde(alias = "ws_url")]
+    pub websocket_url: String,
+    /// Optional Napcat HTTP API base URL. If omitted, derived from websocket_url.
+    #[serde(default)]
+    pub api_base_url: String,
+    /// Optional access token (Authorization Bearer token)
+    pub access_token: Option<String>,
+    /// Allowed user IDs. Empty = deny all, "*" = allow all
+    #[serde(default)]
+    pub allowed_users: Vec<String>,
+}

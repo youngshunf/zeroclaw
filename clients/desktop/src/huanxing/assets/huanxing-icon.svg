@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-68 -68 136 136" width="136" height="136">
+  <defs>
+    <linearGradient id="brand" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#8B5CF6"/>
+      <stop offset="45%" stop-color="#6366F1"/>
+      <stop offset="100%" stop-color="#38BDF8"/>
+    </linearGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="og"/>
+      <feFlood flood-color="white" flood-opacity="0.35" result="wc"/>
+      <feComposite in="wc" in2="og" operator="in" result="wg"/>
+      <feGaussianBlur in="SourceGraphic" stdDeviation="1.5" result="ig"/>
+      <feMerge><feMergeNode in="wg"/><feMergeNode in="ig"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="cg" x="-100%" y="-100%" width="300%" height="300%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="c1"/>
+      <feGaussianBlur in="SourceGraphic" stdDeviation="1" result="c2"/>
+      <feMerge><feMergeNode in="c1"/><feMergeNode in="c2"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="dg" x="-200%" y="-200%" width="500%" height="500%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="2"/>
+    </filter>
+  </defs>
+
+  <!-- 轨道圆圈 -->
+  <circle cx="0" cy="0" r="58" fill="none" stroke="#6366F1" stroke-width="0.6" stroke-opacity="0.15"/>
+
+  <!-- 八角星芒 -->
+  <g filter="url(#glow)">
+    <path d="M0 -48 C5 -9, 9 -5, 48 0 C9 5, 5 9, 0 48 C-5 9, -9 5, -48 0 C-9 -5, -5 -9, 0 -48 Z" fill="url(#brand)"/>
+    <path d="M0 -34 C4 -6, 6 -4, 34 0 C6 4, 4 6, 0 34 C-4 6, -6 4, -34 0 C-6 -4, -4 -6, 0 -34 Z" fill="url(#brand)" transform="rotate(45)"/>
+  </g>
+
+  <!-- 中心光点 -->
+  <g filter="url(#cg)">
+    <circle cx="0" cy="0" r="6" fill="white" opacity="0.25"/>
+    <circle cx="0" cy="0" r="3.5" fill="white" opacity="0.6"/>
+    <circle cx="0" cy="0" r="1.8" fill="white"/>
+  </g>
+
+  <!-- 小星星 -->
+  <circle cx="50" cy="-31" r="2" fill="#A78BFA" filter="url(#dg)" opacity="0.5"/>
+  <circle cx="50" cy="-31" r="1" fill="#A78BFA" opacity="0.85"/>
+
+  <circle cx="-44" cy="-36" r="1.6" fill="#38BDF8" filter="url(#dg)" opacity="0.45"/>
+  <circle cx="-44" cy="-36" r="0.8" fill="#38BDF8" opacity="0.8"/>
+
+  <circle cx="48" cy="34" r="1.4" fill="#FBBF24" filter="url(#dg)" opacity="0.4"/>
+  <circle cx="48" cy="34" r="0.7" fill="#FBBF24" opacity="0.75"/>
+
+  <circle cx="-47" cy="31" r="1.6" fill="#818CF8" filter="url(#dg)" opacity="0.35"/>
+  <circle cx="-47" cy="31" r="0.8" fill="#818CF8" opacity="0.7"/>
+</svg>

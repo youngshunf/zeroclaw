@@ -1,0 +1,105 @@
+# ═══════════════════════════════════════════════════════════════
+# Admin Agent — 管理员专用，高权限
+# 路径: server-config/admin/config.toml
+# ═══════════════════════════════════════════════════════════════
+
+default_provider = "custom:https://llm.dcfuture.cn/v1"
+default_model = "claude-sonnet-4-6"
+default_temperature = 0.7
+api_key = "sk-cf-1qwouDM8SdBbSRca_Us89hUMkW1zOwSzUrl32TxsNWE"
+
+[model_providers.openai_compat]
+base_url = "https://llm.dcfuture.cn/v1"
+api_key = "sk-cf-1qwouDM8SdBbSRca_Us89hUMkW1zOwSzUrl32TxsNWE"
+requires_openai_auth = false
+
+# ── Agent ─────────────────────────────────────────────────────
+[agent]
+compact_context = false
+max_tool_iterations = 25
+max_history_messages = 100
+
+[agent.session]
+backend = "sqlite"
+strategy = "per-sender"
+ttl_seconds = 604800             # 7天 — 管理员需要长上下文
+max_messages = 200
+
+# ── 记忆 ──────────────────────────────────────────────────────
+[memory]
+backend = "sqlite"
+auto_save = true
+auto_hydrate = true
+hygiene_enabled = true
+archive_after_days = 14
+purge_after_days = 90
+conversation_retention_days = 90
+snapshot_enabled = true
+snapshot_on_hygiene = true
+
+# ── 向量记忆 ──────────────────────────────────────────────────
+embedding_provider = "custom:https://llm.dcfuture.cn/v1"
+embedding_model = "text-embedding-v4"
+embedding_dimensions = 1024
+vector_weight = 0.7
+keyword_weight = 0.3
+min_relevance_score = 0.4
+
+# ── 自治与安全（管理员全自主）──────────────────────────────────
+[autonomy]
+level = "full"
+workspace_only = false
+allowed_commands = []
+forbidden_paths = []
+max_actions_per_hour = 1000
+max_cost_per_day_cents = 10000
+block_high_risk_commands = false
+auto_approve = [
+    "file_read", "file_write", "file_create",
+    "memory_recall", "memory_store",
+    "shell", "process",
+    "glob_search", "content_search",
+    "web_search", "web_fetch",
+    "cron_add", "cron_list", "cron_remove", "cron_update",
+    "hx_lookup_sender", "hx_local_find_user",
+    "hx_local_list_users", "hx_local_update_user", "hx_local_stats",
+    "hx_invalidate_cache", "hx_register_user",
+    "hx_get_user", "hx_check_quota", "hx_usage_stats",
+]
+non_cli_excluded_tools = []
+
+# ── 安全 ──────────────────────────────────────────────────────
+[security]
+canary_tokens = false
+semantic_guard = false
+
+[security.otp]
+enabled = false
+
+# ── 心跳（定时巡检）──────────────────────────────────────────
+[heartbeat]
+enabled = true
+interval_minutes = 30
+max_tasks_per_tick = 3
+
+# ── Cron ──────────────────────────────────────────────────────
+[cron]
+enabled = true
+max_run_history = 50
+
+# ── 开放功能 ──────────────────────────────────────────────────
+[web_search]
+enabled = true
+
+[web_fetch]
+enabled = true
+
+[browser]
+enabled = false
+
+[http_request]
+enabled = false
+
+[channels_config]
+cli = false
+message_timeout_secs = 600
