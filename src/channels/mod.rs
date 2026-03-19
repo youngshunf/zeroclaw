@@ -420,10 +420,14 @@ fn conversation_memory_key(msg: &traits::ChannelMessage) -> String {
 }
 
 fn conversation_history_key(msg: &traits::ChannelMessage) -> String {
-    // Include thread_ts for per-topic session isolation in forum groups
+    // Include thread_ts for per-topic session isolation in forum groups.
+    // NapCat (QQ) sets thread_ts to the per-message ID, which is unique
+    // every time — skip it so conversations persist across messages.
     match &msg.thread_ts {
-        Some(tid) => format!("{}_{}_{}", msg.channel, tid, msg.sender),
-        None => format!("{}_{}", msg.channel, msg.sender),
+        Some(tid) if msg.channel != "napcat" => {
+            format!("{}_{}_{}", msg.channel, tid, msg.sender)
+        }
+        _ => format!("{}_{}", msg.channel, msg.sender),
     }
 }
 

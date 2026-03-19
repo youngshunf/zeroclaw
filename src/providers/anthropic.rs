@@ -561,11 +561,36 @@ impl Provider for AnthropicProvider {
 
         request = self.apply_auth(request, credential);
 
+        tracing::info!(
+            target: "llm_request",
+            url = %format!("{}/v1/messages", self.base_url),
+            model = %model,
+            method = "chat_with_system",
+            has_credential = true,
+            credential_prefix = %&credential[..credential.len().min(12)],
+            "Sending Anthropic chat_with_system request"
+        );
+
         let response = request.send().await?;
 
-        if !response.status().is_success() {
+        let status = response.status();
+        if !status.is_success() {
+            tracing::error!(
+                target: "llm_request",
+                url = %format!("{}/v1/messages", self.base_url),
+                status = %status,
+                method = "chat_with_system",
+                "Anthropic chat_with_system request FAILED"
+            );
             return Err(super::api_error("Anthropic", response).await);
         }
+
+        tracing::info!(
+            target: "llm_request",
+            status = %status,
+            method = "chat_with_system",
+            "Anthropic chat_with_system request OK"
+        );
 
         let chat_response: ChatResponse = response.json().await?;
         Self::parse_text_response(chat_response)
@@ -590,6 +615,7 @@ impl Provider for AnthropicProvider {
             Self::apply_cache_to_last_message(&mut messages);
         }
 
+        let num_messages = messages.len();
         let native_request = NativeChatRequest {
             model: model.to_string(),
             max_tokens: 4096,
@@ -606,10 +632,39 @@ impl Provider for AnthropicProvider {
             .header("content-type", "application/json")
             .json(&native_request);
 
+        tracing::info!(
+            target: "llm_request",
+            url = %format!("{}/v1/messages", self.base_url),
+            model = %model,
+            method = "chat",
+            has_credential = true,
+            credential_prefix = %&credential[..credential.len().min(12)],
+            num_messages,
+            has_tools = native_request.tools.is_some(),
+            "Sending Anthropic chat request"
+        );
+
         let response = self.apply_auth(req, credential).send().await?;
-        if !response.status().is_success() {
+
+        let status = response.status();
+        if !status.is_success() {
+            tracing::error!(
+                target: "llm_request",
+                url = %format!("{}/v1/messages", self.base_url),
+                status = %status,
+                model = %model,
+                method = "chat",
+                "Anthropic chat request FAILED"
+            );
             return Err(super::api_error("Anthropic", response).await);
         }
+
+        tracing::info!(
+            target: "llm_request",
+            status = %status,
+            method = "chat",
+            "Anthropic chat request OK"
+        );
 
         let native_response: NativeChatResponse = response.json().await?;
         Ok(Self::parse_native_response(native_response))
