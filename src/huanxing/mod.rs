@@ -47,4 +47,5 @@ pub use api_client::ApiClient;
 pub use config::HuanXingConfig;
 pub use db::TenantDb;
 pub use router::TenantRouter;
+#[allow(unused_imports)] // 公共 API 导出，供外部模块使用
 pub use tenant::TenantContext;
