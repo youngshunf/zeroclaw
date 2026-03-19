@@ -10,9 +10,8 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
-      // Point @ to web/src so all existing imports work
-      "@": path.resolve(__dirname, "../../web/src"),
-      // web/src/index.css 中 @import "tailwindcss" 从 web/src 路径 resolve 不到
+      // 指向桌面端自身 src，不再依赖 web/src
+      "@": path.resolve(__dirname, "./src"),
       // 显式指向桌面端 node_modules 的 index.css
       "tailwindcss": path.resolve(__dirname, "node_modules/tailwindcss/index.css"),
     },
