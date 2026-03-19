@@ -6,18 +6,19 @@
 //! Results are delivered through the tenant's bound channel (QQ/Feishu/etc).
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::sync::Arc;
 
 use anyhow::Result;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use tokio::sync::Semaphore;
 use tokio::time::{self, Duration};
 use tracing::{error, info, warn};
 
+use crate::channels::get_live_channel;
 use crate::channels::traits::SendMessage;
 use crate::config::Config;
-use crate::heartbeat::engine::HeartbeatEngine;
 use crate::huanxing::config::TenantHeartbeatConfig;
 use crate::huanxing::db::{ChannelRecord, TenantDb, TenantRecord, UserFilter};
 use crate::observability::{Observer, ObserverEvent};
@@ -131,17 +132,8 @@ impl TenantHeartbeatManager {
                 continue;
             }
 
-            // Read and parse tasks
-            let engine = HeartbeatEngine::new(
-                crate::config::HeartbeatConfig {
-                    enabled: true,
-                    ..Default::default()
-                },
-                workspace_dir.clone(),
-                Arc::clone(&self.observer),
-            );
-
-            let scheduled_tasks: Vec<crate::heartbeat::engine::HeartbeatTask> = match engine.collect_runnable_tasks().await {
+            // Read and parse scheduled tasks (huanxing-owned cron parsing)
+            let scheduled_tasks = match collect_scheduled_tasks(&heartbeat_path, now, window_minutes) {
                 Ok(tasks) => tasks,
                 Err(e) => {
                     warn!(
@@ -401,9 +393,7 @@ fn build_tenant_config(
 /// Tries each channel in order until one succeeds.
 async fn deliver_to_channels(channels: &[ChannelRecord], message: &str) -> Result<()> {
     for ch in channels {
-        // TODO: get_live_channel not available in upstream yet — stub for now
-        let channel: Option<Box<dyn crate::channels::traits::Channel>> = None;
-        if let Some(channel) = channel {
+        if let Some(channel) = get_live_channel(&ch.channel_type) {
             match channel.send(&SendMessage::new(message, &ch.peer_id)).await {
                 Ok(()) => return Ok(()),
                 Err(e) => {
@@ -421,4 +411,120 @@ async fn deliver_to_channels(channels: &[ChannelRecord], message: &str) -> Resul
         "No live channel could deliver message (tried {} channels)",
         channels.len()
     )
+}
+
+// ── Huanxing-owned scheduled task parsing ─────────────────────────
+// Parses HEARTBEAT.md with `schedule:cron` support without modifying
+// the upstream HeartbeatTask struct.
+
+/// A scheduled heartbeat task with cron expression.
+#[derive(Debug, Clone)]
+struct ScheduledTask {
+    pub text: String,
+    pub schedule: String,
+}
+
+/// Read HEARTBEAT.md and collect tasks whose cron schedule matches `now`.
+///
+/// Task format in HEARTBEAT.md:
+///   `- [high|schedule:*/5 * * * *] Check email`
+///   `- [schedule:0 9 * * 1-5] Morning standup reminder`
+///   `- [active|schedule:0 */2 * * *] Sync data`
+///
+/// Only tasks with a `schedule:` tag and status != paused/completed are returned.
+fn collect_scheduled_tasks(
+    heartbeat_path: &Path,
+    now: DateTime<Utc>,
+    window_minutes: u32,
+) -> Result<Vec<ScheduledTask>> {
+    let content = std::fs::read_to_string(heartbeat_path)?;
+    let mut tasks = Vec::new();
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        let Some(text) = trimmed.strip_prefix("- ") else {
+            continue;
+        };
+        if text.is_empty() {
+            continue;
+        }
+
+        // Parse [meta] prefix if present
+        let Some(rest) = text.strip_prefix('[') else {
+            continue; // No metadata = no schedule, skip
+        };
+        let Some((meta, task_text)) = rest.split_once(']') else {
+            continue;
+        };
+        let task_text = task_text.trim();
+        if task_text.is_empty() {
+            continue;
+        }
+
+        // Parse meta tags: look for schedule: and check status
+        let mut schedule: Option<String> = None;
+        let mut is_paused = false;
+
+        for part in meta.split('|') {
+            let part = part.trim();
+            if let Some(cron_expr) = part.strip_prefix("schedule:") {
+                let expr = cron_expr.trim();
+                if !expr.is_empty() {
+                    schedule = Some(expr.to_string());
+                }
+            } else {
+                match part.to_ascii_lowercase().as_str() {
+                    "paused" | "pause" | "completed" | "complete" | "done" => {
+                        is_paused = true;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // Only include tasks with a schedule that are active
+        if is_paused {
+            continue;
+        }
+        let Some(cron_expr) = schedule else {
+            continue;
+        };
+
+        // Check if cron matches current time window
+        if schedule_matches(&cron_expr, now, window_minutes) {
+            tasks.push(ScheduledTask {
+                text: task_text.to_string(),
+                schedule: cron_expr,
+            });
+        }
+    }
+
+    Ok(tasks)
+}
+
+/// Check if a cron expression matches within [now - window, now].
+fn schedule_matches(expr: &str, now: DateTime<Utc>, window_minutes: u32) -> bool {
+    match crate::cron::normalize_expression(expr) {
+        Ok(normalized) => match cron::Schedule::from_str(&normalized) {
+            Ok(cron_schedule) => {
+                let window = chrono::Duration::minutes(i64::from(window_minutes));
+                let window_start = now - window;
+                for next in cron_schedule.after(&window_start).take(5) {
+                    if next > now {
+                        break;
+                    }
+                    return true;
+                }
+                false
+            }
+            Err(e) => {
+                warn!("Invalid cron schedule '{expr}': {e}");
+                false
+            }
+        },
+        Err(e) => {
+            warn!("Failed to normalize cron expression '{expr}': {e}");
+            false
+        }
+    }
 }

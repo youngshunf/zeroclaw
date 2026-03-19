@@ -214,6 +214,32 @@ const CHANNEL_HOOK_MAX_OUTBOUND_CHARS: usize = 20_000;
 type ProviderCacheMap = Arc<Mutex<HashMap<String, Arc<dyn Provider>>>>;
 type RouteSelectionMap = Arc<Mutex<HashMap<String, ChannelRouteSelection>>>;
 
+// HUANXING: global channel registry for tenant heartbeat delivery
+#[cfg(feature = "huanxing")]
+fn live_channels_registry() -> &'static Mutex<HashMap<String, Arc<dyn Channel>>> {
+    static REGISTRY: OnceLock<Mutex<HashMap<String, Arc<dyn Channel>>>> = OnceLock::new();
+    REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+#[cfg(feature = "huanxing")]
+fn register_live_channels(channels_by_name: &HashMap<String, Arc<dyn Channel>>) {
+    let mut guard = live_channels_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    guard.clear();
+    for (name, channel) in channels_by_name {
+        guard.insert(name.to_ascii_lowercase(), Arc::clone(channel));
+    }
+}
+
+#[cfg(feature = "huanxing")]
+pub(crate) fn get_live_channel(name: &str) -> Option<Arc<dyn Channel>> {
+    live_channels_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&name.to_ascii_lowercase())
+        .cloned()
+}
 fn effective_channel_message_timeout_secs(configured: u64) -> u64 {
     configured.max(MIN_CHANNEL_MESSAGE_TIMEOUT_SECS)
 }
@@ -4368,6 +4394,9 @@ pub async fn start_channels(config: Config) -> Result<()> {
             .map(|ch| (ch.name().to_string(), Arc::clone(ch)))
             .collect::<HashMap<_, _>>(),
     );
+    // HUANXING: register channels for tenant heartbeat delivery
+    #[cfg(feature = "huanxing")]
+    register_live_channels(&channels_by_name);
     let max_in_flight_messages = compute_max_in_flight_messages(channels.len());
 
     println!("  🚦 In-flight message limit: {max_in_flight_messages}");
