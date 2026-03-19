@@ -19,7 +19,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 SERVER_CONFIG="$PROJECT_DIR/server-config"
 DESKTOP_CONFIG="$HOME/.zeroclaw/config.toml"
-BINARY="$PROJECT_DIR/target/debug/zeroclaw"
+BINARY="$PROJECT_DIR/target/release/zeroclaw"
 
 # 颜色
 RED='\033[0;31m'
@@ -62,13 +62,13 @@ preflight_check() {
 
 # ── 编译 ──────────────────────────────────────────────────────
 do_build() {
-    info "编译 zeroclaw（debug 模式）..."
+    info "编译 zeroclaw（release 模式）..."
     cd "$PROJECT_DIR"
 
     # 设置编译时环境变量
     export ZEROCLAW_BUILD_VERSION="local-test-$(date +%Y%m%d)"
 
-    cargo build --bin zeroclaw --features "huanxing,channel-lark" 2>&1
+    cargo build --release --bin zeroclaw --features "huanxing,channel-lark" 2>&1
     ok "编译完成: $BINARY"
 }
 

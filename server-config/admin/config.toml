@@ -6,12 +6,8 @@
 default_provider = "custom:https://llm.dcfuture.cn/v1"
 default_model = "claude-sonnet-4-6"
 default_temperature = 0.7
-api_key = "sk-cf-1qwouDM8SdBbSRca_Us89hUMkW1zOwSzUrl32TxsNWE"
+api_key = "sk-CBUn2XGX9ZGbPBbq8oXpSTKLcBmKmsKGrmfW5I6bHBHGAHkC"
 
-[model_providers.openai_compat]
-base_url = "https://llm.dcfuture.cn/v1"
-api_key = "sk-cf-1qwouDM8SdBbSRca_Us89hUMkW1zOwSzUrl32TxsNWE"
-requires_openai_auth = false
 
 # ── Agent ─────────────────────────────────────────────────────
 [agent]
