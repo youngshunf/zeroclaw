@@ -350,6 +350,11 @@ pub struct Config {
     /// `LANG`, or `LC_ALL` environment variables (defaulting to `"en"`).
     #[serde(default)]
     pub locale: Option<String>,
+
+    /// HuanXing multi-tenant routing configuration (`[huanxing]`).
+    #[cfg(feature = "huanxing")]
+    #[serde(default)]
+    pub huanxing: crate::huanxing::HuanXingConfig,
 }
 
 /// Multi-client workspace isolation configuration.
@@ -6044,6 +6049,8 @@ impl Default for Config {
             linkedin: LinkedInConfig::default(),
             plugins: PluginsConfig::default(),
             locale: None,
+            #[cfg(feature = "huanxing")]
+            huanxing: Default::default(),
         }
     }
 }

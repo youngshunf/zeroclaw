@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, SystemTime};
 
-mod audit;
+pub(crate) mod audit;
 #[cfg(feature = "skill-creation")]
 pub mod creator;
 

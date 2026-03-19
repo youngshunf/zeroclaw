@@ -1,0 +1,385 @@
+//! Per-tenant agent context.
+//!
+//! A [`TenantContext`] carries the per-user overrides that customize the shared
+//! agent loop: system prompt, workspace directory, model, provider, tool
+//! filter, memory, session manager, and conversation histories.
+//!
+//! The shared [`ChannelRuntimeContext`] provides channels, LLM pool,
+//! and base tools — tenant context overrides the user-facing subset.
+
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+
+use serde::Deserialize;
+
+use crate::memory::{self, Memory};
+use crate::providers::ChatMessage;
+
+// ── Workspace config.toml partial overlay ────────────────────
+//
+// Agent workspaces may contain a `config.toml` written at registration time.
+// We only parse the fields that are meaningful for per-tenant override;
+// everything else is inherited from the global daemon config.
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct WorkspaceOverrides {
+    api_key: Option<String>,
+    default_provider: Option<String>,
+    default_model: Option<String>,
+    default_temperature: Option<f64>,
+    #[serde(default)]
+    agent: AgentOverrides,
+    #[serde(default)]
+    memory: Option<MemoryOverrides>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct AgentOverrides {
+    session: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct MemoryOverrides {
+    auto_save: Option<bool>,
+    backend: Option<String>,
+}
+
+/// Type alias matching channels/mod.rs ConversationHistoryMap.
+pub type ConversationHistoryMap = Arc<Mutex<HashMap<String, Vec<ChatMessage>>>>;
+
+/// Per-tenant agent context. Loaded from DB + workspace on first message,
+/// then cached in [`TenantRouter`].
+pub struct TenantContext {
+    /// Agent ID (e.g. "001-18611348367-finance").
+    pub agent_id: String,
+
+    /// User ID (UUID from users table).
+    pub user_id: String,
+
+    /// Workspace directory for this tenant.
+    /// Contains SOUL.md, USER.md, memory/, sessions.db, cron/, etc.
+    pub workspace_dir: PathBuf,
+
+    /// Fully-built system prompt (SOUL.md + AGENTS.md + USER.md + BOOTSTRAP.md + MEMORY.md + skills).
+    /// Constructed via `build_system_prompt()`, not just SOUL.md raw text.
+    pub system_prompt: String,
+
+    /// Model to use for this tenant (e.g. "deepseek-chat").
+    pub model: Option<String>,
+
+    /// Provider to use (e.g. "deepseek", "openrouter").
+    pub provider: Option<String>,
+
+    /// Template name (e.g. "finance").
+    pub template: Option<String>,
+
+    /// User's display name.
+    pub nickname: Option<String>,
+
+    /// Custom AI character name.
+    pub star_name: Option<String>,
+
+    /// Subscription plan.
+    pub plan: Option<String>,
+
+    /// Per-tenant temperature override (from workspace config.toml).
+    pub temperature: Option<f64>,
+
+    /// Per-tenant API key (from workspace config.toml, e.g. user-specific LLM token).
+    pub api_key: Option<String>,
+
+    /// Whether this is the guardian (unregistered users) context.
+    pub is_guardian: bool,
+
+    /// Per-tenant vector memory (brain.db in tenant workspace).
+    pub memory: Arc<dyn Memory>,
+
+    /// Per-tenant session manager (reserved for future session persistence).
+    pub session_manager: Option<()>,
+
+    /// Per-tenant conversation histories (isolated from other tenants).
+    pub conversation_histories: ConversationHistoryMap,
+}
+
+// Manual Debug impl because Arc<dyn Memory> doesn't impl Debug.
+impl std::fmt::Debug for TenantContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TenantContext")
+            .field("agent_id", &self.agent_id)
+            .field("user_id", &self.user_id)
+            .field("workspace_dir", &self.workspace_dir)
+            .field("model", &self.model)
+            .field("provider", &self.provider)
+            .field("template", &self.template)
+            .field("nickname", &self.nickname)
+            .field("star_name", &self.star_name)
+            .field("plan", &self.plan)
+            .field("temperature", &self.temperature)
+            .field("has_api_key", &self.api_key.is_some())
+            .field("is_guardian", &self.is_guardian)
+            .field("has_memory", &true)
+            .field("has_session_manager", &self.session_manager.is_some())
+            .finish()
+    }
+}
+
+impl TenantContext {
+    /// Load a tenant context from workspace directory.
+    ///
+    /// Builds the full system prompt from workspace files (SOUL.md, AGENTS.md,
+    /// USER.md, BOOTSTRAP.md, MEMORY.md, skills/), creates per-tenant memory
+    /// and session manager instances.
+    pub async fn load(
+        agent_id: &str,
+        user_id: &str,
+        workspace_dir: PathBuf,
+        model: Option<String>,
+        provider: Option<String>,
+        template: Option<String>,
+        nickname: Option<String>,
+        star_name: Option<String>,
+        plan: Option<String>,
+        global_config: &crate::config::Config,
+    ) -> anyhow::Result<Self> {
+        // ── 0. Load workspace config.toml overrides ──────────────────
+        let overrides = load_workspace_overrides(&workspace_dir).await;
+
+        // Effective model/provider: workspace config > DB record > global [huanxing] default
+        let effective_model = overrides.default_model.clone()
+            .or(model.clone());
+        let effective_provider = overrides.default_provider.clone()
+            .or(provider.clone());
+        let effective_api_key = overrides.api_key.clone()
+            .or_else(|| global_config.api_key.clone());
+        let effective_temperature = overrides.default_temperature;
+
+        // ── A. Build full system prompt from workspace files ──────────
+        let model_name = effective_model
+            .as_deref()
+            .or(global_config.default_model.as_deref())
+            .unwrap_or("claude-sonnet-4-6");
+
+        // Load skills from tenant workspace
+        let _common_skills_dir = global_config.huanxing.resolve_common_skills_dir(&global_config.workspace_dir);
+        let skills =
+            crate::skills::load_skills_with_config(&workspace_dir, global_config);
+
+        let tool_descs: Vec<(&str, &str)> = Vec::new();
+
+        let system_prompt = crate::channels::build_system_prompt(
+            &workspace_dir,
+            model_name,
+            &tool_descs,
+            &skills,
+            Some(&global_config.identity),
+            None,
+        );
+
+        tracing::debug!(
+            agent_id,
+            workspace = %workspace_dir.display(),
+            prompt_len = system_prompt.len(),
+            skills_count = skills.len(),
+            has_workspace_config = overrides.api_key.is_some(),
+            "Built full system prompt for tenant"
+        );
+
+        // ── B. Create per-tenant memory ──────────────────────────────
+        let effective_memory_config = {
+            let mut cfg = global_config.memory.clone();
+            if let Some(ref mem_ov) = overrides.memory {
+                if let Some(auto_save) = mem_ov.auto_save {
+                    cfg.auto_save = auto_save;
+                }
+                if let Some(ref backend) = mem_ov.backend {
+                    cfg.backend = backend.clone();
+                }
+            }
+            cfg
+        };
+        let tenant_memory: Arc<dyn Memory> = Arc::from(memory::create_memory(
+            &effective_memory_config,
+            &workspace_dir,
+            effective_api_key.as_deref(),
+        )?);
+
+        // ── C. Session manager (stubbed — upstream doesn't have session API yet)
+        let tenant_session_manager: Option<()> = None;
+
+        // ── D. Independent conversation histories ────────────────────
+        let conversation_histories: ConversationHistoryMap =
+            Arc::new(Mutex::new(HashMap::new()));
+
+        Ok(Self {
+            agent_id: agent_id.to_string(),
+            user_id: user_id.to_string(),
+            workspace_dir,
+            system_prompt,
+            model: effective_model,
+            provider: effective_provider,
+            template,
+            nickname,
+            star_name,
+            plan,
+            temperature: effective_temperature,
+            api_key: effective_api_key,
+            is_guardian: false,
+            memory: tenant_memory,
+            session_manager: tenant_session_manager,
+            conversation_histories,
+        })
+    }
+
+    /// Create the guardian context for unregistered users.
+    pub async fn guardian(
+        workspace_dir: PathBuf,
+        global_config: &crate::config::Config,
+    ) -> anyhow::Result<Self> {
+        // Ensure guardian workspace exists
+        tokio::fs::create_dir_all(&workspace_dir).await?;
+
+        // Load workspace config.toml overrides (guardian may have one too)
+        let overrides = load_workspace_overrides(&workspace_dir).await;
+
+        let effective_api_key = overrides.api_key.clone()
+            .or_else(|| global_config.api_key.clone());
+
+        let model_name = overrides.default_model.as_deref()
+            .or(global_config.default_model.as_deref())
+            .unwrap_or("claude-sonnet-4-6");
+
+        // Load skills from guardian workspace (if any)
+        let skills =
+            crate::skills::load_skills_with_config(&workspace_dir, global_config);
+
+        let tool_descs: Vec<(&str, &str)> = Vec::new();
+
+        // Build full system prompt from guardian workspace files
+        let system_prompt = if workspace_dir.join("SOUL.md").exists() {
+            crate::channels::build_system_prompt(
+                &workspace_dir,
+                model_name,
+                &tool_descs,
+                &skills,
+                Some(&global_config.identity),
+                None,
+            )
+        } else {
+            default_guardian_prompt()
+        };
+
+        // Per-tenant memory for guardian
+        let effective_memory_config = {
+            let mut cfg = global_config.memory.clone();
+            if let Some(ref mem_ov) = overrides.memory {
+                if let Some(auto_save) = mem_ov.auto_save {
+                    cfg.auto_save = auto_save;
+                }
+                if let Some(ref backend) = mem_ov.backend {
+                    cfg.backend = backend.clone();
+                }
+            }
+            cfg
+        };
+        let guardian_memory: Arc<dyn Memory> = Arc::from(memory::create_memory(
+            &effective_memory_config,
+            &workspace_dir,
+            effective_api_key.as_deref(),
+        )?);
+
+        // Per-tenant session manager for guardian (stubbed)
+        let guardian_session_manager: Option<()> = None;
+
+        let conversation_histories: ConversationHistoryMap =
+            Arc::new(Mutex::new(HashMap::new()));
+
+        Ok(Self {
+            agent_id: "guardian".to_string(),
+            user_id: String::new(),
+            workspace_dir,
+            system_prompt,
+            model: overrides.default_model,
+            provider: overrides.default_provider,
+            template: None,
+            nickname: None,
+            star_name: None,
+            plan: None,
+            temperature: overrides.default_temperature,
+            api_key: effective_api_key,
+            is_guardian: true,
+            memory: guardian_memory,
+            session_manager: guardian_session_manager,
+            conversation_histories,
+        })
+    }
+
+    /// Create the admin agent context.
+    /// Admin agent handles server management, routed from admin-designated channels.
+    pub async fn admin(
+        workspace_dir: PathBuf,
+        global_config: &crate::config::Config,
+    ) -> anyhow::Result<Self> {
+        // Reuse the guardian() constructor logic, then patch agent_id and is_guardian.
+        let mut ctx = Self::guardian(workspace_dir, global_config).await?;
+        ctx.agent_id = "admin".to_string();
+        ctx.is_guardian = false; // Admin is not guardian — it has its own tool permissions
+        Ok(ctx)
+    }
+}
+
+// ── Helpers ──────────────────────────────────────────────────
+
+/// Load workspace config.toml overrides. Returns defaults on any error.
+async fn load_workspace_overrides(workspace_dir: &std::path::Path) -> WorkspaceOverrides {
+    let config_path = workspace_dir.join("config.toml");
+    if !config_path.exists() {
+        return WorkspaceOverrides::default();
+    }
+    match tokio::fs::read_to_string(&config_path).await {
+        Ok(content) => match toml::from_str::<WorkspaceOverrides>(&content) {
+            Ok(overrides) => {
+                tracing::debug!(
+                    workspace = %workspace_dir.display(),
+                    has_api_key = overrides.api_key.is_some(),
+                    has_model = overrides.default_model.is_some(),
+                    has_provider = overrides.default_provider.is_some(),
+                    has_session = overrides.agent.session.is_some(),
+                    "Loaded workspace config.toml overrides"
+                );
+                overrides
+            }
+            Err(e) => {
+                tracing::warn!(
+                    path = %config_path.display(),
+                    error = %e,
+                    "Failed to parse workspace config.toml, using defaults"
+                );
+                WorkspaceOverrides::default()
+            }
+        },
+        Err(e) => {
+            tracing::warn!(
+                path = %config_path.display(),
+                error = %e,
+                "Failed to read workspace config.toml, using defaults"
+            );
+            WorkspaceOverrides::default()
+        }
+    }
+}
+
+fn default_guardian_prompt() -> String {
+    r#"你是唤星云服务的迎宾助手。
+
+当用户发送消息时，请引导他们完成注册流程：
+1. 询问用户手机号
+2. 发送短信验证码
+3. 验证后完成注册
+
+注册完成后，用户将获得专属的 AI 助手。"#
+        .to_string()
+}

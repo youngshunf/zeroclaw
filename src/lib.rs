@@ -77,6 +77,9 @@ pub(crate) mod util;
 #[cfg(feature = "plugins-wasm")]
 pub mod plugins;
 
+#[cfg(feature = "huanxing")]
+pub mod huanxing;
+
 pub use config::Config;
 
 /// Gateway management subcommands

@@ -110,6 +110,9 @@ mod tools;
 mod tunnel;
 mod util;
 
+#[cfg(feature = "huanxing")]
+pub use zeroclaw::huanxing;
+
 use config::Config;
 
 // Re-export so binary modules can use crate::<CommandEnum> while keeping a single source of truth.

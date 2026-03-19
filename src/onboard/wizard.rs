@@ -194,6 +194,8 @@ pub async fn run_wizard(force: bool) -> Result<Config> {
         linkedin: crate::config::LinkedInConfig::default(),
         plugins: crate::config::PluginsConfig::default(),
         locale: None,
+        #[cfg(feature = "huanxing")]
+        huanxing: Default::default(),
     };
 
     println!(
@@ -569,6 +571,8 @@ async fn run_quick_setup_with_home(
         linkedin: crate::config::LinkedInConfig::default(),
         plugins: crate::config::PluginsConfig::default(),
         locale: None,
+        #[cfg(feature = "huanxing")]
+        huanxing: Default::default(),
     };
 
     config.save().await?;
