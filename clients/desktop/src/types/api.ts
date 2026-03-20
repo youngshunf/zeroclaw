@@ -141,17 +141,45 @@ export interface SSEEvent {
 }
 
 export interface WsMessage {
-  type: 'message' | 'chunk' | 'tool_call' | 'tool_result' | 'done' | 'error' | 'history'
-      | 'progress' | 'progress_block' | 'progress_clear';
+  type:
+    | 'message'
+    | 'chunk'
+    | 'thinking'
+    | 'tool_call'
+    | 'tool_result'
+    | 'done'
+    | 'error'
+    | 'history'
+    | 'history_request'
+    | 'session_start'
+    | 'connected'
+    | 'progress'
+    | 'progress_block'
+    | 'progress_clear';
+  session_id?: string;
   content?: string;
   full_response?: string;
-  name?: string;
-  args?: any;
-  output?: string;
   message?: string;
-  session_id?: string;
+  /** thinking 帧 */
+  done?: boolean;
+  /** tool_call 帧 */
+  call_id?: string;
+  name?: string;
+  display_name?: string;
+  args?: any;
+  args_preview?: string;
+  /** tool_result 帧 */
+  status?: 'success' | 'error' | 'cancelled';
+  output?: string;
+  output_preview?: string;
+  duration_ms?: number;
+  /** history 帧 */
   messages?: Array<{
-    role: 'user' | 'assistant';
+    role: 'user' | 'assistant' | 'system';
     content: string;
+    timestamp?: string;
   }>;
+  /** session_start 帧 */
+  resumed?: boolean;
+  message_count?: number;
 }

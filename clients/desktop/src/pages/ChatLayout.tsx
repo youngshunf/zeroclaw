@@ -3,12 +3,12 @@
  *
  * 左侧会话列表（hx-panel）+ 右侧聊天区（hx-chat）
  *
- * 多会话实时在线：所有会话在页面加载时自动建立 WS 连接，
- * 后台会话持续接收消息并产生未读提醒。
+ * 多会话实时在线：单一 WS 连接（wsMultiplexer），
+ * 所有会话通过帧中的 session_id 路由，后台会话持续接收消息并产生未读提醒。
  */
 
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
-import { getToken } from '@/lib/auth';
+import { wsMultiplexer } from '@/lib/ws';
 import type { WsMessage } from '@/types/api';
 import { useActiveAgent } from '@/hooks/useActiveAgent';
 import { listAgents, switchAgent, type AgentInfo } from '@/huanxing/lib/agent-api';
@@ -37,19 +37,6 @@ function makeId(): string {
 const MAX_AUTO_CONNECT = 20;
 /** 心跳间隔（毫秒） */
 const HEARTBEAT_INTERVAL_MS = 30_000;
-/** 重连初始延迟（毫秒） */
-const RECONNECT_BASE_MS = 1_000;
-/** 重连最大延迟（毫秒） */
-const RECONNECT_MAX_MS = 30_000;
-
-// ── WS 连接状态 ──────────────────────────────────────────────────
-interface SessionWsState {
-  ws: WebSocket;
-  connected: boolean;
-  agentId?: string;
-  /** 调用此函数主动关闭（不触发自动重连） */
-  intentionalClose: () => void;
-}
 
 export default function ChatLayout() {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -92,9 +79,10 @@ export default function ChatLayout() {
   }, [setActiveAgent]);
 
   // WS state
-  const wsMapRef = useRef(new Map<string, SessionWsState>());
-  /** 跟踪各会话的重连定时器，组件卸载时清理 */
-  const reconnectTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  /** session_id → multiplexer 取消订阅函数 */
+  const subscribersRef = useRef(new Map<string, () => void>());
+  /** session_id → connected 状态 */
+  const connectedSessionsRef = useRef(new Set<string>());
   const [histories, setHistories] = useState(new Map<string, ChatMessage[]>());
   const [connectedMap, setConnectedMap] = useState(new Map<string, boolean>());
   const [unreadCounts, setUnreadCounts] = useState(new Map<string, number>());
@@ -124,7 +112,7 @@ export default function ChatLayout() {
 
   // Auto scroll
   const currentMessages = activeSessionId ? (histories.get(activeSessionId) ?? []) : [];
-  const currentConnected = activeSessionId ? (connectedMap.get(activeSessionId) ?? false) : false;
+  const currentConnected = activeSessionId ? wsMultiplexer.connected : false;
   const currentTyping = activeSessionId ? (typingMap.get(activeSessionId) ?? false) : false;
   const currentStreamingContent = activeSessionId ? (streamingContent.get(activeSessionId) ?? '') : '';
   const currentProgressLines = activeSessionId ? (progressLines.get(activeSessionId) ?? []) : [];
@@ -319,106 +307,58 @@ export default function ChatLayout() {
     }
   }, []);
 
-  // ── WS 连接（含自动重连） ──────────────────────────────────────
+  // ── WS 连接（通过 multiplexer 订阅） ──────────────────────────
   const connectSession = useCallback((sessionId: string, agentId?: string) => {
-    // 已有连接则跳过
-    if (wsMapRef.current.has(sessionId)) return;
+    // 已订阅则跳过
+    if (subscribersRef.current.has(sessionId)) return;
     if (unmountedRef.current) return;
 
-    let reconnectDelay = RECONNECT_BASE_MS;
-    let intentionallyClosed = false;
+    // 确保全局 WS 已连接
+    if (!wsMultiplexer.connected) {
+      wsMultiplexer.connect();
+    }
 
-    const doConnect = () => {
-      if (unmountedRef.current || intentionallyClosed) return;
-      // 清理可能存在的旧定时器
-      const oldTimer = reconnectTimersRef.current.get(sessionId);
-      if (oldTimer) { clearTimeout(oldTimer); reconnectTimersRef.current.delete(sessionId); }
+    // 订阅该 session 的消息
+    const unsub = wsMultiplexer.subscribe(sessionId, (msg) => {
+      if ((msg as any).type === 'pong') return;
+      handleMessage(sessionId, msg);
+    });
+    subscribersRef.current.set(sessionId, unsub);
 
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const token = getToken() ?? '';
-      const params = new URLSearchParams();
-      params.set('session_id', sessionId);
-      if (agentId) params.set('agent_id', agentId);
-      if (token) params.set('token', token);
-      const url = `${protocol}//${window.location.host}/ws/chat?${params.toString()}`;
-      const ws = new WebSocket(url);
+    // 标记连接中
+    setConnectedMap(prev => new Map(prev).set(sessionId, false));
 
-      const entry: SessionWsState = {
-        ws,
-        connected: false,
-        agentId,
-        intentionalClose: () => {
-          intentionallyClosed = true;
-          const timer = reconnectTimersRef.current.get(sessionId);
-          if (timer) { clearTimeout(timer); reconnectTimersRef.current.delete(sessionId); }
-          ws.onopen = null;
-          ws.onclose = null;
-          ws.onerror = null;
-          ws.onmessage = null;
-          ws.close();
-          wsMapRef.current.delete(sessionId);
-        },
-      };
-      wsMapRef.current.set(sessionId, entry);
-
-      ws.onopen = () => {
-        reconnectDelay = RECONNECT_BASE_MS; // 重置退避
-        const e = wsMapRef.current.get(sessionId);
-        if (e) e.connected = true;
-        setConnectedMap(prev => new Map(prev).set(sessionId, true));
-      };
-
-      ws.onclose = () => {
-        wsMapRef.current.delete(sessionId);
-        setConnectedMap(prev => new Map(prev).set(sessionId, false));
-        // 自动重连（除非主动关闭或组件已卸载）
-        if (!intentionallyClosed && !unmountedRef.current) {
-          const timer = setTimeout(() => {
-            reconnectTimersRef.current.delete(sessionId);
-            doConnect();
-          }, reconnectDelay);
-          reconnectTimersRef.current.set(sessionId, timer);
-          reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_MS);
-        }
-      };
-
-      ws.onerror = () => { /* onclose 会紧随其后触发，在那里处理重连 */ };
-
-      ws.onmessage = (ev: MessageEvent) => {
-        try {
-          const msg = JSON.parse(ev.data) as WsMessage;
-          if ((msg as any).type === 'pong') return; // 心跳响应，忽略
-          handleMessage(sessionId, msg);
-        } catch { /* ignore */ }
-      };
-    };
-
-    doConnect();
+    // 请求历史（如果 WS 已就绪）
+    if (wsMultiplexer.connected) {
+      connectedSessionsRef.current.add(sessionId);
+      setConnectedMap(prev => new Map(prev).set(sessionId, true));
+      wsMultiplexer.requestHistory(sessionId);
+    }
   }, [handleMessage]);
 
-  // ── 主动断开单个会话 ──────────────────────────────────────────
+  // ── 主动断开单个会话（取消订阅） ──────────────────────────────
   const disconnectSession = useCallback((sessionId: string) => {
-    const entry = wsMapRef.current.get(sessionId);
-    if (entry) {
-      entry.intentionalClose();
+    const unsub = subscribersRef.current.get(sessionId);
+    if (unsub) {
+      unsub();
+      subscribersRef.current.delete(sessionId);
     }
-    // 也清理可能残留的重连定时器
-    const timer = reconnectTimersRef.current.get(sessionId);
-    if (timer) { clearTimeout(timer); reconnectTimersRef.current.delete(sessionId); }
+    connectedSessionsRef.current.delete(sessionId);
+    setConnectedMap(prev => { const n = new Map(prev); n.delete(sessionId); return n; });
   }, []);
 
-  // ── 断开全部（仅在组件卸载时使用） ────────────────────────────
+  // ── 断开全部 ───────────────────────────────────────────────────
   const disconnectAll = useCallback(() => {
-    for (const [sid] of wsMapRef.current) disconnectSession(sid);
-    for (const [, timer] of reconnectTimersRef.current) clearTimeout(timer);
-    reconnectTimersRef.current.clear();
+    for (const unsub of subscribersRef.current.values()) unsub();
+    subscribersRef.current.clear();
+    connectedSessionsRef.current.clear();
     setHistories(new Map());
     setConnectedMap(new Map());
     setUnreadCounts(new Map());
     setTypingMap(new Map());
     setLastMessages(new Map());
     pendingContentRef.current.clear();
-  }, [disconnectSession]);
+  }, []);
 
   // ── 页面加载：等待 sidecar 就绪后自动连接所有已有会话 ────────
   useEffect(() => {
@@ -456,13 +396,33 @@ export default function ChatLayout() {
     return () => { cancelled = true; };
   }, [connectSession, loadAgents]);
 
-  // ── 心跳保活：每 30 秒向所有活跃 WS 发送 ping ────────────────
+  // ── 初始化：启动 multiplexer + 监听连接状态 ──────────────────
+  useEffect(() => {
+    wsMultiplexer.onStatusChange = (status) => {
+      if (status === 'connected') {
+        // WS 就绪后，为所有已订阅 session 更新状态并请求历史
+        for (const sessionId of subscribersRef.current.keys()) {
+          connectedSessionsRef.current.add(sessionId);
+          setConnectedMap(prev => new Map(prev).set(sessionId, true));
+          wsMultiplexer.requestHistory(sessionId);
+        }
+      } else if (status === 'disconnected') {
+        for (const sessionId of subscribersRef.current.keys()) {
+          connectedSessionsRef.current.delete(sessionId);
+          setConnectedMap(prev => new Map(prev).set(sessionId, false));
+        }
+      }
+    };
+    wsMultiplexer.connect();
+    return () => { wsMultiplexer.onStatusChange = null; };
+  }, []);
+
+  // ── 心跳保活：定期 ping（multiplexer 层自动重连，此处只发心跳） ──
   useEffect(() => {
     const interval = setInterval(() => {
-      for (const [, entry] of wsMapRef.current) {
-        if (entry.ws.readyState === WebSocket.OPEN) {
-          entry.ws.send(JSON.stringify({ type: 'ping' }));
-        }
+      if (wsMultiplexer.connected) {
+        // multiplexer 没有广播 API，心跳由连接层内部维护
+        // 此处保留 interval 供未来扩展
       }
     }, HEARTBEAT_INTERVAL_MS);
     return () => clearInterval(interval);
@@ -497,8 +457,7 @@ export default function ChatLayout() {
     const trimmed = input.trim();
     const sid = activeSessionIdRef.current;
     if (!trimmed || !sid) return;
-    const entry = wsMapRef.current.get(sid);
-    if (!entry || !entry.connected) return;
+    if (!wsMultiplexer.connected) return;
 
     setHistories(prev => {
       const h = [...(prev.get(sid) ?? [])];
@@ -511,10 +470,11 @@ export default function ChatLayout() {
     setProgressLines(prev => new Map(prev).set(sid, []));
     // 更新最后消息预览
     setLastMessages(prev => new Map(prev).set(sid, trimmed));
-    entry.ws.send(JSON.stringify({ type: 'message', content: trimmed }));
+    // 通过 multiplexer 发送，帧中携带 session_id
+    wsMultiplexer.send(sid, trimmed, activeAgent ?? undefined);
     setInput('');
     textareaRef.current?.focus();
-  }, [input]);
+  }, [input, activeAgent]);
 
   // ── SSE: Agent 切换 + 会话标题更新 ─────────────────────────
   useEffect(() => {

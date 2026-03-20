@@ -1,13 +1,18 @@
-//! WebSocket agent chat handler.
+//! WebSocket agent chat handler — 多路复用版本
 //!
-//! Protocol:
+//! Protocol (v2 — 多 session 版本):
 //! ```text
-//! Client -> Server: {"type":"message","content":"Hello"}
-//! Server -> Client: {"type":"chunk","content":"Hi! "}
-//! Server -> Client: {"type":"tool_call","name":"shell","args":{...}}
-//! Server -> Client: {"type":"tool_result","name":"shell","output":"..."}
-//! Server -> Client: {"type":"done","full_response":"..."}
+//! Client -> Server: {"type":"message","session_id":"sess_xxx","content":"Hello"}
+//! Client -> Server: {"type":"history_request","session_id":"sess_xxx"}
+//! Server -> Client: {"type":"session_start","session_id":"sess_xxx","resumed":true}
+//! Server -> Client: {"type":"chunk","session_id":"sess_xxx","content":"Hi! "}
+//! Server -> Client: {"type":"tool_call","session_id":"sess_xxx","call_id":"c1","name":"shell","display_name":"执行命令","args_preview":"ls"}
+//! Server -> Client: {"type":"tool_result","session_id":"sess_xxx","call_id":"c1","status":"success","output_preview":"3 行"}
+//! Server -> Client: {"type":"done","session_id":"sess_xxx","full_response":"..."}
+//! Server -> Client: {"type":"history","session_id":"sess_xxx","messages":[...]}
 //! ```
+//!
+//! 向后兼容：无 `session_id` 的入站帧会自动路由到连接级默认 session。
 
 use super::AppState;
 use axum::{
@@ -20,27 +25,46 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
+use std::collections::HashMap;
 use tracing::debug;
 
-/// Optional connection parameters sent as the first WebSocket message.
-///
-/// If the first message after upgrade is `{"type":"connect",...}`, these
-/// parameters are extracted and an acknowledgement is sent back. Old clients
-/// that send `{"type":"message",...}` as the first frame still work — the
-/// message is processed normally (backward-compatible).
+/// 入站帧（tagged by "type"）
 #[derive(Debug, Deserialize)]
-struct ConnectParams {
-    #[serde(rename = "type")]
-    msg_type: String,
-    /// Client-chosen session ID for memory persistence
-    #[serde(default)]
-    session_id: Option<String>,
-    /// Device name for device registry tracking
-    #[serde(default)]
-    device_name: Option<String>,
-    /// Client capabilities
-    #[serde(default)]
-    capabilities: Vec<String>,
+#[serde(tag = "type", rename_all = "snake_case")]
+enum InboundFrame {
+    /// 用户发送聊天消息
+    Message {
+        #[serde(default)]
+        session_id: Option<String>,
+        #[serde(default)]
+        agent: Option<String>,
+        #[serde(default)]
+        content: String,
+    },
+    /// 请求某个 session 的历史记录
+    HistoryRequest {
+        #[serde(default)]
+        session_id: Option<String>,
+    },
+    /// 兼容旧版 connect 握手帧
+    Connect {
+        #[serde(default)]
+        session_id: Option<String>,
+        #[serde(default)]
+        device_name: Option<String>,
+        #[serde(default)]
+        capabilities: Vec<String>,
+    },
+}
+
+/// 单连接内一个 session 的状态
+struct AgentSession {
+    agent: crate::agent::Agent,
+    /// 持久化存储 key（格式：gw_{session_id}）
+    session_key: String,
+    /// HUANXING: 缓冲式 observer，收集本次 turn 的工具调用事件
+    #[cfg(feature = "huanxing")]
+    ws_observer: std::sync::Arc<crate::huanxing::ws_observer::WsObserver>,
 }
 
 /// The sub-protocol we support for the chat WebSocket.
@@ -49,9 +73,13 @@ const WS_PROTOCOL: &str = "zeroclaw.v1";
 /// Prefix used in `Sec-WebSocket-Protocol` to carry a bearer token.
 const BEARER_SUBPROTO_PREFIX: &str = "bearer.";
 
+/// 持久化 session key 前缀
+const GW_SESSION_PREFIX: &str = "gw_";
+
 #[derive(Deserialize)]
 pub struct WsQuery {
     pub token: Option<String>,
+    /// 连接级默认 session_id（向后兼容旧协议）
     pub session_id: Option<String>,
 }
 
@@ -133,160 +161,176 @@ pub async fn handle_ws_chat(
         ws
     };
 
-    let session_id = params.session_id;
-    ws.on_upgrade(move |socket| handle_socket(socket, state, session_id))
+    // 连接级默认 session_id（向后兼容旧协议 URL 携带 ?session_id=xxx）
+    let default_session_id = params.session_id;
+    ws.on_upgrade(move |socket| handle_socket(socket, state, default_session_id))
         .into_response()
 }
 
-/// Gateway session key prefix to avoid collisions with channel sessions.
-const GW_SESSION_PREFIX: &str = "gw_";
-
-async fn handle_socket(socket: WebSocket, state: AppState, session_id: Option<String>) {
+/// 主处理循环——单 WS 连接，内部维护 sessions HashMap
+///
+/// `default_session_id`：兼容旧协议，URL 携带的 session_id 作为连接级默认值。
+async fn handle_socket(socket: WebSocket, state: AppState, default_session_id: Option<String>) {
     let (mut sender, mut receiver) = socket.split();
 
-    // Resolve session ID: use provided or generate a new UUID
-    let session_id = session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    let session_key = format!("{GW_SESSION_PREFIX}{session_id}");
+    // 连接级默认 session_id（无 session_id 帧的兜底）
+    let conn_default_sid = default_session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
-    // Build a persistent Agent for this connection so history is maintained across turns.
-    let config = state.config.lock().clone();
-    let mut agent = match crate::agent::Agent::from_config(&config) {
-        Ok(a) => a,
-        Err(e) => {
-            let err = serde_json::json!({"type": "error", "message": format!("Failed to initialise agent: {e}")});
-            let _ = sender.send(Message::Text(err.to_string().into())).await;
-            return;
-        }
-    };
-    agent.set_memory_session_id(Some(session_id.clone()));
+    // 单连接内的所有 session 状态
+    let mut sessions: HashMap<String, AgentSession> = HashMap::new();
 
-    // Hydrate agent from persisted session (if available)
-    let mut resumed = false;
-    let mut message_count: usize = 0;
-    if let Some(ref backend) = state.session_backend {
-        let messages = backend.load(&session_key);
-        if !messages.is_empty() {
-            message_count = messages.len();
-            agent.seed_history(&messages);
-            resumed = true;
-        }
-    }
-
-    // Send session_start message to client
-    let session_start = serde_json::json!({
-        "type": "session_start",
-        "session_id": session_id,
-        "resumed": resumed,
-        "message_count": message_count,
-    });
-    let _ = sender
-        .send(Message::Text(session_start.to_string().into()))
-        .await;
-
-    // ── Optional connect handshake ──────────────────────────────────
-    // The first message may be a `{"type":"connect",...}` frame carrying
-    // connection parameters.  If it is, we extract the params, send an
-    // ack, and proceed to the normal message loop.  If the first message
-    // is a regular `{"type":"message",...}` frame, we fall through and
-    // process it immediately (backward-compatible).
-    let mut first_msg_fallback: Option<String> = None;
-
-    if let Some(first) = receiver.next().await {
-        match first {
-            Ok(Message::Text(text)) => {
-                if let Ok(cp) = serde_json::from_str::<ConnectParams>(&text) {
-                    if cp.msg_type == "connect" {
-                        debug!(
-                            session_id = ?cp.session_id,
-                            device_name = ?cp.device_name,
-                            capabilities = ?cp.capabilities,
-                            "WebSocket connect params received"
-                        );
-                        // Override session_id if provided in connect params
-                        if let Some(sid) = &cp.session_id {
-                            agent.set_memory_session_id(Some(sid.clone()));
-                        }
-                        let ack = serde_json::json!({
-                            "type": "connected",
-                            "message": "Connection established"
-                        });
-                        let _ = sender.send(Message::Text(ack.to_string().into())).await;
-                    } else {
-                        // Not a connect message — fall through to normal processing
-                        first_msg_fallback = Some(text.to_string());
-                    }
-                } else {
-                    // Not parseable as ConnectParams — fall through
-                    first_msg_fallback = Some(text.to_string());
-                }
-            }
-            Ok(Message::Close(_)) | Err(_) => return,
-            _ => {}
-        }
-    }
-
-    // Process the first message if it was not a connect frame
-    if let Some(ref text) = first_msg_fallback {
-        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(text) {
-            if parsed["type"].as_str() == Some("message") {
-                let content = parsed["content"].as_str().unwrap_or("").to_string();
-                if !content.is_empty() {
-                    // Persist user message
-                    if let Some(ref backend) = state.session_backend {
-                        let user_msg = crate::providers::ChatMessage::user(&content);
-                        let _ = backend.append(&session_key, &user_msg);
-                    }
-                    process_chat_message(&state, &mut agent, &mut sender, &content, &session_key)
-                        .await;
-                }
-            }
-        }
-    }
+    // 发送连接建立确认
+    let ack = serde_json::json!({"type": "connected", "message": "Connection established"});
+    let _ = sender.send(Message::Text(ack.to_string().into())).await;
 
     while let Some(msg) = receiver.next().await {
-        let msg = match msg {
-            Ok(Message::Text(text)) => text,
+        let text = match msg {
+            Ok(Message::Text(t)) => t,
             Ok(Message::Close(_)) | Err(_) => break,
             _ => continue,
         };
 
-        // Parse incoming message
-        let parsed: serde_json::Value = match serde_json::from_str(&msg) {
-            Ok(v) => v,
-            Err(_) => {
-                let err = serde_json::json!({"type": "error", "message": "Invalid JSON"});
-                let _ = sender.send(Message::Text(err.to_string().into())).await;
-                continue;
-            }
+        let frame: InboundFrame = match serde_json::from_str(&text) {
+            Ok(f) => f,
+            Err(_) => continue, // 忽略无法解析的帧
         };
 
-        let msg_type = parsed["type"].as_str().unwrap_or("");
-        if msg_type != "message" {
-            continue;
-        }
+        match frame {
+            InboundFrame::Message {
+                session_id,
+                agent: agent_name,
+                content,
+            } => {
+                if content.is_empty() {
+                    continue;
+                }
+                // 无 session_id 的帧路由到连接级默认 session（向后兼容）
+                let sid = session_id.unwrap_or_else(|| conn_default_sid.clone());
 
-        let content = parsed["content"].as_str().unwrap_or("").to_string();
-        if content.is_empty() {
-            continue;
-        }
+                // 获取或初始化该 session 的 Agent
+                if !sessions.contains_key(&sid) {
+                    match init_agent_session(&state, &sid, agent_name.as_deref()) {
+                        Ok(s) => {
+                            // 通知前端 session 状态（已恢复或新建）
+                            let resumed = !s.agent.history().is_empty();
+                            let msg_count = s.agent.history().len();
+                            let start_frame = serde_json::json!({
+                                "type": "session_start",
+                                "session_id": sid,
+                                "resumed": resumed,
+                                "message_count": msg_count,
+                            });
+                            let _ = sender
+                                .send(Message::Text(start_frame.to_string().into()))
+                                .await;
+                            sessions.insert(sid.clone(), s);
+                        }
+                        Err(e) => {
+                            let err = serde_json::json!({
+                                "type": "error",
+                                "session_id": sid,
+                                "message": format!("Failed to initialise agent: {e}"),
+                            });
+                            let _ = sender.send(Message::Text(err.to_string().into())).await;
+                            continue;
+                        }
+                    }
+                }
 
-        // Persist user message
-        if let Some(ref backend) = state.session_backend {
-            let user_msg = crate::providers::ChatMessage::user(&content);
-            let _ = backend.append(&session_key, &user_msg);
-        }
+                let session = sessions.get_mut(&sid).unwrap();
 
-        process_chat_message(&state, &mut agent, &mut sender, &content, &session_key).await;
+                // 持久化用户消息
+                if let Some(ref backend) = state.session_backend {
+                    let user_msg = crate::providers::ChatMessage::user(&content);
+                    let _ = backend.append(&session.session_key, &user_msg);
+                }
+
+                process_chat_message(&state, session, &mut sender, &content, &sid).await;
+            }
+
+            InboundFrame::HistoryRequest { session_id } => {
+                let sid = session_id.unwrap_or_else(|| conn_default_sid.clone());
+                let session_key = format!("{GW_SESSION_PREFIX}{sid}");
+                let messages: Vec<crate::providers::ChatMessage> = state
+                    .session_backend
+                    .as_ref()
+                    .map(|b| b.load(&session_key))
+                    .unwrap_or_default();
+
+                let history_frame = serde_json::json!({
+                    "type": "history",
+                    "session_id": sid,
+                    "messages": messages,
+                });
+                let _ = sender
+                    .send(Message::Text(history_frame.to_string().into()))
+                    .await;
+            }
+
+            InboundFrame::Connect {
+                session_id,
+                device_name,
+                capabilities,
+            } => {
+                // 兼容旧版 connect 握手，仅 debug 日志
+                debug!(
+                    session_id = ?session_id,
+                    device_name = ?device_name,
+                    capabilities = ?capabilities,
+                    "WebSocket connect params received (legacy)"
+                );
+                let ack =
+                    serde_json::json!({"type": "connected", "message": "Connection established"});
+                let _ = sender.send(Message::Text(ack.to_string().into())).await;
+            }
+        }
     }
 }
 
-/// Process a single chat message through the agent and send the response.
+/// 初始化一个新的 AgentSession，从持久化存储恢复历史
+fn init_agent_session(
+    state: &AppState,
+    session_id: &str,
+    _agent_name: Option<&str>,
+) -> anyhow::Result<AgentSession> {
+    let config = state.config.lock().clone();
+    // TODO: 按 agent_name 从对应目录加载 Agent 配置
+    let mut agent = crate::agent::Agent::from_config(&config)?;
+    agent.set_memory_session_id(Some(session_id.to_string()));
+
+    let session_key = format!("{GW_SESSION_PREFIX}{session_id}");
+
+    // 从持久化存储恢复历史
+    if let Some(ref backend) = state.session_backend {
+        let messages = backend.load(&session_key);
+        if !messages.is_empty() {
+            agent.seed_history(&messages);
+        }
+    }
+
+    // HUANXING: 创建 WsObserver 并注入 agent，以便收集工具调用事件
+    #[cfg(feature = "huanxing")]
+    let ws_observer = {
+        let obs = std::sync::Arc::new(crate::huanxing::ws_observer::WsObserver::new());
+        agent.set_observer(obs.clone());
+        obs
+    };
+
+    Ok(AgentSession {
+        agent,
+        session_key,
+        #[cfg(feature = "huanxing")]
+        ws_observer,
+    })
+}
+
+/// 处理单条消息并回复，所有出站帧携带 session_id
 async fn process_chat_message(
     state: &AppState,
-    agent: &mut crate::agent::Agent,
+    session: &mut AgentSession,
     sender: &mut futures_util::stream::SplitSink<WebSocket, Message>,
     content: &str,
-    session_key: &str,
+    session_id: &str,
 ) {
     let provider_label = state
         .config
@@ -295,29 +339,55 @@ async fn process_chat_message(
         .clone()
         .unwrap_or_else(|| "unknown".to_string());
 
-    // Broadcast agent_start event
+    // 广播 agent_start 事件（内部监控用）
     let _ = state.event_tx.send(serde_json::json!({
         "type": "agent_start",
         "provider": provider_label,
         "model": state.model,
     }));
 
-    // Multi-turn chat via persistent Agent (history is maintained across turns)
-    match agent.turn(content).await {
+    match session.agent.turn(content).await {
         Ok(response) => {
-            // Persist assistant response
+            // 持久化助手回复
             if let Some(ref backend) = state.session_backend {
                 let assistant_msg = crate::providers::ChatMessage::assistant(&response);
-                let _ = backend.append(session_key, &assistant_msg);
+                let _ = backend.append(&session.session_key, &assistant_msg);
+            }
+
+            // HUANXING: 取出本次 turn 收集到的工具调用记录，逐一发送 tool_call + tool_result 帧
+            #[cfg(feature = "huanxing")]
+            {
+                let records = session.ws_observer.take_records();
+                for (i, rec) in records.iter().enumerate() {
+                    let call_id = format!("c{i}_{}", rec.name);
+                    let tool_call = serde_json::json!({
+                        "type": "tool_call",
+                        "session_id": session_id,
+                        "call_id": call_id,
+                        "name": rec.name,
+                        "display_name": rec.display_name,
+                        "args_preview": rec.args_preview,
+                    });
+                    let _ = sender.send(Message::Text(tool_call.to_string().into())).await;
+
+                    let tool_result = serde_json::json!({
+                        "type": "tool_result",
+                        "session_id": session_id,
+                        "call_id": call_id,
+                        "status": if rec.success { "success" } else { "error" },
+                        "duration_ms": rec.duration.as_millis(),
+                    });
+                    let _ = sender.send(Message::Text(tool_result.to_string().into())).await;
+                }
             }
 
             let done = serde_json::json!({
                 "type": "done",
+                "session_id": session_id,
                 "full_response": response,
             });
             let _ = sender.send(Message::Text(done.to_string().into())).await;
 
-            // Broadcast agent_end event
             let _ = state.event_tx.send(serde_json::json!({
                 "type": "agent_end",
                 "provider": provider_label,
@@ -328,11 +398,11 @@ async fn process_chat_message(
             let sanitized = crate::providers::sanitize_api_error(&e.to_string());
             let err = serde_json::json!({
                 "type": "error",
+                "session_id": session_id,
                 "message": sanitized,
             });
             let _ = sender.send(Message::Text(err.to_string().into())).await;
 
-            // Broadcast error event
             let _ = state.event_tx.send(serde_json::json!({
                 "type": "error",
                 "component": "ws_chat",

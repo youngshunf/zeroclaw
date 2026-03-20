@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Send, Bot, User, AlertCircle, Copy, Check } from 'lucide-react';
-import type { WsMessage } from '@/types/api';
-import { WebSocketClient } from '@/lib/ws';
+import { wsMultiplexer } from '@/lib/ws';
 import { generateUUID } from '@/lib/uuid';
 import { useDraft } from '@/hooks/useDraft';
 
@@ -22,7 +21,8 @@ export default function AgentChat() {
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const wsRef = useRef<WebSocketClient | null>(null);
+  const sessionIdRef = useRef(generateUUID());
+  const wsRef = useRef<typeof wsMultiplexer>(wsMultiplexer);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -34,40 +34,28 @@ export default function AgentChat() {
   }, [input, saveDraft]);
 
   useEffect(() => {
-    const ws = new WebSocketClient();
+    const sessionId = sessionIdRef.current;
+    wsMultiplexer.connect();
 
-    ws.onOpen = () => {
-      setConnected(true);
-      setError(null);
+    wsMultiplexer.onStatusChange = (status) => {
+      setConnected(status === 'connected');
+      if (status !== 'connected') setError('Connection error. Attempting to reconnect...');
+      else setError(null);
     };
 
-    ws.onClose = () => {
-      setConnected(false);
-    };
-
-    ws.onError = () => {
-      setError('Connection error. Attempting to reconnect...');
-    };
-
-    ws.onMessage = (msg: WsMessage) => {
+    const unsub = wsMultiplexer.subscribe(sessionId, (msg) => {
       switch (msg.type) {
         case 'chunk':
           setTyping(true);
           pendingContentRef.current += msg.content ?? '';
           break;
 
-        case 'message':
         case 'done': {
-          const content = msg.full_response ?? msg.content ?? pendingContentRef.current;
+          const content = msg.full_response ?? pendingContentRef.current;
           if (content) {
             setMessages((prev) => [
               ...prev,
-              {
-                id: generateUUID(),
-                role: 'agent',
-                content,
-                timestamp: new Date(),
-              },
+              { id: generateUUID(), role: 'agent', content, timestamp: new Date() },
             ]);
           }
           pendingContentRef.current = '';
@@ -81,19 +69,7 @@ export default function AgentChat() {
             {
               id: generateUUID(),
               role: 'agent',
-              content: `[Tool Call] ${msg.name ?? 'unknown'}(${JSON.stringify(msg.args ?? {})})`,
-              timestamp: new Date(),
-            },
-          ]);
-          break;
-
-        case 'tool_result':
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: generateUUID(),
-              role: 'agent',
-              content: `[Tool Result] ${msg.output ?? ''}`,
+              content: `[${msg.display_name ?? msg.name ?? 'Tool'}] ${msg.args_preview ?? ''}`,
               timestamp: new Date(),
             },
           ]);
@@ -102,24 +78,19 @@ export default function AgentChat() {
         case 'error':
           setMessages((prev) => [
             ...prev,
-            {
-              id: generateUUID(),
-              role: 'agent',
-              content: `[Error] ${msg.message ?? 'Unknown error'}`,
-              timestamp: new Date(),
-            },
+            { id: generateUUID(), role: 'agent', content: `[Error] ${msg.message ?? 'Unknown error'}`, timestamp: new Date() },
           ]);
           setTyping(false);
           pendingContentRef.current = '';
           break;
       }
-    };
+    });
 
-    ws.connect();
-    wsRef.current = ws;
+    setConnected(wsMultiplexer.connected);
 
     return () => {
-      ws.disconnect();
+      unsub();
+      wsMultiplexer.onStatusChange = null;
     };
   }, []);
 
@@ -129,20 +100,15 @@ export default function AgentChat() {
 
   const handleSend = () => {
     const trimmed = input.trim();
-    if (!trimmed || !wsRef.current?.connected) return;
+    if (!trimmed || !wsMultiplexer.connected) return;
 
     setMessages((prev) => [
       ...prev,
-      {
-        id: generateUUID(),
-        role: 'user',
-        content: trimmed,
-        timestamp: new Date(),
-      },
+      { id: generateUUID(), role: 'user', content: trimmed, timestamp: new Date() },
     ]);
 
     try {
-      wsRef.current.sendMessage(trimmed);
+      wsMultiplexer.send(sessionIdRef.current, trimmed);
       setTyping(true);
       pendingContentRef.current = '';
     } catch {
