@@ -89,7 +89,10 @@ pub async fn sync_common_skills(
     let config: CommonSkillsConfig = serde_yaml::from_str(&content)
         .with_context(|| format!("Failed to parse {}", config_path.display()))?;
 
-    tokio::fs::create_dir_all(common_skills_dir).await?;
+    // load_skills() expects skills at `{dir}/skills/{name}/`, so we sync
+    // into the `skills/` subdirectory to match the upstream convention.
+    let skills_subdir = common_skills_dir.join("skills");
+    tokio::fs::create_dir_all(&skills_subdir).await?;
 
     let desired: HashSet<String> = config.skills.into_iter().collect();
     let mut added = 0usize;
@@ -97,9 +100,9 @@ pub async fn sync_common_skills(
     let mut removed = 0usize;
     let mut skipped = 0usize;
 
-    // 1. Sync desired skills from hub → common_skills_dir
+    // 1. Sync desired skills from hub → common_skills_dir/skills/
     for skill_id in &desired {
-        let dest = common_skills_dir.join(skill_id);
+        let dest = skills_subdir.join(skill_id);
         let src = match find_skill_in_hub(hub_dir, skill_id).await {
             Some(p) => p,
             None => {
@@ -144,8 +147,8 @@ pub async fn sync_common_skills(
         })?;
     }
 
-    // 2. Remove skills in common_skills_dir that are NOT in the yaml list
-    let mut entries = tokio::fs::read_dir(common_skills_dir).await?;
+    // 2. Remove skills in common_skills_dir/skills/ that are NOT in the yaml list
+    let mut entries = tokio::fs::read_dir(&skills_subdir).await?;
     while let Ok(Some(entry)) = entries.next_entry().await {
         if !entry.file_type().await.map(|ft| ft.is_dir()).unwrap_or(false) {
             continue;
@@ -156,7 +159,7 @@ pub async fn sync_common_skills(
         }
         if !desired.contains(&name) {
             // Move to .trash instead of deleting
-            let trash_dir = common_skills_dir.join(".trash");
+            let trash_dir = skills_subdir.join(".trash");
             let _ = tokio::fs::create_dir_all(&trash_dir).await;
             let trash_dest = trash_dir.join(format!(
                 "{}-{}",
