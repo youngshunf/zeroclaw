@@ -81,6 +81,8 @@ export default function ChatLayout() {
   // WS state
   /** session_id → multiplexer 取消订阅函数 */
   const subscribersRef = useRef(new Map<string, () => void>());
+  /** session_id → agent_id 映射（供 WS 重连时 requestHistory 传 agent 字段） */
+  const sessionAgentRef = useRef(new Map<string, string>());
   /** session_id → connected 状态 */
   const connectedSessionsRef = useRef(new Set<string>());
   const [histories, setHistories] = useState(new Map<string, ChatMessage[]>());
@@ -318,6 +320,9 @@ export default function ChatLayout() {
       wsMultiplexer.connect();
     }
 
+    // 记录 session → agent 映射，供重连时 requestHistory 携带 agent 字段
+    if (agentId) sessionAgentRef.current.set(sessionId, agentId);
+
     // 订阅该 session 的消息
     const unsub = wsMultiplexer.subscribe(sessionId, (msg) => {
       if ((msg as any).type === 'pong') return;
@@ -332,7 +337,7 @@ export default function ChatLayout() {
     if (wsMultiplexer.connected) {
       connectedSessionsRef.current.add(sessionId);
       setConnectedMap(prev => new Map(prev).set(sessionId, true));
-      wsMultiplexer.requestHistory(sessionId);
+      wsMultiplexer.requestHistory(sessionId, agentId);
     }
   }, [handleMessage]);
 
@@ -343,6 +348,7 @@ export default function ChatLayout() {
       unsub();
       subscribersRef.current.delete(sessionId);
     }
+    sessionAgentRef.current.delete(sessionId);
     connectedSessionsRef.current.delete(sessionId);
     setConnectedMap(prev => { const n = new Map(prev); n.delete(sessionId); return n; });
   }, []);
@@ -404,7 +410,7 @@ export default function ChatLayout() {
         for (const sessionId of subscribersRef.current.keys()) {
           connectedSessionsRef.current.add(sessionId);
           setConnectedMap(prev => new Map(prev).set(sessionId, true));
-          wsMultiplexer.requestHistory(sessionId);
+          wsMultiplexer.requestHistory(sessionId, sessionAgentRef.current.get(sessionId));
         }
       } else if (status === 'disconnected') {
         for (const sessionId of subscribersRef.current.keys()) {

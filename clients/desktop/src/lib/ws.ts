@@ -68,9 +68,9 @@ export class WsMultiplexer {
   }
 
   /** 请求指定 session 的历史记录 */
-  requestHistory(sessionId: string): void {
+  requestHistory(sessionId: string, agent?: string): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-    this.ws.send(JSON.stringify({ type: 'history_request', session_id: sessionId }));
+    this.ws.send(JSON.stringify({ type: 'history_request', session_id: sessionId, agent }));
   }
 
   /**

@@ -45,6 +45,9 @@ enum InboundFrame {
     HistoryRequest {
         #[serde(default)]
         session_id: Option<String>,
+        /// HUANXING: 所属 agent，用于按 per-user workspace 加载隔离的历史
+        #[serde(default)]
+        agent: Option<String>,
     },
     /// 兼容旧版 connect 握手帧
     Connect {
@@ -260,9 +263,38 @@ async fn handle_socket(socket: WebSocket, state: AppState, default_session_id: O
                 process_chat_message(&state, session, &mut sender, &content, &sid).await;
             }
 
-            InboundFrame::HistoryRequest { session_id } => {
+            InboundFrame::HistoryRequest { session_id, agent: agent_name } => {
                 let sid = session_id.unwrap_or_else(|| conn_default_sid.clone());
                 let session_key = format!("{GW_SESSION_PREFIX}{sid}");
+
+                // HUANXING: 优先从 per-user workspace 加载历史；无 agent 时回退全局
+                #[cfg(feature = "huanxing")]
+                let messages: Vec<crate::providers::ChatMessage> = {
+                    let backend = if let Some(ref aname) = agent_name {
+                        let config = state.config.lock().clone();
+                        if config.huanxing.enabled {
+                            let agents_dir = config.huanxing.resolve_agents_dir(&config.workspace_dir);
+                            let user_workspace = agents_dir.join(aname);
+                            if user_workspace.exists() {
+                                crate::huanxing::tenant::create_session_backend_for_workspace(
+                                    &user_workspace,
+                                    &config,
+                                )
+                            } else {
+                                state.session_backend.clone()
+                            }
+                        } else {
+                            state.session_backend.clone()
+                        }
+                    } else {
+                        // 先查缓存的 session，已有则用其 per-user backend
+                        sessions.get(&sid)
+                            .and_then(|s| s.session_backend.clone())
+                            .or_else(|| state.session_backend.clone())
+                    };
+                    backend.map(|b| b.load(&session_key)).unwrap_or_default()
+                };
+                #[cfg(not(feature = "huanxing"))]
                 let messages: Vec<crate::providers::ChatMessage> = state
                     .session_backend
                     .as_ref()

@@ -97,7 +97,7 @@ export class SessionManager {
 
     // 如果 WS 已连接，立即请求历史
     if (wsMultiplexer.connected) {
-      wsMultiplexer.requestHistory(sessionId);
+      wsMultiplexer.requestHistory(sessionId, agentName);
       this.statuses.set(sessionId, 'connected');
       this.notifyStatus(sessionId);
     }
