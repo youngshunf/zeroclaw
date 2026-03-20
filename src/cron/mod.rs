@@ -2,7 +2,7 @@ use crate::config::Config;
 use crate::security::SecurityPolicy;
 use anyhow::{anyhow, bail, Result};
 
-mod schedule;
+pub(crate) mod schedule;
 mod store;
 mod types;
 
@@ -27,7 +27,9 @@ pub use types::{
 /// Returns `Ok(())` if the command passes all checks, or an error describing
 /// why it was blocked.
 pub fn validate_shell_command(config: &Config, command: &str, approved: bool) -> Result<()> {
-    let security = SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir);
+    let config_dir = config.config_path.parent().map(|p| p.to_path_buf());
+    let security = SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir)
+        .with_config_dir(config_dir);
     validate_shell_command_with_security(&security, command, approved)
 }
 

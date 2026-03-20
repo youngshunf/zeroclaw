@@ -1492,12 +1492,17 @@ fn create_provider_with_url_and_options(
                 "Custom provider",
                 "custom:https://your-api.com",
             )?;
-            Ok(compat(OpenAiCompatibleProvider::new_with_vision(
+            // custom provider 禁用 responses_fallback，避免对不支持 Responses API
+            // 的第三方端点产生无意义的重试请求
+            Ok(compat(OpenAiCompatibleProvider::new_with_options(
                 "Custom",
                 &base_url,
                 key,
                 AuthStyle::Bearer,
-                true,
+                true,  // supports_vision
+                false, // supports_responses_fallback
+                None,  // user_agent
+                false, // merge_system_into_user
             )))
         }
 

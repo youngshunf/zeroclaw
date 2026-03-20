@@ -92,6 +92,8 @@ pub struct SecurityPolicy {
     pub block_high_risk_commands: bool,
     pub shell_env_passthrough: Vec<String>,
     pub tracker: ActionTracker,
+    /// 配置目录路径（用于全局 .env 文件加载）
+    pub config_dir: Option<PathBuf>,
 }
 
 /// Default allowed commands for Unix platforms.
@@ -201,6 +203,7 @@ impl Default for SecurityPolicy {
             block_high_risk_commands: true,
             shell_env_passthrough: vec![],
             tracker: ActionTracker::new(),
+            config_dir: None,
         }
     }
 }
@@ -1362,7 +1365,14 @@ impl SecurityPolicy {
             block_high_risk_commands: autonomy_config.block_high_risk_commands,
             shell_env_passthrough: autonomy_config.shell_env_passthrough.clone(),
             tracker: ActionTracker::new(),
+            config_dir: None,
         }
+    }
+
+    /// 设置配置目录（用于全局 .env 文件加载）
+    pub fn with_config_dir(mut self, config_dir: Option<PathBuf>) -> Self {
+        self.config_dir = config_dir;
+        self
     }
 
     /// Render a human-readable summary of the active security constraints

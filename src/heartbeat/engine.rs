@@ -6,6 +6,7 @@ use parking_lot::Mutex as ParkingMutex;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::path::Path;
+use std::str::FromStr;
 use std::sync::Arc;
 use tokio::time::{self, Duration};
 use tracing::{info, warn};
@@ -56,17 +57,73 @@ pub struct HeartbeatTask {
     pub text: String,
     pub priority: TaskPriority,
     pub status: TaskStatus,
+    /// 可选的 cron 调度表达式（5 字段: `min hour day month weekday`）。
+    /// 设置后，任务仅在 cron 表达式匹配时触发。
+    /// 未设置调度的任务按"每次 tick"模式处理（兼容模式）。
+    #[serde(default)]
+    pub schedule: Option<String>,
 }
 
 impl HeartbeatTask {
     pub fn is_runnable(&self) -> bool {
         self.status == TaskStatus::Active
     }
+
+    /// 检查此任务是否有 cron 调度。
+    pub fn has_schedule(&self) -> bool {
+        self.schedule.is_some()
+    }
+
+    /// 检查此任务的调度是否与给定时间匹配。
+    /// 返回 true 的条件：
+    /// - 任务没有调度（兼容模式，始终匹配）
+    /// - 任务的 cron 表达式在给定窗口内匹配
+    pub fn schedule_matches(
+        &self,
+        now: chrono::DateTime<chrono::Utc>,
+        window_minutes: u32,
+    ) -> bool {
+        let Some(ref expr) = self.schedule else {
+            return true; // 无调度 = 兼容模式，始终匹配
+        };
+
+        match crate::cron::schedule::normalize_expression(expr) {
+            Ok(normalized) => {
+                match cron::Schedule::from_str(&normalized) {
+                    Ok(cron_schedule) => {
+                        // 检查是否有任何时间点落在 [now - window, now] 范围内
+                        let window = chrono::Duration::minutes(i64::from(window_minutes));
+                        let window_start = now - window;
+
+                        for next in cron_schedule.after(&window_start).take(5) {
+                            if next > now {
+                                break;
+                            }
+                            return true;
+                        }
+                        false
+                    }
+                    Err(e) => {
+                        tracing::warn!("无效的 cron 调度 '{expr}': {e}");
+                        false
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("标准化 cron 表达式 '{expr}' 失败: {e}");
+                false
+            }
+        }
+    }
 }
 
 impl fmt::Display for HeartbeatTask {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "[{}] {}", self.priority, self.text)
+        if let Some(ref sched) = self.schedule {
+            write!(f, "[{}|schedule:{}] {}", self.priority, sched, self.text)
+        } else {
+            write!(f, "[{}] {}", self.priority, self.text)
+        }
     }
 }
 
@@ -240,6 +297,28 @@ impl HeartbeatEngine {
         Ok(Self::parse_tasks(&content))
     }
 
+    /// 收集调度匹配当前时间的任务。
+    /// 不含调度的任务会被排除（非调度任务不允许在租户心跳模式中使用）。
+    ///
+    /// `window_minutes` 控制匹配容差：如果任务的 cron 表达式
+    /// 在 `[now - window, now]` 范围内有匹配则算作匹配。
+    pub async fn collect_scheduled_tasks(
+        &self,
+        now: chrono::DateTime<chrono::Utc>,
+        window_minutes: u32,
+    ) -> Result<Vec<HeartbeatTask>> {
+        let mut tasks: Vec<HeartbeatTask> = self
+            .collect_tasks()
+            .await?
+            .into_iter()
+            .filter(|t| {
+                t.is_runnable() && t.has_schedule() && t.schedule_matches(now, window_minutes)
+            })
+            .collect();
+        tasks.sort_by(|a, b| b.priority.cmp(&a.priority));
+        Ok(tasks)
+    }
+
     /// Collect only runnable (active) tasks, sorted by priority (high first).
     pub async fn collect_runnable_tasks(&self) -> Result<Vec<HeartbeatTask>> {
         let mut tasks: Vec<HeartbeatTask> = self
@@ -286,30 +365,41 @@ impl HeartbeatEngine {
             if let Some((meta, task_text)) = rest.split_once(']') {
                 let task_text = task_text.trim();
                 if !task_text.is_empty() {
-                    let (priority, status) = Self::parse_meta(meta);
+                    let (priority, status, schedule) = Self::parse_meta(meta);
                     return HeartbeatTask {
                         text: task_text.to_string(),
                         priority,
                         status,
+                        schedule,
                     };
                 }
             }
         }
-        // No metadata — default to medium/active
+        // 无元数据 — 默认 medium/active，无调度
         HeartbeatTask {
             text: text.to_string(),
             priority: TaskPriority::Medium,
             status: TaskStatus::Active,
+            schedule: None,
         }
     }
 
-    /// Parse metadata tags like `high`, `low|paused`, `completed`.
-    fn parse_meta(meta: &str) -> (TaskPriority, TaskStatus) {
+    /// 解析元数据标签如 `high`、`low|paused`、`completed`、`schedule:0 8 * * *`。
+    fn parse_meta(meta: &str) -> (TaskPriority, TaskStatus, Option<String>) {
         let mut priority = TaskPriority::Medium;
         let mut status = TaskStatus::Active;
+        let mut schedule: Option<String> = None;
 
         for part in meta.split('|') {
-            match part.trim().to_ascii_lowercase().as_str() {
+            let trimmed = part.trim();
+            if let Some(cron_expr) = trimmed.strip_prefix("schedule:") {
+                let expr = cron_expr.trim();
+                if !expr.is_empty() {
+                    schedule = Some(expr.to_string());
+                }
+                continue;
+            }
+            match trimmed.to_ascii_lowercase().as_str() {
                 "high" => priority = TaskPriority::High,
                 "medium" | "med" => priority = TaskPriority::Medium,
                 "low" => priority = TaskPriority::Low,
@@ -320,7 +410,7 @@ impl HeartbeatEngine {
             }
         }
 
-        (priority, status)
+        (priority, status, schedule)
     }
 
     /// Build the Phase 1 LLM decision prompt for two-phase heartbeat.
@@ -573,11 +663,13 @@ mod tests {
                 text: "Check email".into(),
                 priority: TaskPriority::High,
                 status: TaskStatus::Active,
+                schedule: None,
             },
             HeartbeatTask {
                 text: "Review calendar".into(),
                 priority: TaskPriority::Medium,
                 status: TaskStatus::Active,
+                schedule: None,
             },
         ];
         let prompt = HeartbeatEngine::build_decision_prompt(&tasks);
@@ -632,6 +724,7 @@ mod tests {
             text: "Check email".into(),
             priority: TaskPriority::High,
             status: TaskStatus::Active,
+            schedule: None,
         };
         assert_eq!(format!("{task}"), "[high] Check email");
     }

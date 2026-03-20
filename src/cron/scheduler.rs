@@ -27,10 +27,11 @@ pub async fn run(config: Config) -> Result<()> {
     let poll_secs = config.reliability.scheduler_poll_secs.max(MIN_POLL_SECONDS);
     let mut interval = time::interval(Duration::from_secs(poll_secs));
     interval.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
-    let security = Arc::new(SecurityPolicy::from_config(
-        &config.autonomy,
-        &config.workspace_dir,
-    ));
+    let config_dir = config.config_path.parent().map(|p| p.to_path_buf());
+    let security = Arc::new(
+        SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir)
+            .with_config_dir(config_dir),
+    );
 
     crate::health::mark_component_ok(SCHEDULER_COMPONENT);
 
@@ -94,7 +95,9 @@ async fn catch_up_overdue_jobs(config: &Config, security: &Arc<SecurityPolicy>) 
 }
 
 pub async fn execute_job_now(config: &Config, job: &CronJob) -> (bool, String) {
-    let security = SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir);
+    let config_dir = config.config_path.parent().map(|p| p.to_path_buf());
+    let security = SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir)
+        .with_config_dir(config_dir);
     Box::pin(execute_job_with_retry(config, &security, job)).await
 }
 

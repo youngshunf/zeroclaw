@@ -4,7 +4,8 @@ use crate::security::traits::Sandbox;
 use crate::security::SecurityPolicy;
 use async_trait::async_trait;
 use serde_json::json;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -79,7 +80,7 @@ fn is_valid_env_var_name(name: &str) -> bool {
     chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
 }
 
-fn collect_allowed_shell_env_vars(security: &SecurityPolicy) -> Vec<String> {
+pub fn collect_allowed_shell_env_vars(security: &SecurityPolicy) -> Vec<String> {
     let mut out = Vec::new();
     let mut seen = HashSet::new();
     for key in SAFE_ENV_VARS
@@ -96,6 +97,93 @@ fn collect_allowed_shell_env_vars(security: &SecurityPolicy) -> Vec<String> {
         }
     }
     out
+}
+
+/// 解析 `.env` 文件为键值对。
+/// 支持 `KEY=VALUE`、`KEY="VALUE"`、`KEY='VALUE'`、注释 (#) 和空行。
+fn load_dotenv_file(path: &Path) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return map,
+    };
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        // 跳过 `export ` 前缀
+        let trimmed = trimmed.strip_prefix("export ").unwrap_or(trimmed);
+        if let Some((key, val)) = trimmed.split_once('=') {
+            let key = key.trim();
+            if !is_valid_env_var_name(key) {
+                continue;
+            }
+            let val = val.trim();
+            // 去除包围的引号
+            let val = if (val.starts_with('"') && val.ends_with('"'))
+                || (val.starts_with('\'') && val.ends_with('\''))
+            {
+                &val[1..val.len() - 1]
+            } else {
+                val
+            };
+            map.insert(key.to_string(), val.to_string());
+        }
+    }
+    map
+}
+
+/// 从三层 `.env` 文件 + 进程环境变量中解析环境变量。
+/// 优先级（高覆盖低）: skill/.env > workspace/.env > config_dir/.env > 进程环境变量。
+///
+/// 仅 `allowed_vars` 中列出的变量会被包含在结果中。
+pub fn resolve_env_vars(
+    security: &SecurityPolicy,
+    workspace_dir: Option<&Path>,
+    skill_dir: Option<&Path>,
+) -> HashMap<String, String> {
+    let allowed = collect_allowed_shell_env_vars(security);
+    let mut result = HashMap::new();
+
+    // 第 0 层: 进程环境变量（最低优先级）
+    for var in &allowed {
+        if let Ok(val) = std::env::var(var) {
+            result.insert(var.clone(), val);
+        }
+    }
+
+    // 第 1 层: config_dir/.env（全局默认值，如共享 API key）
+    if let Some(config_dir) = &security.config_dir {
+        let global_env = load_dotenv_file(&config_dir.join(".env"));
+        for var in &allowed {
+            if let Some(val) = global_env.get(var) {
+                result.insert(var.clone(), val.clone());
+            }
+        }
+    }
+
+    // 第 2 层: workspace/.env（用户级覆盖）
+    if let Some(ws) = workspace_dir {
+        let ws_env = load_dotenv_file(&ws.join(".env"));
+        for var in &allowed {
+            if let Some(val) = ws_env.get(var) {
+                result.insert(var.clone(), val.clone());
+            }
+        }
+    }
+
+    // 第 3 层: skill/.env（技能特定覆盖，最高优先级）
+    if let Some(sd) = skill_dir {
+        let skill_env = load_dotenv_file(&sd.join(".env"));
+        for var in &allowed {
+            if let Some(val) = skill_env.get(var) {
+                result.insert(var.clone(), val.clone());
+            }
+        }
+    }
+
+    result
 }
 
 #[async_trait]
@@ -197,10 +285,15 @@ impl Tool for ShellTool {
 
         cmd.env_clear();
 
-        for var in collect_allowed_shell_env_vars(&self.security) {
-            if let Ok(val) = std::env::var(&var) {
-                cmd.env(&var, val);
-            }
+        // 三层 .env 加载: config_dir/.env < workspace/.env < skill/.env < 进程环境变量
+        // 仅白名单变量（SAFE_ENV_VARS + shell_env_passthrough）会被注入。
+        let env_vars = resolve_env_vars(
+            &self.security,
+            Some(&self.security.workspace_dir),
+            None, // skill_dir: shell 工具不知道 skill 上下文；skill 工具通过 SkillToolHandler 注入
+        );
+        for (key, val) in &env_vars {
+            cmd.env(key, val);
         }
 
         let result =
