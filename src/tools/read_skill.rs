@@ -8,6 +8,8 @@ pub struct ReadSkillTool {
     workspace_dir: PathBuf,
     open_skills_enabled: bool,
     open_skills_dir: Option<String>,
+    /// 额外技能目录（如多租户模式下的 common_skills_dir）
+    extra_skills_dirs: Vec<PathBuf>,
 }
 
 impl ReadSkillTool {
@@ -20,7 +22,14 @@ impl ReadSkillTool {
             workspace_dir,
             open_skills_enabled,
             open_skills_dir,
+            extra_skills_dirs: Vec::new(),
         }
+    }
+
+    /// 添加额外的技能搜索目录（如 common_skills_dir）
+    pub fn with_extra_skills_dir(mut self, dir: PathBuf) -> Self {
+        self.extra_skills_dirs.push(dir);
+        self
     }
 }
 
@@ -61,11 +70,27 @@ impl Tool for ReadSkillTool {
             self.open_skills_dir.as_deref(),
         );
 
-        let Some(skill) = skills
+        // 合并额外目录（如 common_skills_dir）中的技能，workspace 同名技能优先
+        let ws_names: std::collections::HashSet<String> =
+            skills.iter().map(|s| s.name.clone()).collect();
+        let mut all_skills = skills;
+        for extra_dir in &self.extra_skills_dirs {
+            for skill in crate::skills::load_skills_with_open_skills_settings(
+                extra_dir,
+                self.open_skills_enabled,
+                self.open_skills_dir.as_deref(),
+            ) {
+                if !ws_names.contains(&skill.name) {
+                    all_skills.push(skill);
+                }
+            }
+        }
+
+        let Some(skill) = all_skills
             .iter()
             .find(|skill| skill.name.eq_ignore_ascii_case(requested))
         else {
-            let mut names: Vec<&str> = skills.iter().map(|skill| skill.name.as_str()).collect();
+            let mut names: Vec<&str> = all_skills.iter().map(|skill| skill.name.as_str()).collect();
             names.sort_unstable();
             let available = if names.is_empty() {
                 "none".to_string()
@@ -164,6 +189,61 @@ description = "Ship safely"
         assert!(result.success);
         assert!(result.output.contains("[skill]"));
         assert!(result.output.contains("Ship safely"));
+    }
+
+    #[tokio::test]
+    async fn reads_skill_from_extra_dir() {
+        let tmp = TempDir::new().unwrap();
+        // workspace 没有任何技能
+        let workspace = tmp.path().join("workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+        // common-skills 目录有 newsnow
+        let common_dir = tmp.path().join("common-skills");
+        let skill_dir = common_dir.join("skills/newsnow");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "# Newsnow\n\nFetch hot news.\n",
+        )
+        .unwrap();
+
+        let tool = ReadSkillTool::new(workspace, false, None)
+            .with_extra_skills_dir(common_dir);
+
+        let result = tool
+            .execute(json!({ "name": "newsnow" }))
+            .await
+            .unwrap();
+
+        assert!(result.success, "error: {:?}", result.error);
+        assert!(result.output.contains("# Newsnow"));
+        assert!(result.output.contains("hot news"));
+    }
+
+    #[tokio::test]
+    async fn workspace_skill_takes_priority_over_extra_dir() {
+        let tmp = TempDir::new().unwrap();
+        // workspace 有 newsnow（用户自定义版本）
+        let workspace = tmp.path().join("workspace");
+        let ws_skill = workspace.join("skills/newsnow");
+        std::fs::create_dir_all(&ws_skill).unwrap();
+        std::fs::write(ws_skill.join("SKILL.md"), "# Custom Newsnow\n").unwrap();
+        // common-skills 也有 newsnow
+        let common_dir = tmp.path().join("common-skills");
+        let common_skill = common_dir.join("skills/newsnow");
+        std::fs::create_dir_all(&common_skill).unwrap();
+        std::fs::write(common_skill.join("SKILL.md"), "# Default Newsnow\n").unwrap();
+
+        let tool = ReadSkillTool::new(workspace, false, None)
+            .with_extra_skills_dir(common_dir);
+
+        let result = tool
+            .execute(json!({ "name": "newsnow" }))
+            .await
+            .unwrap();
+
+        assert!(result.success);
+        assert!(result.output.contains("Custom Newsnow"), "workspace version should win");
     }
 
     #[tokio::test]

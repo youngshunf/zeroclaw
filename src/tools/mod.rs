@@ -65,6 +65,7 @@ pub mod model_switch;
 pub mod node_tool;
 pub mod notion_tool;
 pub mod pdf_read;
+pub mod process;
 pub mod project_intel;
 pub mod proxy_config;
 pub mod pushover;
@@ -130,6 +131,7 @@ pub use model_switch::ModelSwitchTool;
 pub use node_tool::NodeTool;
 pub use notion_tool::NotionTool;
 pub use pdf_read::PdfReadTool;
+pub use process::ProcessTool;
 pub use project_intel::ProjectIntelTool;
 pub use proxy_config::ProxyConfigTool;
 pub use pushover::PushoverTool;
@@ -152,7 +154,7 @@ pub use workspace_tool::WorkspaceTool;
 use crate::config::{Config, DelegateAgentConfig};
 use crate::memory::Memory;
 use crate::runtime::{NativeRuntime, RuntimeAdapter};
-use crate::security::{create_sandbox, SecurityPolicy};
+use crate::security::SecurityPolicy;
 use async_trait::async_trait;
 use parking_lot::RwLock;
 use std::collections::HashMap;
@@ -289,12 +291,29 @@ pub fn all_tools_with_runtime(
     root_config: &crate::config::Config,
 ) -> (Vec<Box<dyn Tool>>, Option<DelegateParentToolsHandle>) {
     let has_shell_access = runtime.has_shell_access();
-    let sandbox = create_sandbox(&root_config.security);
+
+    // 构造 SyscallAnomalyDetector（执行后被动分析 stderr）
+    let zeroclaw_dir = root_config
+        .config_path
+        .parent()
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| runtime.storage_path());
+    let syscall_detector = Arc::new(crate::security::SyscallAnomalyDetector::new(
+        root_config.security.syscall_anomaly.clone(),
+        &zeroclaw_dir,
+        root_config.security.audit.clone(),
+    ));
+
     let mut tool_arcs: Vec<Arc<dyn Tool>> = vec![
-        Arc::new(ShellTool::new_with_sandbox(
+        Arc::new(ShellTool::new_with_syscall_detector(
+            security.clone(),
+            runtime.clone(),
+            Some(syscall_detector.clone()),
+        )),
+        Arc::new(ProcessTool::new_with_syscall_detector(
             security.clone(),
             runtime,
-            sandbox,
+            Some(syscall_detector),
         )),
         Arc::new(FileReadTool::new(security.clone())),
         Arc::new(FileWriteTool::new(security.clone())),
@@ -332,11 +351,22 @@ pub fn all_tools_with_runtime(
         root_config.skills.prompt_injection_mode,
         crate::config::SkillsPromptInjectionMode::Compact
     ) {
-        tool_arcs.push(Arc::new(ReadSkillTool::new(
+        let mut read_skill = ReadSkillTool::new(
             workspace_dir.to_path_buf(),
             root_config.skills.open_skills_enabled,
             root_config.skills.open_skills_dir.clone(),
-        )));
+        );
+        // 多租户模式：注入 common_skills_dir，让 agent 能 read_skill 读取公共技能
+        #[cfg(feature = "huanxing")]
+        {
+            let common_skills_dir = root_config
+                .huanxing
+                .resolve_common_skills_dir(&root_config.workspace_dir);
+            if common_skills_dir.exists() {
+                read_skill = read_skill.with_extra_skills_dir(common_skills_dir);
+            }
+        }
+        tool_arcs.push(Arc::new(read_skill));
     }
 
     if browser_config.enabled {
@@ -402,13 +432,30 @@ pub fn all_tools_with_runtime(
 
     // Web search tool (enabled by default for GLM and other models)
     if root_config.web_search.enabled {
-        tool_arcs.push(Arc::new(WebSearchTool::new_with_config(
+        tool_arcs.push(Arc::new(WebSearchTool::new_with_options(
+            security.clone(),
             root_config.web_search.provider.clone(),
+            root_config.web_search.api_key.clone(),
             root_config.web_search.brave_api_key.clone(),
+            root_config.web_search.perplexity_api_key.clone(),
+            root_config.web_search.exa_api_key.clone(),
+            root_config.web_search.jina_api_key.clone(),
+            root_config.web_search.api_url.clone(),
             root_config.web_search.max_results,
             root_config.web_search.timeout_secs,
-            root_config.config_path.clone(),
-            root_config.secrets.encrypt,
+            root_config.web_search.user_agent.clone(),
+            root_config.web_search.fallback_providers.clone(),
+            root_config.web_search.retries_per_provider,
+            root_config.web_search.retry_backoff_ms,
+            root_config.web_search.domain_filter.clone(),
+            root_config.web_search.language_filter.clone(),
+            root_config.web_search.country.clone(),
+            root_config.web_search.recency_filter.clone(),
+            root_config.web_search.max_tokens,
+            root_config.web_search.max_tokens_per_page,
+            root_config.web_search.exa_search_type.clone(),
+            root_config.web_search.exa_include_text,
+            root_config.web_search.jina_site_filters.clone(),
         )));
     }
 
@@ -738,22 +785,24 @@ pub fn all_tools_with_runtime(
     // ── HuanXing multi-tenant tools ────────────────────
     #[cfg(feature = "huanxing")]
     if root_config.huanxing.enabled {
-        let hx_db_path = root_config.huanxing.resolve_db_path(&root_config.workspace_dir);
+        let hx_db_path = root_config
+            .huanxing
+            .resolve_db_path(&root_config.workspace_dir);
         if let Ok(hx_db) = crate::huanxing::TenantDb::open(&hx_db_path) {
             // Lookup + GetUser + LocalFindUser — available to all agents
-            tool_arcs.push(Arc::new(
-                crate::huanxing::tools::HxLookupSender::new(hx_db.clone()),
-            ));
-            tool_arcs.push(Arc::new(
-                crate::huanxing::tools::HxGetUser::new(hx_db.clone()),
-            ));
-            tool_arcs.push(Arc::new(
-                crate::huanxing::tools::HxLocalFindUser::new(hx_db.clone()),
-            ));
+            tool_arcs.push(Arc::new(crate::huanxing::tools::HxLookupSender::new(
+                hx_db.clone(),
+            )));
+            tool_arcs.push(Arc::new(crate::huanxing::tools::HxGetUser::new(
+                hx_db.clone(),
+            )));
+            tool_arcs.push(Arc::new(crate::huanxing::tools::HxLocalFindUser::new(
+                hx_db.clone(),
+            )));
             // LocalStats — Guardian admin tool
-            tool_arcs.push(Arc::new(
-                crate::huanxing::tools::HxLocalStats::new(hx_db.clone()),
-            ));
+            tool_arcs.push(Arc::new(crate::huanxing::tools::HxLocalStats::new(
+                hx_db.clone(),
+            )));
 
             // Build API client if agent_key is configured
             let hx_api = if let Some(ref key) = root_config.huanxing.agent_key {
@@ -763,21 +812,22 @@ pub fn all_tools_with_runtime(
                     &root_config.huanxing.server_id_or_hostname(),
                 );
                 // API-dependent tools: SMS, quota, subscription, usage
-                tool_arcs.push(Arc::new(
-                    crate::huanxing::tools::HxSendSms::new(api.clone()),
-                ));
-                tool_arcs.push(Arc::new(
-                    crate::huanxing::tools::HxVerifySms::new(api.clone(), hx_db.clone()),
-                ));
-                tool_arcs.push(Arc::new(
-                    crate::huanxing::tools::HxCheckQuota::new(api.clone()),
-                ));
-                tool_arcs.push(Arc::new(
-                    crate::huanxing::tools::HxGetSubscription::new(api.clone()),
-                ));
-                tool_arcs.push(Arc::new(
-                    crate::huanxing::tools::HxUsageStats::new(api.clone()),
-                ));
+                tool_arcs.push(Arc::new(crate::huanxing::tools::HxSendSms::new(
+                    api.clone(),
+                )));
+                tool_arcs.push(Arc::new(crate::huanxing::tools::HxVerifySms::new(
+                    api.clone(),
+                    hx_db.clone(),
+                )));
+                tool_arcs.push(Arc::new(crate::huanxing::tools::HxCheckQuota::new(
+                    api.clone(),
+                )));
+                tool_arcs.push(Arc::new(crate::huanxing::tools::HxGetSubscription::new(
+                    api.clone(),
+                )));
+                tool_arcs.push(Arc::new(crate::huanxing::tools::HxUsageStats::new(
+                    api.clone(),
+                )));
                 tracing::info!("HuanXing API tools registered (sms, quota, subscription, usage)");
                 Some(api)
             } else {
@@ -791,68 +841,101 @@ pub fn all_tools_with_runtime(
             let hx_config = root_config.huanxing.clone();
             let ws_dir: std::path::PathBuf = root_config.workspace_dir.clone().into();
             let router_result = tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(
-                    crate::huanxing::TenantRouter::new(hx_config, ws_dir, std::sync::Arc::new(root_config.clone())),
-                )
+                tokio::runtime::Handle::current().block_on(crate::huanxing::TenantRouter::new(
+                    hx_config,
+                    ws_dir,
+                    std::sync::Arc::new(root_config.clone()),
+                ))
             });
             match router_result {
                 Ok(router) => {
                     let router = std::sync::Arc::new(router);
-                    let agents_dir = root_config.huanxing.resolve_agents_dir(&root_config.workspace_dir);
-                    let common_skills_dir = root_config.huanxing.resolve_common_skills_dir(&root_config.workspace_dir);
-                    let templates_dir = root_config.huanxing.resolve_templates_dir(&root_config.workspace_dir);
-                    let default_template = root_config.huanxing.default_template.clone().unwrap_or_else(|| "finance".to_string());
+                    let agents_dir = root_config
+                        .huanxing
+                        .resolve_agents_dir(&root_config.workspace_dir);
+                    let common_skills_dir = root_config
+                        .huanxing
+                        .resolve_common_skills_dir(&root_config.workspace_dir);
+                    let templates_dir = root_config
+                        .huanxing
+                        .resolve_templates_dir(&root_config.workspace_dir);
+                    let default_template = root_config
+                        .huanxing
+                        .default_template
+                        .clone()
+                        .unwrap_or_else(|| "finance".to_string());
                     let default_provider = root_config.huanxing.default_provider.clone();
                     let llm_base_url = root_config.huanxing.llm_base_url.clone();
-                    let server_id = root_config.huanxing.server_id.clone().unwrap_or_else(|| "local-dev".to_string());
+                    let server_id = root_config
+                        .huanxing
+                        .server_id
+                        .clone()
+                        .unwrap_or_else(|| "local-dev".to_string());
 
                     // Pre-create hub registry
-                    let hub_registry: Option<std::sync::Arc<crate::huanxing::registry::RegistryLoader>> =
-                        root_config.huanxing.resolve_hub_dir().and_then(|hub_dir| {
-                            if hub_dir.exists() && hub_dir.join("registry.json").exists() {
-                                let registry = std::sync::Arc::new(crate::huanxing::registry::RegistryLoader::new(hub_dir));
-                                let reg_clone = registry.clone();
-                                let _ = tokio::task::block_in_place(|| {
-                                    tokio::runtime::Handle::current().block_on(reg_clone.ensure_loaded())
-                                });
-                                Some(registry)
-                            } else {
-                                None
-                            }
-                        });
+                    let hub_registry: Option<
+                        std::sync::Arc<crate::huanxing::registry::RegistryLoader>,
+                    > = root_config.huanxing.resolve_hub_dir().and_then(|hub_dir| {
+                        if hub_dir.exists() && hub_dir.join("registry.json").exists() {
+                            let registry = std::sync::Arc::new(
+                                crate::huanxing::registry::RegistryLoader::new(hub_dir),
+                            );
+                            let reg_clone = registry.clone();
+                            let _ = tokio::task::block_in_place(|| {
+                                tokio::runtime::Handle::current()
+                                    .block_on(reg_clone.ensure_loaded())
+                            });
+                            Some(registry)
+                        } else {
+                            None
+                        }
+                    });
 
                     if let Some(ref api) = hx_api_for_register {
                         let register_tool = if let Some(ref registry) = hub_registry {
                             crate::huanxing::tools::HxRegisterUser::with_registry(
-                                hx_db.clone(), api.clone(), agents_dir.clone(),
-                                common_skills_dir.clone(), templates_dir.clone(),
-                                default_template.clone(), default_provider.clone(),
-                                llm_base_url.clone(), server_id.clone(),
-                                router.clone(), registry.clone(),
+                                hx_db.clone(),
+                                api.clone(),
+                                agents_dir.clone(),
+                                common_skills_dir.clone(),
+                                templates_dir.clone(),
+                                default_template.clone(),
+                                default_provider.clone(),
+                                llm_base_url.clone(),
+                                server_id.clone(),
+                                router.clone(),
+                                registry.clone(),
                             )
                         } else {
                             crate::huanxing::tools::HxRegisterUser::new(
-                                hx_db.clone(), api.clone(), agents_dir.clone(),
-                                common_skills_dir.clone(), templates_dir.clone(),
-                                default_template.clone(), default_provider.clone(),
-                                llm_base_url.clone(), server_id.clone(),
+                                hx_db.clone(),
+                                api.clone(),
+                                agents_dir.clone(),
+                                common_skills_dir.clone(),
+                                templates_dir.clone(),
+                                default_template.clone(),
+                                default_provider.clone(),
+                                llm_base_url.clone(),
+                                server_id.clone(),
                                 router.clone(),
                             )
                         };
                         tool_arcs.push(Arc::new(register_tool));
                     }
-                    tool_arcs.push(Arc::new(
-                        crate::huanxing::tools::HxLocalBindChannel::new(hx_db.clone(), router.clone()),
-                    ));
-                    tool_arcs.push(Arc::new(
-                        crate::huanxing::tools::HxLocalUpdateUser::new(hx_db.clone(), router.clone()),
-                    ));
-                    tool_arcs.push(Arc::new(
-                        crate::huanxing::tools::HxLocalListUsers::new(hx_db.clone()),
-                    ));
-                    tool_arcs.push(Arc::new(
-                        crate::huanxing::tools::HxInvalidateCache::new(router.clone()),
-                    ));
+                    tool_arcs.push(Arc::new(crate::huanxing::tools::HxLocalBindChannel::new(
+                        hx_db.clone(),
+                        router.clone(),
+                    )));
+                    tool_arcs.push(Arc::new(crate::huanxing::tools::HxLocalUpdateUser::new(
+                        hx_db.clone(),
+                        router.clone(),
+                    )));
+                    tool_arcs.push(Arc::new(crate::huanxing::tools::HxLocalListUsers::new(
+                        hx_db.clone(),
+                    )));
+                    tool_arcs.push(Arc::new(crate::huanxing::tools::HxInvalidateCache::new(
+                        router.clone(),
+                    )));
                     tracing::info!("HuanXing tools registered (all P0+P1: 14 tools)");
 
                     // Server lifecycle: register + heartbeat
@@ -860,65 +943,141 @@ pub fn all_tools_with_runtime(
 
                     // Document tools (11)
                     if let Some(ref api) = hx_api {
-                        tool_arcs.push(Arc::new(crate::huanxing::doc_tools::HxFolderTree::new(api.clone(), hx_db.clone())));
-                        tool_arcs.push(Arc::new(crate::huanxing::doc_tools::HxFolderCreate::new(api.clone(), hx_db.clone())));
-                        tool_arcs.push(Arc::new(crate::huanxing::doc_tools::HxFolderDelete::new(api.clone(), hx_db.clone())));
-                        tool_arcs.push(Arc::new(crate::huanxing::doc_tools::HxFolderMove::new(api.clone(), hx_db.clone())));
-                        tool_arcs.push(Arc::new(crate::huanxing::doc_tools::HxDocList::new(api.clone(), hx_db.clone())));
-                        tool_arcs.push(Arc::new(crate::huanxing::doc_tools::HxDocGet::new(api.clone(), hx_db.clone())));
-                        tool_arcs.push(Arc::new(crate::huanxing::doc_tools::HxDocCreate::new(api.clone(), hx_db.clone())));
-                        tool_arcs.push(Arc::new(crate::huanxing::doc_tools::HxDocUpdate::new(api.clone(), hx_db.clone())));
-                        tool_arcs.push(Arc::new(crate::huanxing::doc_tools::HxDocDelete::new(api.clone(), hx_db.clone())));
-                        tool_arcs.push(Arc::new(crate::huanxing::doc_tools::HxDocMove::new(api.clone(), hx_db.clone())));
-                        tool_arcs.push(Arc::new(crate::huanxing::doc_tools::HxDocShare::new(api.clone(), hx_db.clone())));
+                        tool_arcs.push(Arc::new(crate::huanxing::doc_tools::HxFolderTree::new(
+                            api.clone(),
+                            hx_db.clone(),
+                        )));
+                        tool_arcs.push(Arc::new(crate::huanxing::doc_tools::HxFolderCreate::new(
+                            api.clone(),
+                            hx_db.clone(),
+                        )));
+                        tool_arcs.push(Arc::new(crate::huanxing::doc_tools::HxFolderDelete::new(
+                            api.clone(),
+                            hx_db.clone(),
+                        )));
+                        tool_arcs.push(Arc::new(crate::huanxing::doc_tools::HxFolderMove::new(
+                            api.clone(),
+                            hx_db.clone(),
+                        )));
+                        tool_arcs.push(Arc::new(crate::huanxing::doc_tools::HxDocList::new(
+                            api.clone(),
+                            hx_db.clone(),
+                        )));
+                        tool_arcs.push(Arc::new(crate::huanxing::doc_tools::HxDocGet::new(
+                            api.clone(),
+                            hx_db.clone(),
+                        )));
+                        tool_arcs.push(Arc::new(crate::huanxing::doc_tools::HxDocCreate::new(
+                            api.clone(),
+                            hx_db.clone(),
+                        )));
+                        tool_arcs.push(Arc::new(crate::huanxing::doc_tools::HxDocUpdate::new(
+                            api.clone(),
+                            hx_db.clone(),
+                        )));
+                        tool_arcs.push(Arc::new(crate::huanxing::doc_tools::HxDocDelete::new(
+                            api.clone(),
+                            hx_db.clone(),
+                        )));
+                        tool_arcs.push(Arc::new(crate::huanxing::doc_tools::HxDocMove::new(
+                            api.clone(),
+                            hx_db.clone(),
+                        )));
+                        tool_arcs.push(Arc::new(crate::huanxing::doc_tools::HxDocShare::new(
+                            api.clone(),
+                            hx_db.clone(),
+                        )));
                         tracing::info!("HuanXing document tools registered (11 tools)");
                     }
 
                     // HASN social tools (5)
                     let hasn_url = root_config.huanxing.hasn_url().to_string();
-                    let agents_dir_hasn = root_config.huanxing.resolve_agents_dir(&root_config.workspace_dir);
+                    let agents_dir_hasn = root_config
+                        .huanxing
+                        .resolve_agents_dir(&root_config.workspace_dir);
                     tool_arcs.push(Arc::new(crate::huanxing::hasn_tools::HasnSend::new(
-                        hx_api.clone().unwrap_or_else(|| crate::huanxing::ApiClient::new(
-                            root_config.huanxing.api_url(), "", &root_config.huanxing.server_id_or_hostname()
-                        )),
-                        agents_dir_hasn.clone(), hasn_url.clone(),
+                        hx_api.clone().unwrap_or_else(|| {
+                            crate::huanxing::ApiClient::new(
+                                root_config.huanxing.api_url(),
+                                "",
+                                &root_config.huanxing.server_id_or_hostname(),
+                            )
+                        }),
+                        agents_dir_hasn.clone(),
+                        hasn_url.clone(),
                     )));
-                    tool_arcs.push(Arc::new(crate::huanxing::hasn_tools::HasnContacts::new(agents_dir_hasn.clone(), hasn_url.clone())));
-                    tool_arcs.push(Arc::new(crate::huanxing::hasn_tools::HasnAddFriend::new(agents_dir_hasn.clone(), hasn_url.clone())));
-                    tool_arcs.push(Arc::new(crate::huanxing::hasn_tools::HasnInbox::new(agents_dir_hasn.clone(), hasn_url.clone())));
-                    tool_arcs.push(Arc::new(crate::huanxing::hasn_tools::HasnRespondRequest::new(agents_dir_hasn, hasn_url)));
+                    tool_arcs.push(Arc::new(crate::huanxing::hasn_tools::HasnContacts::new(
+                        agents_dir_hasn.clone(),
+                        hasn_url.clone(),
+                    )));
+                    tool_arcs.push(Arc::new(crate::huanxing::hasn_tools::HasnAddFriend::new(
+                        agents_dir_hasn.clone(),
+                        hasn_url.clone(),
+                    )));
+                    tool_arcs.push(Arc::new(crate::huanxing::hasn_tools::HasnInbox::new(
+                        agents_dir_hasn.clone(),
+                        hasn_url.clone(),
+                    )));
+                    tool_arcs.push(Arc::new(
+                        crate::huanxing::hasn_tools::HasnRespondRequest::new(
+                            agents_dir_hasn,
+                            hasn_url,
+                        ),
+                    ));
                     tracing::info!("HuanXing HASN social tools registered (5 tools)");
 
                     // Skill marketplace tools (6)
                     if let Some(ref registry) = hub_registry {
-                        let agents_dir_market = root_config.huanxing.resolve_agents_dir(&root_config.workspace_dir);
+                        let agents_dir_market = root_config
+                            .huanxing
+                            .resolve_agents_dir(&root_config.workspace_dir);
                         let router_slot = crate::huanxing::skill_market_tools::new_router_slot();
-                        tool_arcs.push(Arc::new(crate::huanxing::skill_market_tools::HxSkillSearch {
-                            registry: registry.clone(), workspace_dir: agents_dir_market.clone(),
-                        }));
-                        tool_arcs.push(Arc::new(crate::huanxing::skill_market_tools::HxSkillInfo {
-                            registry: registry.clone(), workspace_dir: agents_dir_market.clone(),
-                        }));
-                        tool_arcs.push(Arc::new(crate::huanxing::skill_market_tools::HxSkillInstall {
-                            registry: registry.clone(), workspace_dir: agents_dir_market.clone(),
-                            router_slot: router_slot.clone(),
-                        }));
-                        tool_arcs.push(Arc::new(crate::huanxing::skill_market_tools::HxSkillUninstall {
-                            workspace_dir: agents_dir_market.clone(), router_slot: router_slot.clone(),
-                        }));
-                        tool_arcs.push(Arc::new(crate::huanxing::skill_market_tools::HxSkillList {
-                            registry: registry.clone(), workspace_dir: agents_dir_market.clone(),
-                        }));
-                        tool_arcs.push(Arc::new(crate::huanxing::skill_market_tools::HxSkillUpdate {
-                            registry: registry.clone(), workspace_dir: agents_dir_market,
-                            router_slot: router_slot.clone(),
-                        }));
+                        tool_arcs.push(Arc::new(
+                            crate::huanxing::skill_market_tools::HxSkillSearch {
+                                registry: registry.clone(),
+                                workspace_dir: agents_dir_market.clone(),
+                            },
+                        ));
+                        tool_arcs.push(Arc::new(
+                            crate::huanxing::skill_market_tools::HxSkillInfo {
+                                registry: registry.clone(),
+                                workspace_dir: agents_dir_market.clone(),
+                            },
+                        ));
+                        tool_arcs.push(Arc::new(
+                            crate::huanxing::skill_market_tools::HxSkillInstall {
+                                registry: registry.clone(),
+                                workspace_dir: agents_dir_market.clone(),
+                                router_slot: router_slot.clone(),
+                            },
+                        ));
+                        tool_arcs.push(Arc::new(
+                            crate::huanxing::skill_market_tools::HxSkillUninstall {
+                                workspace_dir: agents_dir_market.clone(),
+                                router_slot: router_slot.clone(),
+                            },
+                        ));
+                        tool_arcs.push(Arc::new(
+                            crate::huanxing::skill_market_tools::HxSkillList {
+                                registry: registry.clone(),
+                                workspace_dir: agents_dir_market.clone(),
+                            },
+                        ));
+                        tool_arcs.push(Arc::new(
+                            crate::huanxing::skill_market_tools::HxSkillUpdate {
+                                registry: registry.clone(),
+                                workspace_dir: agents_dir_market,
+                                router_slot: router_slot.clone(),
+                            },
+                        ));
                         tracing::info!("HuanXing skill marketplace tools registered (6 tools)");
                     }
 
                     // Secret management tools (3)
                     {
-                        let agents_dir_secret = root_config.huanxing.resolve_agents_dir(&root_config.workspace_dir);
+                        let agents_dir_secret = root_config
+                            .huanxing
+                            .resolve_agents_dir(&root_config.workspace_dir);
                         tool_arcs.push(Arc::new(crate::huanxing::secret_tools::HxSetSecret {
                             workspace_dir: agents_dir_secret.clone(),
                         }));
