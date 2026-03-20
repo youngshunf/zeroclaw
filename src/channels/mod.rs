@@ -2784,20 +2784,33 @@ async fn process_channel_message(
                 format!("{tool_summary}\n{delivered_response}")
             };
 
+            // HuanXing: 有 tenant 时只写 tenant session store；无 tenant 时走全局 JSONL
+            #[cfg(feature = "huanxing")]
+            {
+                let assistant_turn = ChatMessage::assistant(&history_response);
+                if let Some(ref store) = tenant_session_store {
+                    if let Err(e) = store.append(&history_key, &assistant_turn) {
+                        tracing::warn!("Failed to persist tenant assistant turn: {e}");
+                    }
+                    // 仍需写内存历史（append_sender_turn 也会写）
+                    let mut histories = effective_histories
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
+                    let turns = histories.entry(history_key.clone()).or_default();
+                    turns.push(assistant_turn);
+                    while turns.len() > MAX_CHANNEL_HISTORY {
+                        turns.remove(0);
+                    }
+                } else {
+                    append_sender_turn(ctx.as_ref(), &history_key, assistant_turn);
+                }
+            }
+            #[cfg(not(feature = "huanxing"))]
             append_sender_turn(
                 ctx.as_ref(),
                 &history_key,
                 ChatMessage::assistant(&history_response),
             );
-            // HuanXing: also persist assistant turn to tenant session store
-            #[cfg(feature = "huanxing")]
-            if let Some(ref store) = tenant_session_store {
-                if let Err(e) =
-                    store.append(&history_key, &ChatMessage::assistant(&history_response))
-                {
-                    tracing::warn!("Failed to persist tenant assistant turn: {e}");
-                }
-            }
 
             // Fire-and-forget LLM-driven memory consolidation.
             if ctx.auto_save_memory && msg.content.chars().count() >= AUTOSAVE_MIN_MESSAGE_CHARS {
@@ -2966,11 +2979,24 @@ async fn process_channel_message(
                     // inherit this failed request as unfinished context.
                     let fail_turn =
                         ChatMessage::assistant("[Task failed — not continuing this request]");
-                    append_sender_turn(ctx.as_ref(), &history_key, fail_turn.clone());
                     #[cfg(feature = "huanxing")]
-                    if let Some(ref store) = tenant_session_store {
-                        let _ = store.append(&history_key, &fail_turn);
+                    {
+                        if let Some(ref store) = tenant_session_store {
+                            let _ = store.append(&history_key, &fail_turn);
+                            let mut histories = effective_histories
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner());
+                            let turns = histories.entry(history_key.clone()).or_default();
+                            turns.push(fail_turn.clone());
+                            while turns.len() > MAX_CHANNEL_HISTORY {
+                                turns.remove(0);
+                            }
+                        } else {
+                            append_sender_turn(ctx.as_ref(), &history_key, fail_turn);
+                        }
                     }
+                    #[cfg(not(feature = "huanxing"))]
+                    append_sender_turn(ctx.as_ref(), &history_key, fail_turn);
                 }
                 if let Some(channel) = target_channel.as_ref() {
                     if let Some(ref draft_id) = draft_message_id {
@@ -3015,11 +3041,24 @@ async fn process_channel_message(
             // inherit this timed-out request as unfinished context.
             let timeout_turn =
                 ChatMessage::assistant("[Task timed out — not continuing this request]");
-            append_sender_turn(ctx.as_ref(), &history_key, timeout_turn.clone());
             #[cfg(feature = "huanxing")]
-            if let Some(ref store) = tenant_session_store {
-                let _ = store.append(&history_key, &timeout_turn);
+            {
+                if let Some(ref store) = tenant_session_store {
+                    let _ = store.append(&history_key, &timeout_turn);
+                    let mut histories = effective_histories
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
+                    let turns = histories.entry(history_key.clone()).or_default();
+                    turns.push(timeout_turn.clone());
+                    while turns.len() > MAX_CHANNEL_HISTORY {
+                        turns.remove(0);
+                    }
+                } else {
+                    append_sender_turn(ctx.as_ref(), &history_key, timeout_turn);
+                }
             }
+            #[cfg(not(feature = "huanxing"))]
+            append_sender_turn(ctx.as_ref(), &history_key, timeout_turn);
             if let Some(channel) = target_channel.as_ref() {
                 let error_text =
                     "⚠️ Request timed out while waiting for the model. Please try again.";
