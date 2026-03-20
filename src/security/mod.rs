@@ -21,12 +21,14 @@
 pub mod audit;
 #[cfg(feature = "sandbox-bubblewrap")]
 pub mod bubblewrap;
+pub mod canary_guard;
 pub mod detect;
 pub mod docker;
 
 // Prompt injection defense (contributed from RustyClaw, MIT licensed)
 pub mod domain_matcher;
 pub mod estop;
+pub mod file_link_guard;
 #[cfg(target_os = "linux")]
 pub mod firejail;
 pub mod iam_policy;
@@ -36,10 +38,15 @@ pub mod leak_detector;
 pub mod nevis;
 pub mod otp;
 pub mod pairing;
+pub mod perplexity;
 pub mod playbook;
 pub mod policy;
 pub mod prompt_guard;
+pub mod roles;
 pub mod secrets;
+pub mod semantic_guard;
+pub mod sensitive_paths;
+pub mod syscall_anomaly;
 pub mod traits;
 pub mod vulnerability;
 pub mod workspace_boundary;
@@ -69,7 +76,15 @@ pub use nevis::{NevisAuthProvider, NevisIdentity};
 #[allow(unused_imports)]
 pub use leak_detector::{LeakDetector, LeakResult};
 #[allow(unused_imports)]
+pub use perplexity::{detect_adversarial_suffix, PerplexityAssessment};
+#[allow(unused_imports)]
 pub use prompt_guard::{GuardAction, GuardResult, PromptGuard};
+#[allow(unused_imports)]
+pub use roles::{RoleRegistry, ToolAccess};
+#[allow(unused_imports)]
+pub use semantic_guard::{GuardCorpusUpdateReport, SemanticGuard, SemanticGuardStartupStatus};
+#[allow(unused_imports)]
+pub use syscall_anomaly::{SyscallAnomalyAlert, SyscallAnomalyDetector, SyscallAnomalyKind};
 #[allow(unused_imports)]
 pub use workspace_boundary::{BoundaryVerdict, WorkspaceBoundary};
 

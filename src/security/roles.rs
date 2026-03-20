@@ -106,7 +106,7 @@ impl RoleRegistry {
                 .inherits
                 .as_deref()
                 .map(str::trim)
-                .filter(|value| !value.is_empty())
+                .filter(|value: &&str| !value.is_empty())
                 .map(str::to_ascii_lowercase);
 
             registry.roles.insert(

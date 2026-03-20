@@ -2102,18 +2102,75 @@ pub struct WebSearchConfig {
     /// Enable `web_search_tool` for web searches
     #[serde(default)]
     pub enabled: bool,
-    /// Search provider: "duckduckgo" (free, no API key) or "brave" (requires API key)
+    /// Search provider: "duckduckgo"/"ddg" (free, no API key), "brave", "firecrawl",
+    /// "tavily", "perplexity", "exa", or "jina"
     #[serde(default = "default_web_search_provider")]
     pub provider: String,
+    /// Generic provider API key (used by firecrawl, tavily, and as fallback for brave).
+    /// Multiple keys can be comma-separated for round-robin load balancing.
+    #[serde(default)]
+    pub api_key: Option<String>,
+    /// Optional provider API URL override (for self-hosted providers)
+    #[serde(default)]
+    pub api_url: Option<String>,
     /// Brave Search API key (required if provider is "brave")
     #[serde(default)]
     pub brave_api_key: Option<String>,
+    /// Perplexity API key (used when provider is "perplexity")
+    #[serde(default)]
+    pub perplexity_api_key: Option<String>,
+    /// Exa API key (used when provider is "exa")
+    #[serde(default)]
+    pub exa_api_key: Option<String>,
+    /// Jina API key (optional; can raise limits for provider = "jina")
+    #[serde(default)]
+    pub jina_api_key: Option<String>,
+    /// Fallback providers attempted after primary provider fails.
+    /// Supported values: duckduckgo (or ddg), brave, firecrawl, tavily, perplexity, exa, jina
+    #[serde(default)]
+    pub fallback_providers: Vec<String>,
+    /// Retry count per provider before falling back to next provider
+    #[serde(default = "default_web_search_retries_per_provider")]
+    pub retries_per_provider: u32,
+    /// Retry backoff in milliseconds between provider retry attempts
+    #[serde(default = "default_web_search_retry_backoff_ms")]
+    pub retry_backoff_ms: u64,
+    /// Optional domain filter forwarded to providers that support it
+    #[serde(default)]
+    pub domain_filter: Vec<String>,
+    /// Optional language filter forwarded to providers that support it
+    #[serde(default)]
+    pub language_filter: Vec<String>,
+    /// Optional country filter forwarded to providers that support it (e.g. "US")
+    #[serde(default)]
+    pub country: Option<String>,
+    /// Optional recency filter forwarded to providers that support it
+    #[serde(default)]
+    pub recency_filter: Option<String>,
+    /// Optional max tokens cap used by provider-specific APIs (for example Perplexity)
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
+    /// Optional per-result token cap used by provider-specific APIs
+    #[serde(default)]
+    pub max_tokens_per_page: Option<u32>,
+    /// Exa search type override: "auto" (default), "keyword", or "neural"
+    #[serde(default = "default_web_search_exa_search_type")]
+    pub exa_search_type: String,
+    /// Include textual content payloads for Exa search responses
+    #[serde(default)]
+    pub exa_include_text: bool,
+    /// Optional site filters for Jina search provider
+    #[serde(default)]
+    pub jina_site_filters: Vec<String>,
     /// Maximum results per search (1-10)
     #[serde(default = "default_web_search_max_results")]
     pub max_results: usize,
     /// Request timeout in seconds
     #[serde(default = "default_web_search_timeout_secs")]
     pub timeout_secs: u64,
+    /// User-Agent string sent with search requests (env: ZEROCLAW_WEB_SEARCH_USER_AGENT)
+    #[serde(default = "default_web_search_user_agent")]
+    pub user_agent: String,
 }
 
 fn default_web_search_provider() -> String {
@@ -2128,14 +2185,48 @@ fn default_web_search_timeout_secs() -> u64 {
     15
 }
 
+fn default_web_search_retries_per_provider() -> u32 {
+    0
+}
+
+fn default_web_search_retry_backoff_ms() -> u64 {
+    250
+}
+
+fn default_web_search_exa_search_type() -> String {
+    "auto".into()
+}
+
+fn default_web_search_user_agent() -> String {
+    "ZeroClaw/1.0".into()
+}
+
 impl Default for WebSearchConfig {
     fn default() -> Self {
         Self {
             enabled: false,
             provider: default_web_search_provider(),
+            api_key: None,
+            api_url: None,
             brave_api_key: None,
+            perplexity_api_key: None,
+            exa_api_key: None,
+            jina_api_key: None,
+            fallback_providers: Vec::new(),
+            retries_per_provider: default_web_search_retries_per_provider(),
+            retry_backoff_ms: default_web_search_retry_backoff_ms(),
+            domain_filter: Vec::new(),
+            language_filter: Vec::new(),
+            country: None,
+            recency_filter: None,
+            max_tokens: None,
+            max_tokens_per_page: None,
+            exa_search_type: default_web_search_exa_search_type(),
+            exa_include_text: false,
+            jina_site_filters: Vec::new(),
             max_results: default_web_search_max_results(),
             timeout_secs: default_web_search_timeout_secs(),
+            user_agent: default_web_search_user_agent(),
         }
     }
 }
@@ -5158,8 +5249,347 @@ impl ChannelConfig for FeishuConfig {
 
 // ── Security Config ─────────────────────────────────────────────────
 
+/// Custom security role definition for user-level tool authorization.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct SecurityRoleConfig {
+    /// Stable role name used by user records.
+    pub name: String,
+
+    /// Optional human-readable description.
+    #[serde(default)]
+    pub description: String,
+
+    /// Explicit allowlist of tools for this role.
+    #[serde(default)]
+    pub allowed_tools: Vec<String>,
+
+    /// Explicit denylist of tools for this role.
+    #[serde(default)]
+    pub denied_tools: Vec<String>,
+
+    /// Tool names requiring OTP for this role.
+    #[serde(default)]
+    pub totp_gated: Vec<String>,
+
+    /// Optional parent role name used for inheritance.
+    #[serde(default)]
+    pub inherits: Option<String>,
+
+    /// Role-scoped domain patterns requiring OTP.
+    #[serde(default)]
+    pub gated_domains: Vec<String>,
+
+    /// Role-scoped domain categories requiring OTP.
+    #[serde(default)]
+    pub gated_domain_categories: Vec<String>,
+}
+
+/// Syscall anomaly detection configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SyscallAnomalyConfig {
+    /// Enable syscall anomaly detection.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+
+    /// Treat denied syscall lines as anomalies even when syscall is in baseline.
+    #[serde(default)]
+    pub strict_mode: bool,
+
+    /// Emit anomaly alerts when a syscall appears outside the expected baseline.
+    #[serde(default = "default_true")]
+    pub alert_on_unknown_syscall: bool,
+
+    /// Allowed denied-syscall events per rolling minute before triggering an alert.
+    #[serde(default = "default_syscall_anomaly_max_denied_events_per_minute")]
+    pub max_denied_events_per_minute: u32,
+
+    /// Allowed total syscall telemetry events per rolling minute before triggering an alert.
+    #[serde(default = "default_syscall_anomaly_max_total_events_per_minute")]
+    pub max_total_events_per_minute: u32,
+
+    /// Maximum anomaly alerts emitted per rolling minute (global guardrail).
+    #[serde(default = "default_syscall_anomaly_max_alerts_per_minute")]
+    pub max_alerts_per_minute: u32,
+
+    /// Cooldown between identical anomaly alerts (seconds).
+    #[serde(default = "default_syscall_anomaly_alert_cooldown_secs")]
+    pub alert_cooldown_secs: u64,
+
+    /// Path to syscall anomaly log file (relative to ~/.zeroclaw unless absolute).
+    #[serde(default = "default_syscall_anomaly_log_path")]
+    pub log_path: String,
+
+    /// Expected syscall baseline. Unknown syscall names trigger anomaly when enabled.
+    #[serde(default = "default_syscall_anomaly_baseline_syscalls")]
+    pub baseline_syscalls: Vec<String>,
+}
+
+fn default_syscall_anomaly_max_denied_events_per_minute() -> u32 {
+    5
+}
+
+fn default_syscall_anomaly_max_total_events_per_minute() -> u32 {
+    120
+}
+
+fn default_syscall_anomaly_max_alerts_per_minute() -> u32 {
+    30
+}
+
+fn default_syscall_anomaly_alert_cooldown_secs() -> u64 {
+    20
+}
+
+fn default_syscall_anomaly_log_path() -> String {
+    "syscall-anomalies.log".to_string()
+}
+
+fn default_syscall_anomaly_baseline_syscalls() -> Vec<String> {
+    vec![
+        "read".to_string(),
+        "write".to_string(),
+        "open".to_string(),
+        "openat".to_string(),
+        "close".to_string(),
+        "stat".to_string(),
+        "fstat".to_string(),
+        "newfstatat".to_string(),
+        "lseek".to_string(),
+        "mmap".to_string(),
+        "mprotect".to_string(),
+        "munmap".to_string(),
+        "brk".to_string(),
+        "rt_sigaction".to_string(),
+        "rt_sigprocmask".to_string(),
+        "ioctl".to_string(),
+        "fcntl".to_string(),
+        "access".to_string(),
+        "pipe2".to_string(),
+        "dup".to_string(),
+        "dup2".to_string(),
+        "dup3".to_string(),
+        "epoll_create1".to_string(),
+        "epoll_ctl".to_string(),
+        "epoll_wait".to_string(),
+        "poll".to_string(),
+        "ppoll".to_string(),
+        "select".to_string(),
+        "futex".to_string(),
+        "clock_gettime".to_string(),
+        "nanosleep".to_string(),
+        "getpid".to_string(),
+        "gettid".to_string(),
+        "set_tid_address".to_string(),
+        "set_robust_list".to_string(),
+        "clone".to_string(),
+        "clone3".to_string(),
+        "fork".to_string(),
+        "execve".to_string(),
+        "wait4".to_string(),
+        "exit".to_string(),
+        "exit_group".to_string(),
+        "socket".to_string(),
+        "connect".to_string(),
+        "accept".to_string(),
+        "accept4".to_string(),
+        "listen".to_string(),
+        "sendto".to_string(),
+        "recvfrom".to_string(),
+        "sendmsg".to_string(),
+        "recvmsg".to_string(),
+        "getsockname".to_string(),
+        "getpeername".to_string(),
+        "setsockopt".to_string(),
+        "getsockopt".to_string(),
+        "getrandom".to_string(),
+        "statx".to_string(),
+    ]
+}
+
+impl Default for SyscallAnomalyConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_true(),
+            strict_mode: false,
+            alert_on_unknown_syscall: default_true(),
+            max_denied_events_per_minute: default_syscall_anomaly_max_denied_events_per_minute(),
+            max_total_events_per_minute: default_syscall_anomaly_max_total_events_per_minute(),
+            max_alerts_per_minute: default_syscall_anomaly_max_alerts_per_minute(),
+            alert_cooldown_secs: default_syscall_anomaly_alert_cooldown_secs(),
+            log_path: default_syscall_anomaly_log_path(),
+            baseline_syscalls: default_syscall_anomaly_baseline_syscalls(),
+        }
+    }
+}
+
+/// Lightweight perplexity-style filter configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct PerplexityFilterConfig {
+    /// Enable probabilistic adversarial suffix filtering before provider calls.
+    #[serde(default)]
+    pub enable_perplexity_filter: bool,
+
+    /// Character-class bigram perplexity threshold for anomaly blocking.
+    #[serde(default = "default_perplexity_threshold")]
+    pub perplexity_threshold: f64,
+
+    /// Number of trailing characters sampled for suffix anomaly scoring.
+    #[serde(default = "default_perplexity_suffix_window_chars")]
+    pub suffix_window_chars: usize,
+
+    /// Minimum input length before running the perplexity filter.
+    #[serde(default = "default_perplexity_min_prompt_chars")]
+    pub min_prompt_chars: usize,
+
+    /// Minimum punctuation ratio in the sampled suffix required to block.
+    #[serde(default = "default_perplexity_symbol_ratio_threshold")]
+    pub symbol_ratio_threshold: f64,
+}
+
+fn default_perplexity_threshold() -> f64 {
+    18.0
+}
+
+fn default_perplexity_suffix_window_chars() -> usize {
+    64
+}
+
+fn default_perplexity_min_prompt_chars() -> usize {
+    32
+}
+
+fn default_perplexity_symbol_ratio_threshold() -> f64 {
+    0.20
+}
+
+impl Default for PerplexityFilterConfig {
+    fn default() -> Self {
+        Self {
+            enable_perplexity_filter: false,
+            perplexity_threshold: default_perplexity_threshold(),
+            suffix_window_chars: default_perplexity_suffix_window_chars(),
+            min_prompt_chars: default_perplexity_min_prompt_chars(),
+            symbol_ratio_threshold: default_perplexity_symbol_ratio_threshold(),
+        }
+    }
+}
+
+/// Outbound leak handling mode for channel responses.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum OutboundLeakGuardAction {
+    /// Redact suspicious credentials and continue delivery.
+    #[default]
+    Redact,
+    /// Block delivery when suspicious credentials are detected.
+    Block,
+}
+
+/// Outbound credential leak guard configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OutboundLeakGuardConfig {
+    /// Enable outbound credential leak scanning for channel responses.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+
+    /// Action to take when potential credentials are detected.
+    #[serde(default)]
+    pub action: OutboundLeakGuardAction,
+
+    /// Detection sensitivity (0.0-1.0, higher = more aggressive).
+    #[serde(default = "default_outbound_leak_guard_sensitivity")]
+    pub sensitivity: f64,
+}
+
+fn default_outbound_leak_guard_sensitivity() -> f64 {
+    0.7
+}
+
+impl Default for OutboundLeakGuardConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            action: OutboundLeakGuardAction::Redact,
+            sensitivity: default_outbound_leak_guard_sensitivity(),
+        }
+    }
+}
+
+/// Shared URL validation configuration used by network tools.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[allow(clippy::struct_excessive_bools)]
+pub struct UrlAccessConfig {
+    /// Block private/local IPs and hostnames by default.
+    #[serde(default = "default_true")]
+    pub block_private_ip: bool,
+
+    /// Explicit CIDR ranges that bypass private/local-IP blocking.
+    #[serde(default)]
+    pub allow_cidrs: Vec<String>,
+
+    /// Explicit domain patterns that bypass private/local-IP blocking.
+    /// Supports exact, `*.example.com`, and `*`.
+    #[serde(default)]
+    pub allow_domains: Vec<String>,
+
+    /// Allow loopback host/IP access (`localhost`, `127.0.0.1`, `::1`).
+    #[serde(default)]
+    pub allow_loopback: bool,
+
+    /// Require explicit human confirmation before first-time access to an
+    /// unseen domain. Confirmed domains are persisted in `approved_domains`.
+    #[serde(default)]
+    pub require_first_visit_approval: bool,
+
+    /// Enforce a global domain allowlist in addition to per-tool allowlists.
+    /// When enabled, hosts must match `domain_allowlist`.
+    #[serde(default)]
+    pub enforce_domain_allowlist: bool,
+
+    /// Global trusted domain allowlist shared by all URL-based network tools.
+    /// Supports exact, `*.example.com`, and `*`.
+    #[serde(default)]
+    pub domain_allowlist: Vec<String>,
+
+    /// Global domain blocklist shared by all URL-based network tools.
+    /// Supports exact, `*.example.com`, and `*`. Takes priority over allowlists.
+    #[serde(default)]
+    pub domain_blocklist: Vec<String>,
+
+    /// Persisted first-visit approvals granted by a human operator.
+    /// Supports exact, `*.example.com`, and `*`.
+    #[serde(default)]
+    pub approved_domains: Vec<String>,
+}
+
+impl Default for UrlAccessConfig {
+    fn default() -> Self {
+        Self {
+            block_private_ip: true,
+            allow_cidrs: Vec::new(),
+            allow_domains: Vec::new(),
+            allow_loopback: false,
+            require_first_visit_approval: false,
+            enforce_domain_allowlist: false,
+            domain_allowlist: Vec::new(),
+            domain_blocklist: Vec::new(),
+            approved_domains: Vec::new(),
+        }
+    }
+}
+
+fn default_semantic_guard_collection() -> String {
+    "semantic_guard".into()
+}
+
+fn default_semantic_guard_threshold() -> f64 {
+    0.82
+}
+
 /// Security configuration for sandboxing, resource limits, and audit logging
-#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SecurityConfig {
     /// Sandbox configuration
     #[serde(default)]
@@ -5177,6 +5607,10 @@ pub struct SecurityConfig {
     #[serde(default)]
     pub otp: OtpConfig,
 
+    /// Custom security role definitions used for user-level tool authorization.
+    #[serde(default)]
+    pub roles: Vec<SecurityRoleConfig>,
+
     /// Emergency-stop state machine configuration.
     #[serde(default)]
     pub estop: EstopConfig,
@@ -5184,6 +5618,63 @@ pub struct SecurityConfig {
     /// Nevis IAM integration for SSO/MFA authentication and role-based access.
     #[serde(default)]
     pub nevis: NevisConfig,
+
+    /// Syscall anomaly detection profile for daemon shell/process execution.
+    #[serde(default)]
+    pub syscall_anomaly: SyscallAnomalyConfig,
+
+    /// Lightweight statistical filter for adversarial suffixes (opt-in).
+    #[serde(default)]
+    pub perplexity_filter: PerplexityFilterConfig,
+
+    /// Outbound credential leak guard for channel replies.
+    #[serde(default)]
+    pub outbound_leak_guard: OutboundLeakGuardConfig,
+
+    /// Enable per-turn canary tokens to detect system-context exfiltration.
+    #[serde(default = "default_true")]
+    pub canary_tokens: bool,
+
+    /// Enable semantic prompt-injection guard backed by vector similarity.
+    ///
+    /// This guard is additive to lexical prompt detection and only runs when
+    /// `PromptGuard` does not already block the input.
+    #[serde(default)]
+    pub semantic_guard: bool,
+
+    /// Qdrant collection used by the semantic guard.
+    #[serde(default = "default_semantic_guard_collection")]
+    pub semantic_guard_collection: String,
+
+    /// Cosine similarity threshold for semantic-guard detections.
+    #[serde(default = "default_semantic_guard_threshold")]
+    pub semantic_guard_threshold: f64,
+
+    /// Shared URL access policy for network-enabled tools.
+    #[serde(default)]
+    pub url_access: UrlAccessConfig,
+}
+
+impl Default for SecurityConfig {
+    fn default() -> Self {
+        Self {
+            sandbox: SandboxConfig::default(),
+            resources: ResourceLimitsConfig::default(),
+            audit: AuditConfig::default(),
+            otp: OtpConfig::default(),
+            roles: Vec::default(),
+            estop: EstopConfig::default(),
+            nevis: NevisConfig::default(),
+            syscall_anomaly: SyscallAnomalyConfig::default(),
+            perplexity_filter: PerplexityFilterConfig::default(),
+            outbound_leak_guard: OutboundLeakGuardConfig::default(),
+            canary_tokens: true,
+            semantic_guard: false,
+            semantic_guard_collection: default_semantic_guard_collection(),
+            semantic_guard_threshold: default_semantic_guard_threshold(),
+            url_access: UrlAccessConfig::default(),
+        }
+    }
 }
 
 /// OTP validation strategy.
@@ -7880,6 +8371,46 @@ impl Config {
             }
         }
 
+        // Tavily API key: ZEROCLAW_TAVILY_API_KEY or TAVILY_API_KEY
+        if let Ok(api_key) =
+            std::env::var("ZEROCLAW_TAVILY_API_KEY").or_else(|_| std::env::var("TAVILY_API_KEY"))
+        {
+            let api_key = api_key.trim();
+            if !api_key.is_empty() {
+                self.web_search.api_key = Some(api_key.to_string());
+            }
+        }
+
+        // Perplexity API key: ZEROCLAW_PERPLEXITY_API_KEY or PERPLEXITY_API_KEY
+        if let Ok(api_key) = std::env::var("ZEROCLAW_PERPLEXITY_API_KEY")
+            .or_else(|_| std::env::var("PERPLEXITY_API_KEY"))
+        {
+            let api_key = api_key.trim();
+            if !api_key.is_empty() {
+                self.web_search.perplexity_api_key = Some(api_key.to_string());
+            }
+        }
+
+        // Exa API key: ZEROCLAW_EXA_API_KEY or EXA_API_KEY
+        if let Ok(api_key) =
+            std::env::var("ZEROCLAW_EXA_API_KEY").or_else(|_| std::env::var("EXA_API_KEY"))
+        {
+            let api_key = api_key.trim();
+            if !api_key.is_empty() {
+                self.web_search.exa_api_key = Some(api_key.to_string());
+            }
+        }
+
+        // Jina API key: ZEROCLAW_JINA_API_KEY or JINA_API_KEY
+        if let Ok(api_key) =
+            std::env::var("ZEROCLAW_JINA_API_KEY").or_else(|_| std::env::var("JINA_API_KEY"))
+        {
+            let api_key = api_key.trim();
+            if !api_key.is_empty() {
+                self.web_search.jina_api_key = Some(api_key.to_string());
+            }
+        }
+
         // Web search max results: ZEROCLAW_WEB_SEARCH_MAX_RESULTS or WEB_SEARCH_MAX_RESULTS
         if let Ok(max_results) = std::env::var("ZEROCLAW_WEB_SEARCH_MAX_RESULTS")
             .or_else(|_| std::env::var("WEB_SEARCH_MAX_RESULTS"))
@@ -7900,6 +8431,18 @@ impl Config {
                     self.web_search.timeout_secs = timeout_secs;
                 }
             }
+        }
+
+        // Web search fallback providers (comma-separated)
+        if let Ok(fallbacks) = std::env::var("ZEROCLAW_WEB_SEARCH_FALLBACK_PROVIDERS")
+            .or_else(|_| std::env::var("WEB_SEARCH_FALLBACK_PROVIDERS"))
+        {
+            self.web_search.fallback_providers = fallbacks
+                .split(',')
+                .map(str::trim)
+                .filter(|entry| !entry.is_empty())
+                .map(ToOwned::to_owned)
+                .collect();
         }
 
         // Storage provider key (optional backend override): ZEROCLAW_STORAGE_PROVIDER

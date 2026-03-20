@@ -29,13 +29,13 @@ pub mod linq;
 pub mod matrix;
 pub mod mattermost;
 pub mod mochat;
+#[cfg(feature = "huanxing")]
+pub mod napcat;
 pub mod nextcloud_talk;
 #[cfg(feature = "channel-nostr")]
 pub mod nostr;
 pub mod notion;
 pub mod qq;
-#[cfg(feature = "huanxing")]
-pub mod napcat;
 pub mod reddit;
 pub mod session_backend;
 pub mod session_sqlite;
@@ -71,13 +71,13 @@ pub use linq::LinqChannel;
 pub use matrix::MatrixChannel;
 pub use mattermost::MattermostChannel;
 pub use mochat::MochatChannel;
+#[cfg(feature = "huanxing")]
+pub use napcat::NapcatChannel;
 pub use nextcloud_talk::NextcloudTalkChannel;
 #[cfg(feature = "channel-nostr")]
 pub use nostr::NostrChannel;
 pub use notion::NotionChannel;
 pub use qq::QQChannel;
-#[cfg(feature = "huanxing")]
-pub use napcat::NapcatChannel;
 pub use reddit::RedditChannel;
 pub use signal::SignalChannel;
 pub use slack::SlackChannel;
@@ -436,7 +436,8 @@ fn conversation_history_key(msg: &traits::ChannelMessage) -> String {
     // every time — skip it so conversations persist across messages.
     match &msg.thread_ts {
         Some(tid) if msg.channel != "napcat" => format!(
-            "{}_{}_{}_{}", msg.channel, msg.reply_target, tid, msg.sender
+            "{}_{}_{}_{}",
+            msg.channel, msg.reply_target, tid, msg.sender
         ),
         _ => format!("{}_{}_{}", msg.channel, msg.reply_target, msg.sender),
     }
@@ -2133,18 +2134,18 @@ async fn process_channel_message(
             .as_deref()
             .unwrap_or(&route.provider)
             .to_string();
-        let model = tenant
-            .model
-            .as_deref()
-            .unwrap_or(&route.model)
-            .to_string();
+        let model = tenant.model.as_deref().unwrap_or(&route.model).to_string();
         if let Some(temp) = tenant.temperature {
             runtime_defaults.temperature = temp;
         }
         if let Some(ref key) = tenant.api_key {
             runtime_defaults.api_key = Some(key.clone());
         }
-        ChannelRouteSelection { provider, model, api_key: route.api_key }
+        ChannelRouteSelection {
+            provider,
+            model,
+            api_key: route.api_key,
+        }
     } else {
         route
     };
@@ -2183,12 +2184,7 @@ async fn process_channel_message(
     let active_provider = if let Some(p) = tenant_provider {
         p
     } else {
-        match get_or_create_provider(
-            ctx.as_ref(),
-            &route.provider,
-            route.api_key.as_deref(),
-        )
-        .await
+        match get_or_create_provider(ctx.as_ref(), &route.provider, route.api_key.as_deref()).await
         {
             Ok(provider) => provider,
             Err(err) => {
@@ -2765,7 +2761,9 @@ async fn process_channel_message(
             // HuanXing: also persist assistant turn to tenant session store
             #[cfg(feature = "huanxing")]
             if let Some(ref store) = tenant_session_store {
-                if let Err(e) = store.append(&history_key, &ChatMessage::assistant(&history_response)) {
+                if let Err(e) =
+                    store.append(&history_key, &ChatMessage::assistant(&history_response))
+                {
                     tracing::warn!("Failed to persist tenant assistant turn: {e}");
                 }
             }
@@ -2774,16 +2772,22 @@ async fn process_channel_message(
             if ctx.auto_save_memory && msg.content.chars().count() >= AUTOSAVE_MIN_MESSAGE_CHARS {
                 // HuanXing: use tenant-scoped memory/model/provider for consolidation
                 #[cfg(feature = "huanxing")]
-                let (consolidation_memory, consolidation_model) = if let Some(ref tenant) = tenant_ctx {
-                    (
-                        Arc::clone(&tenant.memory),
-                        tenant.model.as_deref().unwrap_or(ctx.model.as_str()).to_string(),
-                    )
-                } else {
-                    (Arc::clone(&ctx.memory), ctx.model.to_string())
-                };
+                let (consolidation_memory, consolidation_model) =
+                    if let Some(ref tenant) = tenant_ctx {
+                        (
+                            Arc::clone(&tenant.memory),
+                            tenant
+                                .model
+                                .as_deref()
+                                .unwrap_or(ctx.model.as_str())
+                                .to_string(),
+                        )
+                    } else {
+                        (Arc::clone(&ctx.memory), ctx.model.to_string())
+                    };
                 #[cfg(not(feature = "huanxing"))]
-                let (consolidation_memory, consolidation_model) = (Arc::clone(&ctx.memory), ctx.model.to_string());
+                let (consolidation_memory, consolidation_model) =
+                    (Arc::clone(&ctx.memory), ctx.model.to_string());
 
                 let provider = Arc::clone(&ctx.provider);
                 let user_msg = msg.content.clone();
@@ -2929,12 +2933,9 @@ async fn process_channel_message(
                 if !rolled_back {
                     // Close the orphan user turn so subsequent messages don't
                     // inherit this failed request as unfinished context.
-                    let fail_turn = ChatMessage::assistant("[Task failed — not continuing this request]");
-                    append_sender_turn(
-                        ctx.as_ref(),
-                        &history_key,
-                        fail_turn.clone(),
-                    );
+                    let fail_turn =
+                        ChatMessage::assistant("[Task failed — not continuing this request]");
+                    append_sender_turn(ctx.as_ref(), &history_key, fail_turn.clone());
                     #[cfg(feature = "huanxing")]
                     if let Some(ref store) = tenant_session_store {
                         let _ = store.append(&history_key, &fail_turn);
@@ -2981,12 +2982,9 @@ async fn process_channel_message(
             );
             // Close the orphan user turn so subsequent messages don't
             // inherit this timed-out request as unfinished context.
-            let timeout_turn = ChatMessage::assistant("[Task timed out — not continuing this request]");
-            append_sender_turn(
-                ctx.as_ref(),
-                &history_key,
-                timeout_turn.clone(),
-            );
+            let timeout_turn =
+                ChatMessage::assistant("[Task timed out — not continuing this request]");
+            append_sender_turn(ctx.as_ref(), &history_key, timeout_turn.clone());
             #[cfg(feature = "huanxing")]
             if let Some(ref store) = tenant_session_store {
                 let _ = store.append(&history_key, &timeout_turn);
@@ -4754,12 +4752,17 @@ pub async fn start_channels(config: Config) -> Result<()> {
         tenant_router: if config.huanxing.enabled {
             // Sync common skills from hub before loading tenant contexts
             if let Some(ref hub_dir) = config.huanxing.hub_dir {
-                let common_skills_dir = config.huanxing.resolve_common_skills_dir(&config.workspace_dir);
+                let common_skills_dir = config
+                    .huanxing
+                    .resolve_common_skills_dir(&config.workspace_dir);
                 match crate::huanxing::sync::sync_common_skills(hub_dir, &common_skills_dir).await {
                     Ok((added, updated, removed, skipped)) => {
                         if added + updated + removed > 0 {
                             tracing::info!(
-                                added, updated, removed, skipped,
+                                added,
+                                updated,
+                                removed,
+                                skipped,
                                 "Common skills synced from hub"
                             );
                         }

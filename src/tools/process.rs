@@ -1,4 +1,4 @@
-use super::shell::collect_allowed_shell_env_vars;
+use super::shell::resolve_env_vars;
 use super::traits::{Tool, ToolResult};
 use crate::runtime::RuntimeAdapter;
 use crate::security::policy::ToolOperation;
@@ -162,10 +162,10 @@ impl ProcessTool {
         cmd.stderr(Stdio::piped());
         cmd.env_clear();
 
-        for var in collect_allowed_shell_env_vars(&self.security) {
-            if let Ok(val) = std::env::var(&var) {
-                cmd.env(&var, val);
-            }
+        // 三层 .env 加载: config_dir/.env < workspace/.env < 进程环境变量
+        let env_vars = resolve_env_vars(&self.security, Some(&self.security.workspace_dir), None);
+        for (key, val) in &env_vars {
+            cmd.env(key, val);
         }
 
         let mut child = match cmd.spawn() {

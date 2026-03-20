@@ -3,6 +3,7 @@
 //! This module injects a per-turn marker into the system prompt and detects if
 //! that marker appears in model output. A match indicates likely system-context
 //! leakage.
+#![allow(clippy::trivially_copy_pass_by_ref)]
 
 use uuid::Uuid;
 

@@ -43,6 +43,22 @@ pub fn truncate_with_ellipsis(s: &str, max_chars: usize) -> String {
     }
 }
 
+/// Return the greatest valid UTF-8 char boundary at or below `index`.
+///
+/// This mirrors `str::floor_char_boundary` behavior while remaining compatible
+/// with stable toolchains where that API is not available.
+pub fn floor_utf8_char_boundary(s: &str, index: usize) -> usize {
+    if index >= s.len() {
+        return s.len();
+    }
+
+    let mut i = index;
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
 /// Utility enum for handling optional values.
 pub enum MaybeSet<T> {
     Set(T),
