@@ -246,6 +246,8 @@ skill-creation = []
 whatsapp-web = ["dep:wa-rs", "dep:wa-rs-core", "dep:wa-rs-binary", "dep:wa-rs-proto", "dep:wa-rs-ureq-http", "dep:wa-rs-tokio-transport", "dep:serde-big-array", "dep:prost", "dep:qrcode"]
 # WASM plugin system (extism-based)
 plugins-wasm = ["dep:extism"]
+# Firecrawl web search backend
+firecrawl = []
 # 唤星多租户 SaaS 扩展
 huanxing = []
 
