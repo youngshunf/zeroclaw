@@ -4796,6 +4796,8 @@ pub async fn start_channels(config: Config) -> Result<()> {
     });
 
     // Hydrate in-memory conversation histories from persisted JSONL session files.
+    // HUANXING: 多租户模式下跳过全局 session_store 水化；各租户在首次收到消息时按需水化
+    #[cfg(not(feature = "huanxing"))]
     if let Some(ref store) = runtime_ctx.session_store {
         let mut hydrated = 0usize;
         let mut histories = runtime_ctx
@@ -4812,6 +4814,28 @@ pub async fn start_channels(config: Config) -> Result<()> {
         drop(histories);
         if hydrated > 0 {
             tracing::info!("📂 Restored {hydrated} session(s) from disk");
+        }
+    }
+    #[cfg(feature = "huanxing")]
+    {
+        // 多租户模式：guardian 用全局 session_store，注册用户在首次消息时按需从 tenant.session_manager 水化
+        if let Some(ref store) = runtime_ctx.session_store {
+            let mut hydrated = 0usize;
+            let mut histories = runtime_ctx
+                .conversation_histories
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            for key in store.list_sessions() {
+                let msgs = store.load(&key);
+                if !msgs.is_empty() {
+                    hydrated += 1;
+                    histories.insert(key, msgs);
+                }
+            }
+            drop(histories);
+            if hydrated > 0 {
+                tracing::info!("📂 Restored {hydrated} guardian session(s) from disk");
+            }
         }
     }
 
@@ -5091,6 +5115,10 @@ mod tests {
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            #[cfg(feature = "huanxing")]
+            tenant_router: None,
+            #[cfg(feature = "huanxing")]
+            skill_market_router_slot: None,
         };
 
         assert!(compact_sender_history(&ctx, &sender));
@@ -5205,6 +5233,10 @@ mod tests {
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            #[cfg(feature = "huanxing")]
+            tenant_router: None,
+            #[cfg(feature = "huanxing")]
+            skill_market_router_slot: None,
         };
 
         append_sender_turn(&ctx, &sender, ChatMessage::user("hello"));
@@ -5275,6 +5307,10 @@ mod tests {
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            #[cfg(feature = "huanxing")]
+            tenant_router: None,
+            #[cfg(feature = "huanxing")]
+            skill_market_router_slot: None,
         };
 
         assert!(rollback_orphan_user_turn(&ctx, &sender, "pending"));
@@ -5364,6 +5400,10 @@ mod tests {
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            #[cfg(feature = "huanxing")]
+            tenant_router: None,
+            #[cfg(feature = "huanxing")]
+            skill_market_router_slot: None,
         };
 
         assert!(rollback_orphan_user_turn(
@@ -5903,6 +5943,10 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            #[cfg(feature = "huanxing")]
+            tenant_router: None,
+            #[cfg(feature = "huanxing")]
+            skill_market_router_slot: None,
         });
 
         process_channel_message(
@@ -5982,6 +6026,10 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            #[cfg(feature = "huanxing")]
+            tenant_router: None,
+            #[cfg(feature = "huanxing")]
+            skill_market_router_slot: None,
         });
 
         process_channel_message(
@@ -6075,6 +6123,10 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            #[cfg(feature = "huanxing")]
+            tenant_router: None,
+            #[cfg(feature = "huanxing")]
+            skill_market_router_slot: None,
         });
 
         process_channel_message(
@@ -6153,6 +6205,10 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            #[cfg(feature = "huanxing")]
+            tenant_router: None,
+            #[cfg(feature = "huanxing")]
+            skill_market_router_slot: None,
         });
 
         process_channel_message(
@@ -6241,6 +6297,10 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            #[cfg(feature = "huanxing")]
+            tenant_router: None,
+            #[cfg(feature = "huanxing")]
+            skill_market_router_slot: None,
         });
 
         process_channel_message(
@@ -6350,6 +6410,10 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            #[cfg(feature = "huanxing")]
+            tenant_router: None,
+            #[cfg(feature = "huanxing")]
+            skill_market_router_slot: None,
         });
 
         process_channel_message(
@@ -6440,6 +6504,10 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            #[cfg(feature = "huanxing")]
+            tenant_router: None,
+            #[cfg(feature = "huanxing")]
+            skill_market_router_slot: None,
         });
 
         process_channel_message(
@@ -6545,6 +6613,10 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            #[cfg(feature = "huanxing")]
+            tenant_router: None,
+            #[cfg(feature = "huanxing")]
+            skill_market_router_slot: None,
         });
 
         process_channel_message(
@@ -6635,6 +6707,10 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            #[cfg(feature = "huanxing")]
+            tenant_router: None,
+            #[cfg(feature = "huanxing")]
+            skill_market_router_slot: None,
         });
 
         process_channel_message(
@@ -6715,6 +6791,10 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            #[cfg(feature = "huanxing")]
+            tenant_router: None,
+            #[cfg(feature = "huanxing")]
+            skill_market_router_slot: None,
         });
 
         process_channel_message(
@@ -6906,6 +6986,10 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            #[cfg(feature = "huanxing")]
+            tenant_router: None,
+            #[cfg(feature = "huanxing")]
+            skill_market_router_slot: None,
         });
 
         let (tx, rx) = tokio::sync::mpsc::channel::<traits::ChannelMessage>(4);
@@ -7006,6 +7090,10 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            #[cfg(feature = "huanxing")]
+            tenant_router: None,
+            #[cfg(feature = "huanxing")]
+            skill_market_router_slot: None,
         });
 
         let (tx, rx) = tokio::sync::mpsc::channel::<traits::ChannelMessage>(8);
@@ -7121,6 +7209,10 @@ BTC is currently around $65,000 based on latest tool output."#
             )),
             activated_tools: None,
             query_classification: crate::config::QueryClassificationConfig::default(),
+            #[cfg(feature = "huanxing")]
+            tenant_router: None,
+            #[cfg(feature = "huanxing")]
+            skill_market_router_slot: None,
         });
 
         let (tx, rx) = tokio::sync::mpsc::channel::<traits::ChannelMessage>(8);
@@ -7233,6 +7325,10 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            #[cfg(feature = "huanxing")]
+            tenant_router: None,
+            #[cfg(feature = "huanxing")]
+            skill_market_router_slot: None,
         });
 
         let (tx, rx) = tokio::sync::mpsc::channel::<traits::ChannelMessage>(8);
@@ -7327,6 +7423,10 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            #[cfg(feature = "huanxing")]
+            tenant_router: None,
+            #[cfg(feature = "huanxing")]
+            skill_market_router_slot: None,
         });
 
         process_channel_message(
@@ -7405,6 +7505,10 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            #[cfg(feature = "huanxing")]
+            tenant_router: None,
+            #[cfg(feature = "huanxing")]
+            skill_market_router_slot: None,
         });
 
         process_channel_message(
@@ -8166,6 +8270,10 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            #[cfg(feature = "huanxing")]
+            tenant_router: None,
+            #[cfg(feature = "huanxing")]
+            skill_market_router_slot: None,
         });
 
         process_channel_message(
@@ -8295,6 +8403,10 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            #[cfg(feature = "huanxing")]
+            tenant_router: None,
+            #[cfg(feature = "huanxing")]
+            skill_market_router_slot: None,
         });
 
         process_channel_message(
@@ -8351,7 +8463,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
             assert!(
-                !histories.contains_key("telegram_alice"),
+                !histories.contains_key("telegram_chat-refresh_alice"),
                 "/new should clear the cached sender history before the next message"
             );
         }
@@ -8362,7 +8474,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
             assert!(
-                pending_new_sessions.contains("telegram_alice"),
+                pending_new_sessions.contains("telegram_chat-refresh_alice"),
                 "/new should mark the sender for a fresh next-message prompt rebuild"
             );
         }
@@ -8464,6 +8576,10 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            #[cfg(feature = "huanxing")]
+            tenant_router: None,
+            #[cfg(feature = "huanxing")]
+            skill_market_router_slot: None,
         });
 
         process_channel_message(
@@ -8568,6 +8684,10 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            #[cfg(feature = "huanxing")]
+            tenant_router: None,
+            #[cfg(feature = "huanxing")]
+            skill_market_router_slot: None,
         });
 
         process_channel_message(
@@ -9137,6 +9257,10 @@ This is an example JSON object for profile settings."#;
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            #[cfg(feature = "huanxing")]
+            tenant_router: None,
+            #[cfg(feature = "huanxing")]
+            skill_market_router_slot: None,
         });
 
         // Simulate a photo attachment message with [IMAGE:] marker.
@@ -9222,6 +9346,10 @@ This is an example JSON object for profile settings."#;
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            #[cfg(feature = "huanxing")]
+            tenant_router: None,
+            #[cfg(feature = "huanxing")]
+            skill_market_router_slot: None,
         });
 
         process_channel_message(
@@ -9382,6 +9510,10 @@ This is an example JSON object for profile settings."#;
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            #[cfg(feature = "huanxing")]
+            tenant_router: None,
+            #[cfg(feature = "huanxing")]
+            skill_market_router_slot: None,
         });
 
         process_channel_message(
@@ -9491,6 +9623,10 @@ This is an example JSON object for profile settings."#;
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            #[cfg(feature = "huanxing")]
+            tenant_router: None,
+            #[cfg(feature = "huanxing")]
+            skill_market_router_slot: None,
         });
 
         process_channel_message(
@@ -9592,6 +9728,10 @@ This is an example JSON object for profile settings."#;
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            #[cfg(feature = "huanxing")]
+            tenant_router: None,
+            #[cfg(feature = "huanxing")]
+            skill_market_router_slot: None,
         });
 
         process_channel_message(
@@ -9713,6 +9853,10 @@ This is an example JSON object for profile settings."#;
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            #[cfg(feature = "huanxing")]
+            tenant_router: None,
+            #[cfg(feature = "huanxing")]
+            skill_market_router_slot: None,
         });
 
         process_channel_message(
@@ -9967,6 +10111,10 @@ This is an example JSON object for profile settings."#;
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            #[cfg(feature = "huanxing")]
+            tenant_router: None,
+            #[cfg(feature = "huanxing")]
+            skill_market_router_slot: None,
         });
 
         let (tx, rx) = tokio::sync::mpsc::channel::<traits::ChannelMessage>(8);

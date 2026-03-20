@@ -410,6 +410,17 @@ fn default_guardian_prompt() -> String {
         .to_string()
 }
 
+/// Create a session backend for a given workspace directory.
+///
+/// 供 gateway/ws.rs 等外部模块调用，按 `agent_name` 解析 per-user workspace 后
+/// 创建隔离的会话持久化后端，实现多租户数据隔离。
+pub fn create_session_backend_for_workspace(
+    workspace_dir: &std::path::Path,
+    global_config: &crate::config::Config,
+) -> Option<Arc<dyn SessionBackend>> {
+    create_session_backend(workspace_dir, global_config)
+}
+
 /// Create a session backend based on `channels_config.session_backend`.
 /// Returns `None` if session persistence is disabled or creation fails.
 fn create_session_backend(

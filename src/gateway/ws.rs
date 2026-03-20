@@ -62,6 +62,9 @@ struct AgentSession {
     agent: crate::agent::Agent,
     /// 持久化存储 key（格式：gw_{session_id}）
     session_key: String,
+    /// HUANXING: per-session 会话持久化后端（指向用户工作区目录，实现数据隔离）
+    #[cfg(feature = "huanxing")]
+    session_backend: Option<std::sync::Arc<dyn crate::channels::session_backend::SessionBackend>>,
     /// HUANXING: 缓冲式 observer，收集本次 turn 的工具调用事件
     #[cfg(feature = "huanxing")]
     ws_observer: std::sync::Arc<crate::huanxing::ws_observer::WsObserver>,
@@ -239,7 +242,16 @@ async fn handle_socket(socket: WebSocket, state: AppState, default_session_id: O
 
                 let session = sessions.get_mut(&sid).unwrap();
 
-                // 持久化用户消息
+                // 持久化用户消息（HUANXING: 优先用 per-user backend，非多租户回退全局）
+                #[cfg(feature = "huanxing")]
+                {
+                    let backend = session.session_backend.as_ref().or(state.session_backend.as_ref());
+                    if let Some(b) = backend {
+                        let user_msg = crate::providers::ChatMessage::user(&content);
+                        let _ = b.append(&session.session_key, &user_msg);
+                    }
+                }
+                #[cfg(not(feature = "huanxing"))]
                 if let Some(ref backend) = state.session_backend {
                     let user_msg = crate::providers::ChatMessage::user(&content);
                     let _ = backend.append(&session.session_key, &user_msg);
@@ -294,13 +306,50 @@ fn init_agent_session(
     _agent_name: Option<&str>,
 ) -> anyhow::Result<AgentSession> {
     let config = state.config.lock().clone();
+
+    // HUANXING: 按 agent_name 解析用户工作区，创建隔离的 per-user session backend
+    #[cfg(feature = "huanxing")]
+    let per_user_backend: Option<std::sync::Arc<dyn crate::channels::session_backend::SessionBackend>> = {
+        if config.huanxing.enabled {
+            if let Some(agent_id) = _agent_name {
+                let agents_dir = config.huanxing.resolve_agents_dir(&config.workspace_dir);
+                let user_workspace = agents_dir.join(agent_id);
+                if user_workspace.exists() {
+                    crate::huanxing::tenant::create_session_backend_for_workspace(
+                        &user_workspace,
+                        &config,
+                    )
+                } else {
+                    // agent_name 不存在，回退到全局 backend（guardian/未注册用户）
+                    state.session_backend.clone()
+                }
+            } else {
+                // 无 agent_name，使用全局 backend
+                state.session_backend.clone()
+            }
+        } else {
+            state.session_backend.clone()
+        }
+    };
+
     // TODO: 按 agent_name 从对应目录加载 Agent 配置
     let mut agent = crate::agent::Agent::from_config(&config)?;
     agent.set_memory_session_id(Some(session_id.to_string()));
 
     let session_key = format!("{GW_SESSION_PREFIX}{session_id}");
 
-    // 从持久化存储恢复历史
+    // 从持久化存储恢复历史（优先使用 per-user backend）
+    #[cfg(feature = "huanxing")]
+    {
+        let backend = per_user_backend.as_ref().or(state.session_backend.as_ref());
+        if let Some(b) = backend {
+            let messages = b.load(&session_key);
+            if !messages.is_empty() {
+                agent.seed_history(&messages);
+            }
+        }
+    }
+    #[cfg(not(feature = "huanxing"))]
     if let Some(ref backend) = state.session_backend {
         let messages = backend.load(&session_key);
         if !messages.is_empty() {
@@ -319,6 +368,8 @@ fn init_agent_session(
     Ok(AgentSession {
         agent,
         session_key,
+        #[cfg(feature = "huanxing")]
+        session_backend: per_user_backend,
         #[cfg(feature = "huanxing")]
         ws_observer,
     })
@@ -348,7 +399,16 @@ async fn process_chat_message(
 
     match session.agent.turn(content).await {
         Ok(response) => {
-            // 持久化助手回复
+            // 持久化助手回复（HUANXING: 优先用 per-user backend，非多租户回退全局）
+            #[cfg(feature = "huanxing")]
+            {
+                let backend = session.session_backend.as_ref().or(state.session_backend.as_ref());
+                if let Some(b) = backend {
+                    let assistant_msg = crate::providers::ChatMessage::assistant(&response);
+                    let _ = b.append(&session.session_key, &assistant_msg);
+                }
+            }
+            #[cfg(not(feature = "huanxing"))]
             if let Some(ref backend) = state.session_backend {
                 let assistant_msg = crate::providers::ChatMessage::assistant(&response);
                 let _ = backend.append(&session.session_key, &assistant_msg);
@@ -368,7 +428,9 @@ async fn process_chat_message(
                         "display_name": rec.display_name,
                         "args_preview": rec.args_preview,
                     });
-                    let _ = sender.send(Message::Text(tool_call.to_string().into())).await;
+                    let _ = sender
+                        .send(Message::Text(tool_call.to_string().into()))
+                        .await;
 
                     let tool_result = serde_json::json!({
                         "type": "tool_result",
@@ -377,7 +439,9 @@ async fn process_chat_message(
                         "status": if rec.success { "success" } else { "error" },
                         "duration_ms": rec.duration.as_millis(),
                     });
-                    let _ = sender.send(Message::Text(tool_result.to_string().into())).await;
+                    let _ = sender
+                        .send(Message::Text(tool_result.to_string().into()))
+                        .await;
                 }
             }
 
