@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
 use crate::api::HasnApiClient;
 use crate::db::Database;
@@ -82,29 +82,42 @@ impl SyncEngine {
         content: &str,
         content_type: i32,
     ) -> Result<HasnMessage, HasnError> {
-        let hasn_id = self.current_hasn_id().await
+        let hasn_id = self
+            .current_hasn_id()
+            .await
             .ok_or_else(|| HasnError::Auth("未登录".to_string()))?;
 
         // 1. 创建本地消息 (状态=sending)
         let local_msg = HasnMessage::new_outgoing("pending", &hasn_id, content, content_type);
         let local_id = local_msg.local_id.clone();
 
-        self.db.insert_message(&local_msg)
+        self.db
+            .insert_message(&local_msg)
             .map_err(|e| HasnError::Db(e.to_string()))?;
 
         // 2. 调 API 发送
-        match self.api.send_message(to_star_id, content, content_type).await {
+        match self
+            .api
+            .send_message(to_star_id, content, content_type)
+            .await
+        {
             Ok(resp) => {
                 // 3a. 成功: 用服务端数据更新本地记录
-                self.db.update_message_after_send(
-                    &local_id,
-                    resp.id,
-                    &resp.conversation_id,
-                    resp.created_at.as_deref(),
-                ).map_err(|e| HasnError::Db(e.to_string()))?;
+                self.db
+                    .update_message_after_send(
+                        &local_id,
+                        resp.id,
+                        &resp.conversation_id,
+                        resp.created_at.as_deref(),
+                    )
+                    .map_err(|e| HasnError::Db(e.to_string()))?;
 
                 // 更新会话
-                let preview = if content.len() > 200 { &content[..200] } else { content };
+                let preview = if content.len() > 200 {
+                    &content[..200]
+                } else {
+                    content
+                };
                 let _ = self.db.update_conversation_last_message(
                     &resp.conversation_id,
                     preview,
@@ -120,7 +133,8 @@ impl SyncEngine {
             }
             Err(e) => {
                 // 3b. 失败: 标记
-                self.db.mark_message_failed(&local_id)
+                self.db
+                    .mark_message_failed(&local_id)
                     .map_err(|e| HasnError::Db(e.to_string()))?;
 
                 let mut result = local_msg;
@@ -132,15 +146,23 @@ impl SyncEngine {
     }
 
     /// 处理WS收到的新消息
-    pub fn handle_incoming_message(&self, payload: WsMessagePayload) -> Result<HasnMessage, HasnError> {
+    pub fn handle_incoming_message(
+        &self,
+        payload: WsMessagePayload,
+    ) -> Result<HasnMessage, HasnError> {
         let msg = payload.into_hasn_message();
 
         // 写入本地DB
-        self.db.upsert_message(&msg)
+        self.db
+            .upsert_message(&msg)
             .map_err(|e| HasnError::Db(e.to_string()))?;
 
         // 更新会话
-        let preview = if msg.content.len() > 200 { &msg.content[..200] } else { &msg.content };
+        let preview = if msg.content.len() > 200 {
+            &msg.content[..200]
+        } else {
+            &msg.content
+        };
         let _ = self.db.update_conversation_last_message(
             &msg.conversation_id,
             preview,
@@ -166,7 +188,8 @@ impl SyncEngine {
         local_id: Option<&str>,
     ) -> Result<(), HasnError> {
         if let Some(lid) = local_id {
-            self.db.update_message_after_send(lid, msg_id, conversation_id, None)
+            self.db
+                .update_message_after_send(lid, msg_id, conversation_id, None)
                 .map_err(|e| HasnError::Db(e.to_string()))?;
         }
         Ok(())

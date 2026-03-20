@@ -3,7 +3,7 @@
 # 路径: huanxing-zeroclaw/server-config/config.toml
 # ═══════════════════════════════════════════════════════════════
 
-workspace_dir = "/Users/mac/openclaw-workspace/huanxing/merge-upstream/zeroclaw-merge/server-config/guardian"
+workspace_dir = "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-zeroclaw/server-config/guardian"
 
 api_key = "sk-CBUn2XGX9ZGbPBbq8oXpSTKLcBmKmsKGrmfW5I6bHBHGAHkC"
 default_provider = "anthropic-custom:https://llm.dcfuture.cn"
@@ -49,10 +49,10 @@ chunk_max_tokens = 512
 # ── HuanXing 多租户 ──────────────────────────────────────────
 [huanxing]
 enabled = true
-db_path = "/Users/mac/openclaw-workspace/huanxing/merge-upstream/zeroclaw-merge/server-config/data/users.db"
-agents_dir = "/Users/mac/openclaw-workspace/huanxing/merge-upstream/zeroclaw-merge/server-config/agents"
-guardian_workspace = "/Users/mac/openclaw-workspace/huanxing/merge-upstream/zeroclaw-merge/server-config/guardian"
-admin_workspace = "/Users/mac/openclaw-workspace/huanxing/merge-upstream/zeroclaw-merge/server-config/admin"
+db_path = "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-zeroclaw/server-config/data/users.db"
+agents_dir = "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-zeroclaw/server-config/agents"
+guardian_workspace = "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-zeroclaw/server-config/guardian"
+admin_workspace = "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-zeroclaw/server-config/admin"
 admin_channels = ["feishu"]
 templates_dir = "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-hub/templates"
 default_model = "claude-sonnet-4-6"
@@ -64,7 +64,7 @@ api_base_url = "https://api.huanxing.dcfuture.cn"
 agent_key = "wNYPBNNl61kwVLWgFW7N1yFJKb4yCqJxjSKy__RtG94"
 server_id = "huanxing-local-test"
 hasn_base_url = "https://api.huanxing.dcfuture.cn"
-common_skills_dir = "/Users/mac/openclaw-workspace/huanxing/merge-upstream/zeroclaw-merge/server-config/common-skills"
+common_skills_dir = "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-zeroclaw/server-config/common-skills"
 hub_dir = "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-hub"
 
 # ── 多租户心跳（Agent 向后端注册和保活）──────────────────────
@@ -79,7 +79,7 @@ per_tenant_timeout_secs = 60       # 单租户超时
 allow_scripts = true
 prompt_injection_mode = "compact"
 open_skills_enabled = false
-open_skills_dir = "/Users/mac/openclaw-workspace/huanxing/merge-upstream/zeroclaw-merge/server-config/huanxing-skills"
+open_skills_dir = "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-zeroclaw/server-config/huanxing-skills"
 
 
 # ── 网关 ──────────────────────────────────────────────────────

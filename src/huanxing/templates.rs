@@ -67,10 +67,7 @@ pub struct SkillsConfig {
 impl SkillsConfig {
     /// All skill IDs.
     pub fn all(&self) -> Vec<&str> {
-        self.exclusive
-            .iter()
-            .map(|s| s.as_str())
-            .collect()
+        self.exclusive.iter().map(|s| s.as_str()).collect()
     }
 }
 
@@ -89,9 +86,7 @@ where
     }
 
     match SkillsRaw::deserialize(deserializer) {
-        Ok(SkillsRaw::Flat(list)) => Ok(SkillsConfig {
-            exclusive: list,
-        }),
+        Ok(SkillsRaw::Flat(list)) => Ok(SkillsConfig { exclusive: list }),
         Ok(SkillsRaw::Structured(cfg)) => Ok(cfg),
         Err(e) => {
             tracing::debug!("Skills deserialization fallback: {e}");
@@ -350,9 +345,7 @@ impl TemplateEngine {
         }
 
         // 3. Install skills
-        let installed_skills = self
-            .install_skills(workspace_dir, &def)
-            .await?;
+        let installed_skills = self.install_skills(workspace_dir, &def).await?;
 
         // 5. Generate per-agent config.toml
         self.generate_agent_config(workspace_dir, &def, provider, api_key)
@@ -523,14 +516,12 @@ impl TemplateEngine {
             "claude-sonnet-4-6"
         } else {
             // Strip "anthropic/" prefix if present
-            def.model
-                .strip_prefix("anthropic/")
-                .unwrap_or(&def.model)
+            def.model.strip_prefix("anthropic/").unwrap_or(&def.model)
         };
 
-        let provider_str = provider.ok_or_else(|| anyhow::anyhow!(
-            "default_provider not configured in [huanxing] section of config.toml"
-        ))?;
+        let provider_str = provider.ok_or_else(|| {
+            anyhow::anyhow!("default_provider not configured in [huanxing] section of config.toml")
+        })?;
         let api_key_str = api_key.unwrap_or("");
         let temperature = def
             .temperature

@@ -50,11 +50,7 @@ impl ApiClient {
     }
 
     /// GET with Agent Key auth.
-    pub async fn agent_get(
-        &self,
-        path: &str,
-        params: &[(&str, &str)],
-    ) -> Result<Value> {
+    pub async fn agent_get(&self, path: &str, params: &[(&str, &str)]) -> Result<Value> {
         let url = format!("{}{}", self.base_url, path);
         let resp = self
             .client
@@ -106,7 +102,12 @@ impl ApiClient {
     }
 
     /// POST with Agent Key + X-User-Id auth (for per-user resource APIs).
-    pub async fn agent_post_as_user(&self, path: &str, body: &Value, user_uuid: &str) -> Result<Value> {
+    pub async fn agent_post_as_user(
+        &self,
+        path: &str,
+        body: &Value,
+        user_uuid: &str,
+    ) -> Result<Value> {
         let url = format!("{}{}", self.base_url, path);
         let resp = self
             .client
@@ -139,7 +140,12 @@ impl ApiClient {
     }
 
     /// PUT with Agent Key + X-User-Id auth.
-    pub async fn agent_put_as_user(&self, path: &str, body: &Value, user_uuid: &str) -> Result<Value> {
+    pub async fn agent_put_as_user(
+        &self,
+        path: &str,
+        body: &Value,
+        user_uuid: &str,
+    ) -> Result<Value> {
         let url = format!("{}{}", self.base_url, path);
         let resp = self
             .client
@@ -204,12 +210,7 @@ impl ApiClient {
     }
 
     /// POST with user Bearer token.
-    pub async fn user_post(
-        &self,
-        path: &str,
-        token: &str,
-        body: &Value,
-    ) -> Result<Value> {
+    pub async fn user_post(&self, path: &str, token: &str, body: &Value) -> Result<Value> {
         let url = format!("{}{}", self.base_url, path);
         let resp = self
             .client
@@ -223,12 +224,7 @@ impl ApiClient {
     }
 
     /// PUT with user Bearer token.
-    pub async fn user_put(
-        &self,
-        path: &str,
-        token: &str,
-        body: &Value,
-    ) -> Result<Value> {
+    pub async fn user_put(&self, path: &str, token: &str, body: &Value) -> Result<Value> {
         let url = format!("{}{}", self.base_url, path);
         let resp = self
             .client

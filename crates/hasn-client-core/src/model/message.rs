@@ -89,9 +89,15 @@ pub struct HasnMessage {
     pub created_at: Option<String>,
 }
 
-fn default_from_type() -> i32 { 1 }
-fn default_content_type() -> i32 { 1 }
-fn default_status() -> i32 { 1 }
+fn default_from_type() -> i32 {
+    1
+}
+fn default_content_type() -> i32 {
+    1
+}
+fn default_status() -> i32 {
+    1
+}
 
 impl HasnMessage {
     /// 创建一条待发送的本地消息

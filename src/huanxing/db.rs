@@ -107,8 +107,7 @@ impl TenantDb {
             std::fs::create_dir_all(parent)?;
         }
 
-        let conn =
-            rusqlite::Connection::open(db_path).context("Failed to open tenant database")?;
+        let conn = rusqlite::Connection::open(db_path).context("Failed to open tenant database")?;
 
         // WAL mode for better concurrent read performance
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;")?;
@@ -305,27 +304,28 @@ impl TenantDb {
               access_token, llm_token, gateway_token, server_id)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'active', ?8, ?9, ?10, ?11)",
             rusqlite::params![
-                user_id, phone, agent_id, nickname, template, star_name, workspace,
-                access_token, llm_token, gateway_token, server_id
+                user_id,
+                phone,
+                agent_id,
+                nickname,
+                template,
+                star_name,
+                workspace,
+                access_token,
+                llm_token,
+                gateway_token,
+                server_id
             ],
         )?;
 
-        tracing::info!(
-            user_id,
-            phone,
-            agent_id,
-            "User saved with tokens"
-        );
+        tracing::info!(user_id, phone, agent_id, "User saved with tokens");
 
         Ok(())
     }
 
     /// Save verified credentials after successful phone-login.
     /// These are consumed by hx_register_user.
-    pub async fn save_verified_credentials(
-        &self,
-        creds: &VerifiedCredentials,
-    ) -> Result<()> {
+    pub async fn save_verified_credentials(&self, creds: &VerifiedCredentials) -> Result<()> {
         let conn = self.conn.lock().await;
         conn.execute(
             "INSERT OR REPLACE INTO verified_credentials
@@ -537,10 +537,7 @@ impl TenantDb {
         }
 
         params.push(Box::new(user_id.to_string()));
-        let sql = format!(
-            "UPDATE users SET {} WHERE user_id = ?",
-            sets.join(", ")
-        );
+        let sql = format!("UPDATE users SET {} WHERE user_id = ?", sets.join(", "));
         let param_refs: Vec<&dyn rusqlite::types::ToSql> =
             params.iter().map(|p| p.as_ref()).collect();
         let rows = conn.execute(&sql, param_refs.as_slice())?;
@@ -583,7 +580,9 @@ impl TenantDb {
                     created_at, last_active,
                     access_token, llm_token, gateway_token, token_expires, server_id FROM users",
         );
-        data_sql.push_str(&format!(" ORDER BY created_at DESC LIMIT {limit} OFFSET {offset}"));
+        data_sql.push_str(&format!(
+            " ORDER BY created_at DESC LIMIT {limit} OFFSET {offset}"
+        ));
 
         // Rebuild params for data query
         let mut params2: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
@@ -611,8 +610,7 @@ impl TenantDb {
     pub async fn get_stats(&self) -> Result<DbStats> {
         let conn = self.conn.lock().await;
 
-        let total_users: u64 =
-            conn.query_row("SELECT COUNT(*) FROM users", [], |r| r.get(0))?;
+        let total_users: u64 = conn.query_row("SELECT COUNT(*) FROM users", [], |r| r.get(0))?;
         let active_users: u64 = conn.query_row(
             "SELECT COUNT(*) FROM users WHERE status = 'active'",
             [],
@@ -626,9 +624,7 @@ impl TenantDb {
         {
             let mut stmt =
                 conn.prepare("SELECT template, COUNT(*) FROM users GROUP BY template")?;
-            let rows = stmt.query_map([], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, u64>(1)?))
-            })?;
+            let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, u64>(1)?)))?;
             for row in rows {
                 templates.push(row?);
             }
@@ -637,9 +633,7 @@ impl TenantDb {
         let mut plans = Vec::new();
         {
             let mut stmt = conn.prepare("SELECT plan, COUNT(*) FROM users GROUP BY plan")?;
-            let rows = stmt.query_map([], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, u64>(1)?))
-            })?;
+            let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, u64>(1)?)))?;
             for row in rows {
                 plans.push(row?);
             }
@@ -658,8 +652,7 @@ impl TenantDb {
     /// Get the next user sequence number (for agent_id generation).
     pub async fn get_next_user_seq(&self) -> Result<u32> {
         let conn = self.conn.lock().await;
-        let count: u32 =
-            conn.query_row("SELECT COUNT(*) FROM users", [], |r| r.get(0))?;
+        let count: u32 = conn.query_row("SELECT COUNT(*) FROM users", [], |r| r.get(0))?;
         Ok(count + 1)
     }
 

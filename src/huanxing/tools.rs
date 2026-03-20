@@ -7,11 +7,11 @@
 //! - **P2**: document tools (Phase 3 — separate module)
 //! - **P3**: HASN social tools (Phase 4 — separate module)
 
+use super::registry::RegistryLoader;
 use crate::huanxing::api_client::ApiClient;
 use crate::huanxing::db::TenantDb;
 use crate::huanxing::router::TenantRouter;
 use crate::huanxing::templates::{TemplateEngine, UserInfo};
-use super::registry::RegistryLoader;
 use crate::tools::traits::{Tool, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
@@ -247,9 +247,7 @@ impl Tool for HxRegisterUser {
             .or_else(|| args["peer_id"].as_str())
             .unwrap_or_default();
         let star_name = args["star_name"].as_str().unwrap_or("小星");
-        let template = args["template"]
-            .as_str()
-            .unwrap_or(&self.default_template);
+        let template = args["template"].as_str().unwrap_or(&self.default_template);
 
         if phone.is_empty() || channel_type.is_empty() || sender_id.is_empty() {
             return Ok(ToolResult {
@@ -402,10 +400,15 @@ impl Tool for HxRegisterUser {
 
         // Step 3.5: Configure LLM gateway (models.json + auth-profiles.json)
         if !llm_token.is_empty() {
-            let provider_for_llm = self.default_provider.as_deref().unwrap_or("anthropic-custom:https://llm.dcfuture.cn");
+            let provider_for_llm = self
+                .default_provider
+                .as_deref()
+                .unwrap_or("anthropic-custom:https://llm.dcfuture.cn");
             match configure_agent_llm(&workspace, llm_token, provider_for_llm).await {
                 Ok(()) => {
-                    steps.push(format!("✅ Step3.5: LLM 网关配置完成 (provider={provider_for_llm})"));
+                    steps.push(format!(
+                        "✅ Step3.5: LLM 网关配置完成 (provider={provider_for_llm})"
+                    ));
                 }
                 Err(e) => {
                     steps.push(format!("⚠️ Step3.5: LLM 配置失败 ({e})"));
@@ -600,10 +603,7 @@ impl Tool for HxSendSms {
 
         match self
             .api
-            .open_post(
-                "/api/v1/auth/send-code",
-                &json!({ "phone": phone }),
-            )
+            .open_post("/api/v1/auth/send-code", &json!({ "phone": phone }))
             .await
         {
             Ok(resp) => Ok(ToolResult {
@@ -736,7 +736,10 @@ impl Tool for HxVerifySms {
             .or_else(|| data["user"]["id"].as_str())
             .unwrap_or_default()
             .to_string();
-        let access_token = data["access_token"].as_str().unwrap_or_default().to_string();
+        let access_token = data["access_token"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
         let llm_token = data["llm_token"].as_str().map(|s| s.to_string());
         let gateway_token = data["gateway_token"].as_str().map(|s| s.to_string());
         let is_new_user = data["is_new_user"].as_bool().unwrap_or(false);
@@ -771,9 +774,9 @@ impl Tool for HxVerifySms {
             } else {
                 // Check if current channel is already bound
                 if let Ok(channels) = self.db.get_channels(&local_user.user_id).await {
-                    let already_bound = channels.iter().any(|c| {
-                        c.channel_type == channel && c.peer_id == peer_id
-                    });
+                    let already_bound = channels
+                        .iter()
+                        .any(|c| c.channel_type == channel && c.peer_id == peer_id);
 
                     if already_bound {
                         return Ok(ToolResult {
@@ -956,10 +959,7 @@ impl Tool for HxCheckQuota {
 
         match self
             .api
-            .agent_get(
-                "/api/v1/agent/check-quota",
-                &[("phone", phone)],
-            )
+            .agent_get("/api/v1/agent/check-quota", &[("phone", phone)])
             .await
         {
             Ok(resp) => Ok(ToolResult {
@@ -1024,10 +1024,7 @@ impl Tool for HxGetSubscription {
 
         match self
             .api
-            .agent_get(
-                "/api/v1/agent/subscription",
-                &[("phone", phone)],
-            )
+            .agent_get("/api/v1/agent/subscription", &[("phone", phone)])
             .await
         {
             Ok(resp) => Ok(ToolResult {
@@ -1092,10 +1089,7 @@ impl Tool for HxUsageStats {
 
         match self
             .api
-            .agent_get(
-                "/api/v1/agent/usage-stats",
-                &[("phone", phone)],
-            )
+            .agent_get("/api/v1/agent/usage-stats", &[("phone", phone)])
             .await
         {
             Ok(resp) => Ok(ToolResult {
@@ -1150,10 +1144,9 @@ impl Tool for HxLocalFindUser {
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         let record = if let Some(phone) = args["phone"].as_str() {
             self.db.find_by_phone(phone).await?
-        } else if let (Some(ch), Some(sid)) = (
-            args["channel_type"].as_str(),
-            args["sender_id"].as_str(),
-        ) {
+        } else if let (Some(ch), Some(sid)) =
+            (args["channel_type"].as_str(), args["sender_id"].as_str())
+        {
             let ch = normalize_channel(ch);
             self.db.find_by_channel(ch, sid).await?
         } else if let Some(uid) = args["user_id"].as_str() {

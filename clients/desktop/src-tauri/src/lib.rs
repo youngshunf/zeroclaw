@@ -45,7 +45,10 @@ pub fn run() {
                         return;
                     }
 
-                    eprintln!("[huanxing-desktop] No existing sidecar. has_config={}", mgr.has_config());
+                    eprintln!(
+                        "[huanxing-desktop] No existing sidecar. has_config={}",
+                        mgr.has_config()
+                    );
 
                     // 检查是否有配置文件（说明之前登录过）
                     if mgr.has_config() {
@@ -54,8 +57,7 @@ pub fn run() {
                             Ok(status) => {
                                 eprintln!(
                                     "[huanxing-desktop] Sidecar started: PID={:?}, port={}",
-                                    status.pid,
-                                    status.port
+                                    status.pid, status.port
                                 );
                             }
                             Err(e) => {

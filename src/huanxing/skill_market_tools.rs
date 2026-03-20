@@ -153,7 +153,11 @@ impl Tool for HxSkillSearch {
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         let ws = tenant_workspace(&self.workspace_dir);
-        eprintln!("  🔍 SKILL-SEARCH args={args} fallback_ws={} effective_ws={}", self.workspace_dir.display(), ws.display());
+        eprintln!(
+            "  🔍 SKILL-SEARCH args={args} fallback_ws={} effective_ws={}",
+            self.workspace_dir.display(),
+            ws.display()
+        );
 
         if let Err(e) = self.registry.ensure_loaded().await {
             eprintln!("  🔍 SKILL-SEARCH registry load failed: {e}");
@@ -169,7 +173,10 @@ impl Tool for HxSkillSearch {
         let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
 
         let results = self.registry.search(query, category, limit).await;
-        eprintln!("  🔍 SKILL-SEARCH query={query:?} category={category:?} results={}", results.len());
+        eprintln!(
+            "  🔍 SKILL-SEARCH query={query:?} category={category:?} results={}",
+            results.len()
+        );
         let skills_dir = ws.join("skills");
 
         let items: Vec<Value> = results
@@ -372,7 +379,10 @@ impl Tool for HxSkillInstall {
                 })
             }
         };
-        let accept_risk = args.get("accept_risk").and_then(|v| v.as_bool()).unwrap_or(false);
+        let accept_risk = args
+            .get("accept_risk")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
 
         // 1. Find skill in registry
         let entry = match self.registry.find_skill(skill_id).await {
@@ -430,23 +440,28 @@ impl Tool for HxSkillInstall {
                 let manifest_path = src.join("manifest.yaml");
                 if let Ok(content) = std::fs::read_to_string(&manifest_path) {
                     // Simple extraction: find "key:" lines under requires.api_keys
-                    let key_names: Vec<String> = content.lines()
+                    let key_names: Vec<String> = content
+                        .lines()
                         .filter(|l| l.trim().starts_with("- key:"))
-                        .filter_map(|l| {
-                            l.split("\"").nth(1).map(|s| s.to_string())
-                        })
+                        .filter_map(|l| l.split("\"").nth(1).map(|s| s.to_string()))
                         .collect();
                     if !key_names.is_empty() {
                         let ws = tenant_workspace(&self.workspace_dir);
-                        let env_content = std::fs::read_to_string(ws.join(".env")).unwrap_or_default();
-                        let missing: Vec<&str> = key_names.iter()
+                        let env_content =
+                            std::fs::read_to_string(ws.join(".env")).unwrap_or_default();
+                        let missing: Vec<&str> = key_names
+                            .iter()
                             .filter(|k| !env_content.contains(k.as_str()))
                             .map(|k| k.as_str())
                             .collect();
                         if !missing.is_empty() {
                             api_key_hint = Some(format!(
                                 "\n\n🔑 需要配置 API Key:\n{}\n\n💡 告诉我：\"帮我设置 {} 为 xxx\"",
-                                missing.iter().map(|k| format!("  • {}", k)).collect::<Vec<_>>().join("\n"),
+                                missing
+                                    .iter()
+                                    .map(|k| format!("  • {}", k))
+                                    .collect::<Vec<_>>()
+                                    .join("\n"),
                                 missing[0]
                             ));
                         }
@@ -468,14 +483,18 @@ impl Tool for HxSkillInstall {
         };
 
         // 5. Copy to workspace/skills/
-        let dest_dir = tenant_workspace(&self.workspace_dir).join("skills").join(skill_id);
+        let dest_dir = tenant_workspace(&self.workspace_dir)
+            .join("skills")
+            .join(skill_id);
         if dest_dir.exists() {
             // Backup old version
-            let backup = tenant_workspace(&self.workspace_dir).join(".trash").join(format!(
-                "{}-{}",
-                skill_id,
-                chrono::Utc::now().format("%Y%m%d%H%M%S")
-            ));
+            let backup = tenant_workspace(&self.workspace_dir)
+                .join(".trash")
+                .join(format!(
+                    "{}-{}",
+                    skill_id,
+                    chrono::Utc::now().format("%Y%m%d%H%M%S")
+                ));
             if let Err(e) = tokio::fs::create_dir_all(backup.parent().unwrap()).await {
                 tracing::warn!("Failed to create backup dir: {e}");
             }
@@ -516,7 +535,8 @@ impl Tool for HxSkillInstall {
 
         let mut msg = format!(
             "✅ {} v{} 安装成功！\n📋 风险等级: {} | 审核: {}",
-            entry.name, entry.version,
+            entry.name,
+            entry.version,
             risk_emoji(&entry.risk_level),
             review_emoji(&entry.review_status),
         );
@@ -581,7 +601,9 @@ impl Tool for HxSkillUninstall {
             }
         };
 
-        let skill_dir = tenant_workspace(&self.workspace_dir).join("skills").join(skill_id);
+        let skill_dir = tenant_workspace(&self.workspace_dir)
+            .join("skills")
+            .join(skill_id);
         if !skill_dir.exists() {
             return Ok(ToolResult {
                 success: false,
@@ -617,10 +639,7 @@ impl Tool for HxSkillUninstall {
 
         Ok(ToolResult {
             success: true,
-            output: format!(
-                "✅ {} 已卸载（文件已移到回收站，可恢复）。",
-                skill_id
-            ),
+            output: format!("✅ {} 已卸载（文件已移到回收站，可恢复）。", skill_id),
             error: None,
         })
     }
@@ -654,7 +673,11 @@ impl Tool for HxSkillList {
 
     async fn execute(&self, _args: Value) -> anyhow::Result<ToolResult> {
         let ws = tenant_workspace(&self.workspace_dir);
-        eprintln!("  🔍 SKILL-LIST fallback_ws={} effective_ws={}", self.workspace_dir.display(), ws.display());
+        eprintln!(
+            "  🔍 SKILL-LIST fallback_ws={} effective_ws={}",
+            self.workspace_dir.display(),
+            ws.display()
+        );
 
         let _ = self.registry.ensure_loaded().await;
 
@@ -850,14 +873,18 @@ impl Tool for HxSkillUpdate {
         for update in &updates {
             let sid = update["id"].as_str().unwrap();
             if let Some(src_dir) = self.registry.skill_dir(sid).await {
-                let dest_dir = tenant_workspace(&self.workspace_dir).join("skills").join(sid);
+                let dest_dir = tenant_workspace(&self.workspace_dir)
+                    .join("skills")
+                    .join(sid);
 
                 // Backup old
-                let backup = tenant_workspace(&self.workspace_dir).join(".trash").join(format!(
-                    "{}-{}",
-                    sid,
-                    chrono::Utc::now().format("%Y%m%d%H%M%S")
-                ));
+                let backup = tenant_workspace(&self.workspace_dir)
+                    .join(".trash")
+                    .join(format!(
+                        "{}-{}",
+                        sid,
+                        chrono::Utc::now().format("%Y%m%d%H%M%S")
+                    ));
                 let _ = tokio::fs::create_dir_all(backup.parent().unwrap()).await;
                 let _ = tokio::fs::rename(&dest_dir, &backup).await;
 

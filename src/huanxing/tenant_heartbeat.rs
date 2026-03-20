@@ -49,9 +49,8 @@ impl TenantHeartbeatManager {
         let db_path = hx_config.resolve_db_path(&config.workspace_dir);
         let db = Arc::new(TenantDb::open(&db_path)?);
 
-        let observer: Arc<dyn Observer> = Arc::from(
-            crate::observability::create_observer(&config.observability),
-        );
+        let observer: Arc<dyn Observer> =
+            Arc::from(crate::observability::create_observer(&config.observability));
 
         Ok(Self {
             config,
@@ -83,7 +82,10 @@ impl TenantHeartbeatManager {
             match self.scan_and_execute().await {
                 Ok(executed) => {
                     if executed > 0 {
-                        info!("💓 Tenant heartbeat: executed tasks for {} tenants", executed);
+                        info!(
+                            "💓 Tenant heartbeat: executed tasks for {} tenants",
+                            executed
+                        );
                     }
                 }
                 Err(e) => {
@@ -133,16 +135,17 @@ impl TenantHeartbeatManager {
             }
 
             // Read and parse scheduled tasks (huanxing-owned cron parsing)
-            let scheduled_tasks = match collect_scheduled_tasks(&heartbeat_path, now, window_minutes) {
-                Ok(tasks) => tasks,
-                Err(e) => {
-                    warn!(
-                        "💓 Tenant {}: failed to collect tasks: {}",
-                        user.agent_id, e
-                    );
-                    continue;
-                }
-            };
+            let scheduled_tasks =
+                match collect_scheduled_tasks(&heartbeat_path, now, window_minutes) {
+                    Ok(tasks) => tasks,
+                    Err(e) => {
+                        warn!(
+                            "💓 Tenant {}: failed to collect tasks: {}",
+                            user.agent_id, e
+                        );
+                        continue;
+                    }
+                };
 
             if scheduled_tasks.is_empty() {
                 continue;
@@ -174,19 +177,13 @@ impl TenantHeartbeatManager {
             let channels = match self.db.get_channels(&user.user_id).await {
                 Ok(ch) => ch,
                 Err(e) => {
-                    warn!(
-                        "💓 Tenant {}: failed to get channels: {}",
-                        user.agent_id, e
-                    );
+                    warn!("💓 Tenant {}: failed to get channels: {}", user.agent_id, e);
                     continue;
                 }
             };
 
             if channels.is_empty() {
-                warn!(
-                    "💓 Tenant {}: no bound channels, skipping",
-                    user.agent_id
-                );
+                warn!("💓 Tenant {}: no bound channels, skipping", user.agent_id);
                 continue;
             }
 
@@ -212,10 +209,8 @@ impl TenantHeartbeatManager {
             let handle = tokio::spawn(async move {
                 let _permit = permit.acquire().await;
 
-                let task_descriptions: Vec<String> = tasks_to_run
-                    .iter()
-                    .map(|t| t.text.clone())
-                    .collect();
+                let task_descriptions: Vec<String> =
+                    tasks_to_run.iter().map(|t| t.text.clone()).collect();
 
                 let prompt = format!(
                     "[heartbeat] 以下定时任务已触发，请立即执行：\n\n{}",
@@ -282,10 +277,7 @@ impl TenantHeartbeatManager {
                 // Deliver result to tenant's channel
                 if let Some(ref message) = output {
                     if let Err(e) = deliver_to_channels(&channels, message).await {
-                        error!(
-                            "💓 Tenant {}: delivery failed: {}",
-                            user_clone.agent_id, e
-                        );
+                        error!("💓 Tenant {}: delivery failed: {}", user_clone.agent_id, e);
                     } else {
                         info!(
                             "💓 Tenant {}: delivered heartbeat message",
@@ -334,9 +326,7 @@ impl TenantHeartbeatManager {
     async fn cleanup_old_entries(&self) {
         let now = Utc::now();
         let mut last_run = self.task_last_run.write().await;
-        last_run.retain(|_, v| {
-            now.signed_duration_since(*v).num_hours() < 24
-        });
+        last_run.retain(|_, v| now.signed_duration_since(*v).num_hours() < 24);
     }
 }
 
@@ -354,19 +344,17 @@ fn build_tenant_config(
     let mut config = if tenant_config_path.exists() {
         // Load the tenant's full config.toml
         match std::fs::read_to_string(&tenant_config_path) {
-            Ok(contents) => {
-                match toml::from_str::<Config>(&contents) {
-                    Ok(tenant_cfg) => tenant_cfg,
-                    Err(e) => {
-                        tracing::warn!(
-                            "Failed to parse tenant config at {}: {}, falling back to base",
-                            tenant_config_path.display(),
-                            e
-                        );
-                        base.clone()
-                    }
+            Ok(contents) => match toml::from_str::<Config>(&contents) {
+                Ok(tenant_cfg) => tenant_cfg,
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to parse tenant config at {}: {}, falling back to base",
+                        tenant_config_path.display(),
+                        e
+                    );
+                    base.clone()
                 }
-            }
+            },
             Err(e) => {
                 tracing::warn!(
                     "Failed to read tenant config at {}: {}, falling back to base",

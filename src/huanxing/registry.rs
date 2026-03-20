@@ -135,9 +135,7 @@ impl RegistryLoader {
 
         let meta = std::fs::metadata(&path)
             .with_context(|| format!("failed to stat {}", path.display()))?;
-        let mtime = meta
-            .modified()
-            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        let mtime = meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
 
         // Check if reload needed
         {
@@ -212,7 +210,12 @@ impl RegistryLoader {
     }
 
     /// Search skills by query string (matches name, description, tags).
-    pub async fn search(&self, query: &str, category: Option<&str>, limit: usize) -> Vec<SkillEntry> {
+    pub async fn search(
+        &self,
+        query: &str,
+        category: Option<&str>,
+        limit: usize,
+    ) -> Vec<SkillEntry> {
         let cache = self.cache.read().await;
         let cache = match cache.as_ref() {
             Some(c) => c,

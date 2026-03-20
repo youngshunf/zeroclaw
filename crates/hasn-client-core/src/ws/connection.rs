@@ -2,12 +2,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
-use tokio::sync::{mpsc, RwLock, Mutex};
+use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
 use crate::error::HasnError;
-use crate::model::{WsEvent, WsCommand};
+use crate::model::{WsCommand, WsEvent};
 
 /// WebSocket 连接状态
 #[derive(Debug, Clone, PartialEq)]
@@ -45,11 +45,7 @@ impl HasnWsClient {
     ///
     /// `url`: wss://api.huanxing.dcfuture.cn/api/v1/hasn/ws/native?token=xxx
     /// `on_event`: 收到服务端消息时回调
-    pub async fn connect<F>(
-        &self,
-        url: &str,
-        on_event: F,
-    ) -> Result<(), HasnError>
+    pub async fn connect<F>(&self, url: &str, on_event: F) -> Result<(), HasnError>
     where
         F: Fn(WsEvent) + Send + Sync + 'static,
     {
@@ -57,9 +53,13 @@ impl HasnWsClient {
         self.disconnect().await;
 
         *self.status.write().await = WsStatus::Connecting;
-        info!("[HasnWS] 连接: {}", &url[..url.find('?').unwrap_or(url.len())]);
+        info!(
+            "[HasnWS] 连接: {}",
+            &url[..url.find('?').unwrap_or(url.len())]
+        );
 
-        let (ws_stream, _) = connect_async(url).await
+        let (ws_stream, _) = connect_async(url)
+            .await
             .map_err(|e| HasnError::Ws(format!("WS连接失败: {}", e)))?;
 
         let (mut write, mut read) = ws_stream.split();
@@ -139,12 +139,12 @@ impl HasnWsClient {
 
     /// 发送上行命令
     pub async fn send_command(&self, cmd: &WsCommand) -> Result<(), HasnError> {
-        let json = serde_json::to_string(cmd)
-            .map_err(|e| HasnError::Parse(e.to_string()))?;
+        let json = serde_json::to_string(cmd).map_err(|e| HasnError::Parse(e.to_string()))?;
 
         let sender = self.sender.lock().await;
         if let Some(tx) = sender.as_ref() {
-            tx.send(json).await
+            tx.send(json)
+                .await
                 .map_err(|_| HasnError::Ws("发送通道已关闭".to_string()))?;
             Ok(())
         } else {
@@ -168,7 +168,10 @@ impl HasnWsClient {
         for attempt in 0..=max_retries {
             if attempt > 0 {
                 *self.status.write().await = WsStatus::Reconnecting { attempt };
-                info!("[HasnWS] 重连尝试 {}/{}, 等待 {:?}", attempt, max_retries, delay);
+                info!(
+                    "[HasnWS] 重连尝试 {}/{}, 等待 {:?}",
+                    attempt, max_retries, delay
+                );
                 tokio::time::sleep(delay).await;
                 delay = std::cmp::min(delay * 2, max_delay);
             }

@@ -20,7 +20,10 @@ fn read_hasn_creds(workspace: &std::path::Path) -> Option<(String, String, Strin
     let api_key_path = workspace.join(".hasn").join("api_key");
     let identity_path = workspace.join(".hasn").join("identity.json");
 
-    let api_key = std::fs::read_to_string(&api_key_path).ok()?.trim().to_string();
+    let api_key = std::fs::read_to_string(&api_key_path)
+        .ok()?
+        .trim()
+        .to_string();
     let identity: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&identity_path).ok()?).ok()?;
 
@@ -55,13 +58,19 @@ pub struct HasnSend {
 
 impl HasnSend {
     pub fn new(api: ApiClient, agents_dir: PathBuf, hasn_base_url: String) -> Self {
-        Self { api, agents_dir, hasn_base_url }
+        Self {
+            api,
+            agents_dir,
+            hasn_base_url,
+        }
     }
 }
 
 #[async_trait]
 impl Tool for HasnSend {
-    fn name(&self) -> &str { "hasn_send" }
+    fn name(&self) -> &str {
+        "hasn_send"
+    }
     fn description(&self) -> &str {
         "通过HASN社交网络给指定唤星号发消息。需要双方已是好友。"
     }
@@ -84,11 +93,13 @@ impl Tool for HasnSend {
         let workspace = resolve_workspace(&self.agents_dir, agent_id);
         let (api_key, _hasn_id, _star_id) = match read_hasn_creds(&workspace) {
             Some(c) => c,
-            None => return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("未找到 HASN 凭证。请先完成 HASN 身份注册。".to_string()),
-            }),
+            None => {
+                return Ok(ToolResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some("未找到 HASN 凭证。请先完成 HASN 身份注册。".to_string()),
+                })
+            }
         };
 
         let url = format!("{}/api/v1/hasn/messages/send", self.hasn_base_url);
@@ -110,14 +121,18 @@ impl Tool for HasnSend {
                             "sent": true,
                             "to": to,
                             "msg_id": body["data"]["id"],
-                        }).to_string(),
+                        })
+                        .to_string(),
                         error: None,
                     })
                 } else {
                     Ok(ToolResult {
                         success: false,
                         output: String::new(),
-                        error: Some(format!("HASN发送失败: {}", body["msg"].as_str().unwrap_or("unknown"))),
+                        error: Some(format!(
+                            "HASN发送失败: {}",
+                            body["msg"].as_str().unwrap_or("unknown")
+                        )),
                     })
                 }
             }
@@ -139,14 +154,21 @@ pub struct HasnContacts {
 
 impl HasnContacts {
     pub fn new(agents_dir: PathBuf, hasn_base_url: String) -> Self {
-        Self { agents_dir, hasn_base_url }
+        Self {
+            agents_dir,
+            hasn_base_url,
+        }
     }
 }
 
 #[async_trait]
 impl Tool for HasnContacts {
-    fn name(&self) -> &str { "hasn_contacts" }
-    fn description(&self) -> &str { "查看HASN社交网络上的联系人列表。" }
+    fn name(&self) -> &str {
+        "hasn_contacts"
+    }
+    fn description(&self) -> &str {
+        "查看HASN社交网络上的联系人列表。"
+    }
     fn parameters_schema(&self) -> serde_json::Value {
         json!({
             "type": "object",
@@ -164,13 +186,19 @@ impl Tool for HasnContacts {
         let workspace = resolve_workspace(&self.agents_dir, agent_id);
         let (api_key, _, _) = match read_hasn_creds(&workspace) {
             Some(c) => c,
-            None => return Ok(ToolResult {
-                success: false, output: String::new(),
-                error: Some("未找到 HASN 凭证。".to_string()),
-            }),
+            None => {
+                return Ok(ToolResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some("未找到 HASN 凭证。".to_string()),
+                })
+            }
         };
 
-        let url = format!("{}/api/v1/hasn/contacts?relation_type={rt}", self.hasn_base_url);
+        let url = format!(
+            "{}/api/v1/hasn/contacts?relation_type={rt}",
+            self.hasn_base_url
+        );
         match reqwest::Client::new()
             .get(&url)
             .header("Authorization", format!("ApiKey {api_key}"))
@@ -186,7 +214,8 @@ impl Tool for HasnContacts {
                 })
             }
             Err(e) => Ok(ToolResult {
-                success: false, output: String::new(),
+                success: false,
+                output: String::new(),
                 error: Some(format!("查询联系人失败: {e}")),
             }),
         }
@@ -202,14 +231,21 @@ pub struct HasnAddFriend {
 
 impl HasnAddFriend {
     pub fn new(agents_dir: PathBuf, hasn_base_url: String) -> Self {
-        Self { agents_dir, hasn_base_url }
+        Self {
+            agents_dir,
+            hasn_base_url,
+        }
     }
 }
 
 #[async_trait]
 impl Tool for HasnAddFriend {
-    fn name(&self) -> &str { "hasn_add_friend" }
-    fn description(&self) -> &str { "通过HASN发送好友请求。对方接受后才能互相发消息。" }
+    fn name(&self) -> &str {
+        "hasn_add_friend"
+    }
+    fn description(&self) -> &str {
+        "通过HASN发送好友请求。对方接受后才能互相发消息。"
+    }
     fn parameters_schema(&self) -> serde_json::Value {
         json!({
             "type": "object",
@@ -229,10 +265,13 @@ impl Tool for HasnAddFriend {
         let workspace = resolve_workspace(&self.agents_dir, agent_id);
         let (api_key, _, _) = match read_hasn_creds(&workspace) {
             Some(c) => c,
-            None => return Ok(ToolResult {
-                success: false, output: String::new(),
-                error: Some("未找到 HASN 凭证。".to_string()),
-            }),
+            None => {
+                return Ok(ToolResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some("未找到 HASN 凭证。".to_string()),
+                })
+            }
         };
 
         let url = format!("{}/api/v1/hasn/contacts/request", self.hasn_base_url);
@@ -252,12 +291,14 @@ impl Tool for HasnAddFriend {
                         "sent": true,
                         "target": star_id,
                         "detail": body["data"],
-                    }).to_string(),
+                    })
+                    .to_string(),
                     error: None,
                 })
             }
             Err(e) => Ok(ToolResult {
-                success: false, output: String::new(),
+                success: false,
+                output: String::new(),
                 error: Some(format!("添加好友失败: {e}")),
             }),
         }
@@ -273,14 +314,21 @@ pub struct HasnInbox {
 
 impl HasnInbox {
     pub fn new(agents_dir: PathBuf, hasn_base_url: String) -> Self {
-        Self { agents_dir, hasn_base_url }
+        Self {
+            agents_dir,
+            hasn_base_url,
+        }
     }
 }
 
 #[async_trait]
 impl Tool for HasnInbox {
-    fn name(&self) -> &str { "hasn_inbox" }
-    fn description(&self) -> &str { "查看收到的待处理HASN好友请求。" }
+    fn name(&self) -> &str {
+        "hasn_inbox"
+    }
+    fn description(&self) -> &str {
+        "查看收到的待处理HASN好友请求。"
+    }
     fn parameters_schema(&self) -> serde_json::Value {
         json!({
             "type": "object",
@@ -296,10 +344,13 @@ impl Tool for HasnInbox {
         let workspace = resolve_workspace(&self.agents_dir, agent_id);
         let (api_key, _, _) = match read_hasn_creds(&workspace) {
             Some(c) => c,
-            None => return Ok(ToolResult {
-                success: false, output: String::new(),
-                error: Some("未找到 HASN 凭证。".to_string()),
-            }),
+            None => {
+                return Ok(ToolResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some("未找到 HASN 凭证。".to_string()),
+                })
+            }
         };
 
         let url = format!("{}/api/v1/hasn/contacts/requests", self.hasn_base_url);
@@ -318,7 +369,8 @@ impl Tool for HasnInbox {
                 })
             }
             Err(e) => Ok(ToolResult {
-                success: false, output: String::new(),
+                success: false,
+                output: String::new(),
                 error: Some(format!("查询好友请求失败: {e}")),
             }),
         }
@@ -334,14 +386,21 @@ pub struct HasnRespondRequest {
 
 impl HasnRespondRequest {
     pub fn new(agents_dir: PathBuf, hasn_base_url: String) -> Self {
-        Self { agents_dir, hasn_base_url }
+        Self {
+            agents_dir,
+            hasn_base_url,
+        }
     }
 }
 
 #[async_trait]
 impl Tool for HasnRespondRequest {
-    fn name(&self) -> &str { "hasn_respond_request" }
-    fn description(&self) -> &str { "接受或拒绝HASN好友请求。" }
+    fn name(&self) -> &str {
+        "hasn_respond_request"
+    }
+    fn description(&self) -> &str {
+        "接受或拒绝HASN好友请求。"
+    }
     fn parameters_schema(&self) -> serde_json::Value {
         json!({
             "type": "object",
@@ -360,7 +419,8 @@ impl Tool for HasnRespondRequest {
 
         if !["accept", "reject"].contains(&action) {
             return Ok(ToolResult {
-                success: false, output: String::new(),
+                success: false,
+                output: String::new(),
                 error: Some("action 必须是 accept 或 reject".to_string()),
             });
         }
@@ -368,10 +428,13 @@ impl Tool for HasnRespondRequest {
         let workspace = resolve_workspace(&self.agents_dir, agent_id);
         let (api_key, _, _) = match read_hasn_creds(&workspace) {
             Some(c) => c,
-            None => return Ok(ToolResult {
-                success: false, output: String::new(),
-                error: Some("未找到 HASN 凭证。".to_string()),
-            }),
+            None => {
+                return Ok(ToolResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some("未找到 HASN 凭证。".to_string()),
+                })
+            }
         };
 
         let url = format!(
@@ -400,7 +463,8 @@ impl Tool for HasnRespondRequest {
                 })
             }
             Err(e) => Ok(ToolResult {
-                success: false, output: String::new(),
+                success: false,
+                output: String::new(),
                 error: Some(format!("操作失败: {e}")),
             }),
         }

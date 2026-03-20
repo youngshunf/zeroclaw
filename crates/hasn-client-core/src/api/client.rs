@@ -1,8 +1,8 @@
+use reqwest::{Client, Method, RequestBuilder};
+use serde::de::DeserializeOwned;
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::sync::RwLock;
-use reqwest::{Client, Method, RequestBuilder};
-use serde::de::DeserializeOwned;
 
 use crate::error::HasnError;
 use crate::model::*;
@@ -73,8 +73,13 @@ impl HasnApiClient {
             });
         }
 
-        let api_resp: ApiResponse<T> = serde_json::from_str(&body)
-            .map_err(|e| HasnError::Parse(format!("JSON解析失败: {} body={}", e, &body[..body.len().min(200)])))?;
+        let api_resp: ApiResponse<T> = serde_json::from_str(&body).map_err(|e| {
+            HasnError::Parse(format!(
+                "JSON解析失败: {} body={}",
+                e,
+                &body[..body.len().min(200)]
+            ))
+        })?;
 
         if api_resp.code != 200 {
             return Err(HasnError::Api {
@@ -83,7 +88,9 @@ impl HasnApiClient {
             });
         }
 
-        api_resp.data.ok_or_else(|| HasnError::Parse("响应 data 为空".to_string()))
+        api_resp
+            .data
+            .ok_or_else(|| HasnError::Parse("响应 data 为空".to_string()))
     }
 
     // ═══════════════════════════════════
@@ -107,7 +114,9 @@ impl HasnApiClient {
             body["phone"] = serde_json::Value::String(p.to_string());
         }
 
-        let req = self.hasn_request(Method::POST, "/auth/register").json(&body);
+        let req = self
+            .hasn_request(Method::POST, "/auth/register")
+            .json(&body);
         self.send_hasn(req).await
     }
 
@@ -116,8 +125,13 @@ impl HasnApiClient {
     // ═══════════════════════════════════
 
     /// 获取会话列表
-    pub async fn list_conversations(&self, limit: i32, offset: i32) -> Result<Vec<HasnConversation>, HasnError> {
-        let req = self.hasn_request(Method::GET, "/conversations")
+    pub async fn list_conversations(
+        &self,
+        limit: i32,
+        offset: i32,
+    ) -> Result<Vec<HasnConversation>, HasnError> {
+        let req = self
+            .hasn_request(Method::GET, "/conversations")
             .query(&[("limit", limit.to_string()), ("offset", offset.to_string())]);
         self.send_hasn(req).await
     }
@@ -134,19 +148,27 @@ impl HasnApiClient {
             params.push(("before_id".to_string(), bid.to_string()));
         }
 
-        let req = self.hasn_request(
-            Method::GET,
-            &format!("/conversations/{}/messages", conversation_id),
-        ).query(&params);
+        let req = self
+            .hasn_request(
+                Method::GET,
+                &format!("/conversations/{}/messages", conversation_id),
+            )
+            .query(&params);
         self.send_hasn(req).await
     }
 
     /// 标记会话已读
-    pub async fn mark_read(&self, conversation_id: &str, last_msg_id: i64) -> Result<(), HasnError> {
-        let req = self.hasn_request(
-            Method::POST,
-            &format!("/conversations/{}/read", conversation_id),
-        ).json(&serde_json::json!({ "last_msg_id": last_msg_id }));
+    pub async fn mark_read(
+        &self,
+        conversation_id: &str,
+        last_msg_id: i64,
+    ) -> Result<(), HasnError> {
+        let req = self
+            .hasn_request(
+                Method::POST,
+                &format!("/conversations/{}/read", conversation_id),
+            )
+            .json(&serde_json::json!({ "last_msg_id": last_msg_id }));
 
         let _: serde_json::Value = self.send_hasn(req).await?;
         Ok(())
@@ -169,7 +191,8 @@ impl HasnApiClient {
         content: &str,
         content_type: i32,
     ) -> Result<HasnMessageSendResp, HasnError> {
-        let req = self.hasn_request(Method::POST, "/messages/send")
+        let req = self
+            .hasn_request(Method::POST, "/messages/send")
             .json(&serde_json::json!({
                 "to": to_star_id,
                 "content": content,
@@ -189,7 +212,8 @@ impl HasnApiClient {
             params.push(("last_msg_id", id.to_string()));
         }
 
-        let req = self.hasn_request(Method::GET, "/ws/sync")
+        let req = self
+            .hasn_request(Method::GET, "/ws/sync")
             .query(&[("conversation_id", conversation_id)])
             .query(&params);
         self.send_hasn(req).await
@@ -201,7 +225,8 @@ impl HasnApiClient {
 
     /// 获取联系人列表
     pub async fn list_contacts(&self, relation_type: &str) -> Result<Vec<HasnContact>, HasnError> {
-        let req = self.hasn_request(Method::GET, "/contacts")
+        let req = self
+            .hasn_request(Method::GET, "/contacts")
             .query(&[("relation_type", relation_type)]);
         self.send_hasn(req).await
     }
@@ -212,7 +237,8 @@ impl HasnApiClient {
         target_star_id: &str,
         message: &str,
     ) -> Result<(), HasnError> {
-        let req = self.hasn_request(Method::POST, "/contacts/request")
+        let req = self
+            .hasn_request(Method::POST, "/contacts/request")
             .json(&serde_json::json!({
                 "target_star_id": target_star_id,
                 "message": message,
@@ -233,17 +259,20 @@ impl HasnApiClient {
         request_id: i64,
         action: &str,
     ) -> Result<(), HasnError> {
-        let req = self.hasn_request(
-            Method::PUT,
-            &format!("/contacts/requests/{}/respond", request_id),
-        ).json(&serde_json::json!({ "action": action }));
+        let req = self
+            .hasn_request(
+                Method::PUT,
+                &format!("/contacts/requests/{}/respond", request_id),
+            )
+            .json(&serde_json::json!({ "action": action }));
         let _: serde_json::Value = self.send_hasn(req).await?;
         Ok(())
     }
 
     /// WebSocket 连接 URL
     pub fn ws_native_url(&self, token: &str) -> String {
-        let ws_base = self.base_url
+        let ws_base = self
+            .base_url
             .replace("https://", "wss://")
             .replace("http://", "ws://");
         format!("{}/api/v1/hasn/ws/native?token={}", ws_base, token)

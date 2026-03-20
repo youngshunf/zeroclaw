@@ -234,11 +234,7 @@ impl Tool for HxListSecrets {
 
         let mut output = format!("📋 已配置 {} 个密钥：\n\n", secrets.len());
         for (key, value) in &secrets {
-            output.push_str(&format!(
-                "  • `{}` = `{}`\n",
-                key,
-                mask_value(value)
-            ));
+            output.push_str(&format!("  • `{}` = `{}`\n", key, mask_value(value)));
         }
         output.push_str("\n使用 `hx_set_secret` 更新，`hx_delete_secret` 删除。");
 

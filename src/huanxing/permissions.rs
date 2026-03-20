@@ -64,16 +64,12 @@ pub fn is_guardian_only(tool_name: &str) -> bool {
 
 /// Check if an agent is the guardian.
 pub fn is_guardian(agent_id: &str) -> bool {
-    agent_id == "guardian"
-        || agent_id == "huanxing-guardian"
-        || agent_id.starts_with("guardian-")
+    agent_id == "guardian" || agent_id == "huanxing-guardian" || agent_id.starts_with("guardian-")
 }
 
 /// Check if an agent is the admin.
 pub fn is_admin(agent_id: &str) -> bool {
-    agent_id == "admin"
-        || agent_id == "huanxing-admin"
-        || agent_id.starts_with("admin-")
+    agent_id == "admin" || agent_id == "huanxing-admin" || agent_id.starts_with("admin-")
 }
 
 /// Check if a tool is available to a tenant agent.

@@ -1,12 +1,15 @@
-use rusqlite::Result as SqlResult;
 use crate::db::Database;
 use crate::model::HasnContact;
+use rusqlite::Result as SqlResult;
 
 impl Database {
     /// 插入或更新联系人
     pub fn upsert_contact(&self, contact: &HasnContact) -> SqlResult<()> {
         let conn = self.conn.lock().unwrap();
-        let tags_json = contact.tags.as_ref().map(|t| serde_json::to_string(t).unwrap_or_default());
+        let tags_json = contact
+            .tags
+            .as_ref()
+            .map(|t| serde_json::to_string(t).unwrap_or_default());
         conn.execute(
             "INSERT INTO contacts
              (id, peer_hasn_id, peer_star_id, peer_name, peer_type,
@@ -49,13 +52,12 @@ impl Database {
                     tags, status, connected_at
              FROM contacts
              WHERE relation_type = ?1 AND status = 'connected'
-             ORDER BY peer_name ASC"
+             ORDER BY peer_name ASC",
         )?;
 
         let rows = stmt.query_map([relation_type], |row| {
             let tags_str: Option<String> = row.get(9)?;
-            let tags: Option<Vec<String>> = tags_str
-                .and_then(|s| serde_json::from_str(&s).ok());
+            let tags: Option<Vec<String>> = tags_str.and_then(|s| serde_json::from_str(&s).ok());
             Ok(HasnContact {
                 id: row.get(0)?,
                 peer_hasn_id: row.get(1)?,

@@ -53,7 +53,6 @@ pub struct HuanXingConfig {
     pub guardian_only_tools: Vec<String>,
 
     // ── Phase 1: Backend API integration ───────────────
-
     /// HuanXing backend API base URL.
     /// Default: `https://api.huanxing.dcfuture.cn`
     pub api_base_url: Option<String>,

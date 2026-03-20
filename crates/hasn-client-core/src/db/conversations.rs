@@ -1,6 +1,6 @@
-use rusqlite::Result as SqlResult;
 use crate::db::Database;
 use crate::model::HasnConversation;
+use rusqlite::Result as SqlResult;
 
 impl Database {
     /// 插入或更新会话
@@ -47,7 +47,7 @@ impl Database {
                     message_count, unread_count, status
              FROM conversations
              WHERE status = 'active'
-             ORDER BY last_message_at DESC"
+             ORDER BY last_message_at DESC",
         )?;
 
         let rows = stmt.query_map([], |row| {

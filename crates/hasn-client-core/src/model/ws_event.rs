@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use crate::model::message::HasnMessage;
+use serde::{Deserialize, Serialize};
 
 /// WebSocket 下行事件 (对齐后端 ws_native.py 的 cmd 协议)
 #[derive(Debug, Clone, Serialize, Deserialize)]

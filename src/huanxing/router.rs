@@ -53,9 +53,7 @@ impl TenantRouter {
         let db = TenantDb::open(&db_path)?;
 
         let guardian_dir = config.resolve_guardian_workspace(&workspace_dir);
-        let guardian = Arc::new(
-            TenantContext::guardian(guardian_dir, &global_config).await?,
-        );
+        let guardian = Arc::new(TenantContext::guardian(guardian_dir, &global_config).await?);
 
         // Load admin context if admin workspace exists.
         let admin_dir = config.resolve_admin_workspace(&workspace_dir);
@@ -78,7 +76,10 @@ impl TenantRouter {
                 }
             }
         } else {
-            tracing::debug!("No admin workspace at {}, admin features disabled", admin_dir.display());
+            tracing::debug!(
+                "No admin workspace at {}, admin features disabled",
+                admin_dir.display()
+            );
             None
         };
 
@@ -102,11 +103,7 @@ impl TenantRouter {
 
     /// Resolve a tenant context for the given channel message.
     /// This is the hot path — called on every inbound message.
-    pub async fn resolve(
-        &self,
-        channel: &str,
-        sender_id: &str,
-    ) -> Arc<TenantContext> {
+    pub async fn resolve(&self, channel: &str, sender_id: &str) -> Arc<TenantContext> {
         // 0. Admin channel — route directly to admin agent.
         if self.config.is_admin_channel(channel) {
             if let Some(admin) = &self.admin {
@@ -147,8 +144,7 @@ impl TenantRouter {
                 {
                     Ok(ctx) => {
                         let ctx = Arc::new(ctx);
-                        let mut cache =
-                            self.cache.write().unwrap_or_else(|e| e.into_inner());
+                        let mut cache = self.cache.write().unwrap_or_else(|e| e.into_inner());
                         cache.insert(key, ctx.clone());
                         tracing::info!(
                             agent_id = %ctx.agent_id,
@@ -245,7 +241,9 @@ impl TenantRouter {
     /// Call this **once** after initialization (non-blocking, spawns background task).
     pub fn start_server_lifecycle(&self) {
         let Some(ref agent_key) = self.config.agent_key else {
-            tracing::info!("HuanXing agent_key not configured, skipping server registration & heartbeat");
+            tracing::info!(
+                "HuanXing agent_key not configured, skipping server registration & heartbeat"
+            );
             return;
         };
 
@@ -300,14 +298,15 @@ impl TenantRouter {
                     hb["disk_usage"] = serde_json::json!(disk);
                 }
 
-                let path = format!(
-                    "/api/v1/huanxing/agent/servers/{}/heartbeat",
-                    server_id
-                );
+                let path = format!("/api/v1/huanxing/agent/servers/{}/heartbeat", server_id);
                 if let Err(e) = api.agent_post(&path, &hb).await {
                     tracing::warn!("Heartbeat failed: {e}");
                 } else {
-                    tracing::debug!("Heartbeat sent (users={}, active={})", stats.total_users, stats.active_users);
+                    tracing::debug!(
+                        "Heartbeat sent (users={}, active={})",
+                        stats.total_users,
+                        stats.active_users
+                    );
                 }
 
                 tokio::time::sleep(heartbeat_interval).await;
@@ -336,7 +335,11 @@ fn collect_system_metrics() -> SystemMetrics {
         {
             let load = std::fs::read_to_string("/proc/loadavg")
                 .ok()
-                .and_then(|s| s.split_whitespace().next().and_then(|v| v.parse::<f64>().ok()))
+                .and_then(|s| {
+                    s.split_whitespace()
+                        .next()
+                        .and_then(|v| v.parse::<f64>().ok())
+                })
                 .unwrap_or(0.0);
             let cpus = std::thread::available_parallelism()
                 .map(|n| n.get() as f64)
@@ -358,9 +361,17 @@ fn collect_system_metrics() -> SystemMetrics {
                 let mut available: u64 = 0;
                 for line in content.lines() {
                     if line.starts_with("MemTotal:") {
-                        total = line.split_whitespace().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+                        total = line
+                            .split_whitespace()
+                            .nth(1)
+                            .and_then(|s| s.parse().ok())
+                            .unwrap_or(0);
                     } else if line.starts_with("MemAvailable:") {
-                        available = line.split_whitespace().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+                        available = line
+                            .split_whitespace()
+                            .nth(1)
+                            .and_then(|s| s.parse().ok())
+                            .unwrap_or(0);
                     }
                 }
                 if total > 0 {

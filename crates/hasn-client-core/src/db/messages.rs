@@ -1,6 +1,6 @@
-use rusqlite::Result as SqlResult;
 use crate::db::Database;
 use crate::model::{HasnMessage, SendStatus};
+use rusqlite::Result as SqlResult;
 
 impl Database {
     /// 插入消息 (发送时或收到时)
@@ -93,7 +93,7 @@ impl Database {
                  FROM messages
                  WHERE conversation_id = ?1 AND (id < ?2 OR id IS NULL)
                  ORDER BY created_at DESC
-                 LIMIT ?3"
+                 LIMIT ?3",
             )?;
             let rows = stmt.query_map(rusqlite::params![conversation_id, bid, limit], |row| {
                 Ok(Self::row_to_message(row))
@@ -108,7 +108,7 @@ impl Database {
                  FROM messages
                  WHERE conversation_id = ?1
                  ORDER BY created_at DESC
-                 LIMIT ?2"
+                 LIMIT ?2",
             )?;
             let rows = stmt.query_map(rusqlite::params![conversation_id, limit], |row| {
                 Ok(Self::row_to_message(row))
@@ -130,7 +130,7 @@ impl Database {
             "SELECT id, local_id, conversation_id, from_id, from_star_id, from_type,
                     content, content_type, metadata, reply_to, status, send_status, created_at
              FROM messages WHERE send_status = 'failed'
-             ORDER BY created_at ASC"
+             ORDER BY created_at ASC",
         )?;
         let rows = stmt.query_map([], |row| Ok(Self::row_to_message(row)))?;
         let mut messages = Vec::new();

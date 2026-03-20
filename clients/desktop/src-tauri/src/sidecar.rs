@@ -175,14 +175,11 @@ impl SidecarManager {
             // 从工作目录出发（可能是项目根）
             PathBuf::from("target/release/zeroclaw"),
             // 绝对路径 fallback
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../../../target/release/zeroclaw"),
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../target/release/zeroclaw"),
         ];
         for path in &dev_paths {
             if path.exists() {
-                let canonical = path
-                    .canonicalize()
-                    .unwrap_or_else(|_| path.clone());
+                let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
                 tracing::info!("Using zeroclaw from dev build: {}", canonical.display());
                 return Ok(canonical);
             }
@@ -237,7 +234,11 @@ impl SidecarManager {
         let bin = self.find_binary()?;
         let port = self.find_available_port();
 
-        tracing::info!("Starting zeroclaw sidecar: {} daemon --port {}", bin.display(), port);
+        tracing::info!(
+            "Starting zeroclaw sidecar: {} daemon --port {}",
+            bin.display(),
+            port
+        );
 
         // 清理可能的残留 PID 文件
         self.cleanup_pid_file();
@@ -261,9 +262,9 @@ impl SidecarManager {
             );
         }
 
-        let mut child = cmd.spawn().map_err(|e| {
-            format!("启动 zeroclaw 失败: {e}\n路径: {}", bin.display())
-        })?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| format!("启动 zeroclaw 失败: {e}\n路径: {}", bin.display()))?;
 
         let pid = child.id();
         tracing::info!("Sidecar spawned, PID: {:?}", pid);
@@ -331,7 +332,7 @@ impl SidecarManager {
         if !self.monitoring.swap(true, Ordering::Relaxed) {
             let manager = SidecarMonitorHandle {
                 child: self.child.clone(),
-                port: port,
+                port,
                 restart_count: &self.restart_count as *const AtomicU32,
                 last_restart: self.last_restart.clone(),
                 log_buffer: self.log_buffer.clone(),
@@ -344,7 +345,9 @@ impl SidecarManager {
             tokio::spawn(async move {
                 // SAFETY: AtomicU32/AtomicBool are Send+Sync, the raw pointers point to
                 // fields in SidecarManager which lives as long as the Tauri app.
-                unsafe { monitor_loop(manager, app_clone).await; }
+                unsafe {
+                    monitor_loop(manager, app_clone).await;
+                }
             });
         }
 
@@ -356,7 +359,7 @@ impl SidecarManager {
             "sidecar://status-changed",
             SidecarEvent {
                 running: true,
-                pid: pid,
+                pid,
                 port,
                 model: status.model.clone(),
             },
@@ -387,11 +390,7 @@ impl SidecarManager {
             }
 
             // 等待优雅退出
-            let wait_result = tokio::time::timeout(
-                GRACEFUL_SHUTDOWN_TIMEOUT,
-                child.wait(),
-            )
-            .await;
+            let wait_result = tokio::time::timeout(GRACEFUL_SHUTDOWN_TIMEOUT, child.wait()).await;
 
             match wait_result {
                 Ok(Ok(status)) => {
@@ -439,7 +438,11 @@ impl SidecarManager {
     /// 获取日志
     pub async fn logs(&self, lines: usize) -> Vec<String> {
         let buf = self.log_buffer.lock().await;
-        let start = if buf.len() > lines { buf.len() - lines } else { 0 };
+        let start = if buf.len() > lines {
+            buf.len() - lines
+        } else {
+            0
+        };
         buf.iter().skip(start).cloned().collect()
     }
 
@@ -528,10 +531,12 @@ impl SidecarManager {
             .send()
             .await
             .ok()
-            .and_then(|r| if r.status().is_success() {
-                Some(r)
-            } else {
-                None
+            .and_then(|r| {
+                if r.status().is_success() {
+                    Some(r)
+                } else {
+                    None
+                }
             });
 
         let health_data: Option<HealthResponse> = match health {
@@ -555,7 +560,13 @@ impl SidecarManager {
             .send()
             .await
             .ok()
-            .and_then(|r| if r.status().is_success() { Some(r) } else { None });
+            .and_then(|r| {
+                if r.status().is_success() {
+                    Some(r)
+                } else {
+                    None
+                }
+            });
 
         let mut status = match api_resp {
             Some(r) => r.json::<StatusResponse>().await.unwrap_or(StatusResponse {
@@ -669,8 +680,8 @@ async unsafe fn monitor_loop(handle: SidecarMonitorHandle, app: AppHandle) {
                     }
 
                     let count = restart_count_ref.load(Ordering::Relaxed);
-                    let will_restart = count < MAX_AUTO_RESTARTS
-                        && !stopping.load(Ordering::Relaxed);
+                    let will_restart =
+                        count < MAX_AUTO_RESTARTS && !stopping.load(Ordering::Relaxed);
 
                     // Emit crash event
                     let _ = app.emit(
@@ -746,10 +757,8 @@ async unsafe fn monitor_loop(handle: SidecarMonitorHandle, app: AppHandle) {
                                             }
                                             buf.push_back(format!("[stderr] {line}"));
                                             drop(buf);
-                                            let _ = app_clone.emit(
-                                                "sidecar://log",
-                                                &format!("[stderr] {line}"),
-                                            );
+                                            let _ = app_clone
+                                                .emit("sidecar://log", &format!("[stderr] {line}"));
                                         }
                                     });
                                 }
@@ -877,12 +886,17 @@ impl SidecarManager {
         let user_uuid = req.user_uuid.as_deref().unwrap_or("unknown");
 
         // 1. 创建目录结构
-        std::fs::create_dir_all(&self.config_dir).map_err(|e| {
-            format!("创建配置目录失败: {e}")
-        })?;
+        std::fs::create_dir_all(&self.config_dir).map_err(|e| format!("创建配置目录失败: {e}"))?;
         let workspace_dir = self.config_dir.join("workspace");
-        for dir in &["workspace", "workspace/memory", "workspace/sessions",
-                     "workspace/state", "workspace/cron", "workspace/skills", "agents"] {
+        for dir in &[
+            "workspace",
+            "workspace/memory",
+            "workspace/sessions",
+            "workspace/state",
+            "workspace/cron",
+            "workspace/skills",
+            "agents",
+        ] {
             std::fs::create_dir_all(self.config_dir.join(dir)).ok();
         }
 
@@ -903,9 +917,8 @@ impl SidecarManager {
         );
 
         let config_path = self.config_dir.join("config.toml");
-        std::fs::write(&config_path, &config_content).map_err(|e| {
-            format!("写入配置文件失败: {e}")
-        })?;
+        std::fs::write(&config_path, &config_content)
+            .map_err(|e| format!("写入配置文件失败: {e}"))?;
         result.config_created = true;
         tracing::info!("Config created: {}", config_path.display());
 
@@ -914,9 +927,8 @@ impl SidecarManager {
         std::fs::create_dir_all(&agent_dir).ok();
 
         let agent_toml = generate_agent_toml(star_name);
-        std::fs::write(agent_dir.join("agent.toml"), &agent_toml).map_err(|e| {
-            format!("写入 agent 配置失败: {e}")
-        })?;
+        std::fs::write(agent_dir.join("agent.toml"), &agent_toml)
+            .map_err(|e| format!("写入 agent 配置失败: {e}"))?;
         result.agent_created = true;
         tracing::info!("Default agent created: {}", agent_dir.display());
 
@@ -934,7 +946,10 @@ impl SidecarManager {
         let scaffold_result = scaffold_workspace(&app, &workspace_dir, placeholders);
         match scaffold_result {
             Ok(count) => {
-                tracing::info!("Workspace scaffolded: {count} files created in {}", workspace_dir.display());
+                tracing::info!(
+                    "Workspace scaffolded: {count} files created in {}",
+                    workspace_dir.display()
+                );
             }
             Err(e) => {
                 tracing::warn!("Workspace scaffold partial failure: {e}");
@@ -980,17 +995,13 @@ impl SidecarManager {
 /// 对每个文件做占位符替换，已存在的文件不覆盖。
 /// 从 workspace-scaffold/ 目录读取单个模板文件
 fn load_scaffold_file(app: &AppHandle, filename: &str) -> Option<String> {
-    let scaffold_dir = app
-        .path()
-        .resource_dir()
-        .ok()?
-        .join("workspace-scaffold");
+    let scaffold_dir = app.path().resource_dir().ok()?.join("workspace-scaffold");
 
     let scaffold_dir = if scaffold_dir.exists() {
         scaffold_dir
     } else {
-        let dev_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("workspace-scaffold");
+        let dev_path =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("workspace-scaffold");
         if dev_path.exists() {
             dev_path
         } else {
@@ -1017,8 +1028,8 @@ fn scaffold_workspace(
     let scaffold_dir = if scaffold_dir.exists() {
         scaffold_dir
     } else {
-        let dev_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("workspace-scaffold");
+        let dev_path =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("workspace-scaffold");
         if dev_path.exists() {
             dev_path
         } else {
@@ -1033,8 +1044,8 @@ fn scaffold_workspace(
     tracing::info!("Scaffold source: {}", scaffold_dir.display());
 
     let mut count = 0;
-    let entries = std::fs::read_dir(&scaffold_dir)
-        .map_err(|e| format!("读取 scaffold 目录失败: {e}"))?;
+    let entries =
+        std::fs::read_dir(&scaffold_dir).map_err(|e| format!("读取 scaffold 目录失败: {e}"))?;
 
     for entry in entries {
         let entry = entry.map_err(|e| format!("读取目录条目失败: {e}"))?;
@@ -1062,8 +1073,7 @@ fn scaffold_workspace(
             content = content.replace(placeholder, value);
         }
 
-        std::fs::write(&dest, &content)
-            .map_err(|e| format!("写入 {file_name} 失败: {e}"))?;
+        std::fs::write(&dest, &content).map_err(|e| format!("写入 {file_name} 失败: {e}"))?;
 
         tracing::info!("Created workspace file: {}", dest.display());
         count += 1;
@@ -1098,8 +1108,7 @@ fn generate_config_toml(
     port: u16,
 ) -> String {
     // 尝试从 workspace-scaffold/config.toml.template 读取模板
-    let template = load_scaffold_file(app, "config.toml.template")
-        .unwrap_or_default();
+    let template = load_scaffold_file(app, "config.toml.template").unwrap_or_default();
 
     if template.is_empty() {
         tracing::warn!("config.toml.template not found, using inline fallback");
@@ -1215,16 +1224,37 @@ fn chrono_now_pretty() -> String {
     let mut y = 1970i64;
     let mut remaining = days as i64;
     loop {
-        let days_in_year = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) { 366 } else { 365 };
-        if remaining < days_in_year { break; }
+        let days_in_year = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) {
+            366
+        } else {
+            365
+        };
+        if remaining < days_in_year {
+            break;
+        }
         remaining -= days_in_year;
         y += 1;
     }
     let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
-    let month_days: [i64; 12] = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let month_days: [i64; 12] = [
+        31,
+        if leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
     let mut m = 0;
     for &md in &month_days {
-        if remaining < md { break; }
+        if remaining < md {
+            break;
+        }
         remaining -= md;
         m += 1;
     }
@@ -1249,8 +1279,8 @@ impl SidecarManager {
     /// 读取 config.toml 中的快捷配置
     pub fn read_config(&self) -> Result<QuickConfig, String> {
         let config_path = self.config_dir.join("config.toml");
-        let content = std::fs::read_to_string(&config_path)
-            .map_err(|e| format!("读取配置文件失败: {e}"))?;
+        let content =
+            std::fs::read_to_string(&config_path).map_err(|e| format!("读取配置文件失败: {e}"))?;
 
         let table: toml::Table = content
             .parse()
@@ -1261,9 +1291,7 @@ impl SidecarManager {
                 .get("default_model")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string()),
-            default_temperature: table
-                .get("default_temperature")
-                .and_then(|v| v.as_float()),
+            default_temperature: table.get("default_temperature").and_then(|v| v.as_float()),
             autonomy_level: table
                 .get("autonomy")
                 .and_then(|v| v.as_table())
@@ -1282,24 +1310,18 @@ impl SidecarManager {
     /// 更新 config.toml 中的快捷配置
     pub fn update_config(&self, updates: QuickConfig) -> Result<(), String> {
         let config_path = self.config_dir.join("config.toml");
-        let content = std::fs::read_to_string(&config_path)
-            .map_err(|e| format!("读取配置文件失败: {e}"))?;
+        let content =
+            std::fs::read_to_string(&config_path).map_err(|e| format!("读取配置文件失败: {e}"))?;
 
         let mut table: toml::Table = content
             .parse()
             .map_err(|e| format!("解析 TOML 失败: {e}"))?;
 
         if let Some(model) = updates.default_model {
-            table.insert(
-                "default_model".to_string(),
-                toml::Value::String(model),
-            );
+            table.insert("default_model".to_string(), toml::Value::String(model));
         }
         if let Some(temp) = updates.default_temperature {
-            table.insert(
-                "default_temperature".to_string(),
-                toml::Value::Float(temp),
-            );
+            table.insert("default_temperature".to_string(), toml::Value::Float(temp));
         }
         if let Some(level) = updates.autonomy_level {
             if let Some(autonomy) = table
@@ -1311,11 +1333,10 @@ impl SidecarManager {
             }
         }
 
-        let new_content = toml::to_string_pretty(&table)
-            .map_err(|e| format!("序列化 TOML 失败: {e}"))?;
+        let new_content =
+            toml::to_string_pretty(&table).map_err(|e| format!("序列化 TOML 失败: {e}"))?;
 
-        std::fs::write(&config_path, new_content)
-            .map_err(|e| format!("写入配置文件失败: {e}"))?;
+        std::fs::write(&config_path, new_content).map_err(|e| format!("写入配置文件失败: {e}"))?;
 
         tracing::info!("Config updated: {}", config_path.display());
         Ok(())

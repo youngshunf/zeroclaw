@@ -51,5 +51,9 @@ pub struct HasnConversation {
     pub status: String,
 }
 
-fn default_conv_type() -> String { "direct".to_string() }
-fn default_conv_status() -> String { "active".to_string() }
+fn default_conv_type() -> String {
+    "direct".to_string()
+}
+fn default_conv_status() -> String {
+    "active".to_string()
+}

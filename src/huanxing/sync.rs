@@ -42,7 +42,12 @@ async fn find_skill_in_hub(hub_dir: &Path, skill_id: &str) -> Option<PathBuf> {
         Err(_) => return None,
     };
     while let Ok(Some(cat_entry)) = categories.next_entry().await {
-        if !cat_entry.file_type().await.map(|ft| ft.is_dir()).unwrap_or(false) {
+        if !cat_entry
+            .file_type()
+            .await
+            .map(|ft| ft.is_dir())
+            .unwrap_or(false)
+        {
             continue;
         }
         let candidate = cat_entry.path().join(skill_id);
@@ -79,7 +84,10 @@ pub async fn sync_common_skills(
 ) -> Result<(usize, usize, usize, usize)> {
     let config_path = hub_dir.join("common-skills.yaml");
     if !config_path.exists() {
-        tracing::debug!("No common-skills.yaml found at {}, skipping sync", config_path.display());
+        tracing::debug!(
+            "No common-skills.yaml found at {}, skipping sync",
+            config_path.display()
+        );
         return Ok((0, 0, 0, 0));
     }
 
@@ -142,15 +150,20 @@ pub async fn sync_common_skills(
             );
         }
 
-        copy_dir_recursive(&src, &dest).await.with_context(|| {
-            format!("Failed to copy skill '{}' from hub", skill_id)
-        })?;
+        copy_dir_recursive(&src, &dest)
+            .await
+            .with_context(|| format!("Failed to copy skill '{}' from hub", skill_id))?;
     }
 
     // 2. Remove skills in common_skills_dir/skills/ that are NOT in the yaml list
     let mut entries = tokio::fs::read_dir(&skills_subdir).await?;
     while let Ok(Some(entry)) = entries.next_entry().await {
-        if !entry.file_type().await.map(|ft| ft.is_dir()).unwrap_or(false) {
+        if !entry
+            .file_type()
+            .await
+            .map(|ft| ft.is_dir())
+            .unwrap_or(false)
+        {
             continue;
         }
         let name = entry.file_name().to_string_lossy().to_string();

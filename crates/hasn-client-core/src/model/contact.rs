@@ -36,9 +36,15 @@ pub struct HasnContact {
     pub connected_at: Option<String>,
 }
 
-fn default_relation() -> String { "social".to_string() }
-fn default_trust() -> i32 { 1 }
-fn default_contact_status() -> String { "pending".to_string() }
+fn default_relation() -> String {
+    "social".to_string()
+}
+fn default_trust() -> i32 {
+    1
+}
+fn default_contact_status() -> String {
+    "pending".to_string()
+}
 
 /// 好友请求
 #[derive(Debug, Clone, Serialize, Deserialize)]

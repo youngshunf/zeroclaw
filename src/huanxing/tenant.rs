@@ -150,11 +150,11 @@ impl TenantContext {
         let overrides = load_workspace_overrides(&workspace_dir).await;
 
         // Effective model/provider: workspace config > DB record > global [huanxing] default
-        let effective_model = overrides.default_model.clone()
-            .or(model.clone());
-        let effective_provider = overrides.default_provider.clone()
-            .or(provider.clone());
-        let effective_api_key = overrides.api_key.clone()
+        let effective_model = overrides.default_model.clone().or(model.clone());
+        let effective_provider = overrides.default_provider.clone().or(provider.clone());
+        let effective_api_key = overrides
+            .api_key
+            .clone()
             .or_else(|| global_config.api_key.clone());
         let effective_temperature = overrides.default_temperature;
 
@@ -164,16 +164,15 @@ impl TenantContext {
             .or(global_config.default_model.as_deref())
             .unwrap_or("claude-sonnet-4-6");
 
-        // Load skills from tenant workspace
-        let _common_skills_dir = global_config.huanxing.resolve_common_skills_dir(&global_config.workspace_dir);
         // Load skills from tenant workspace + common skills directory
-        let common_skills_dir = global_config.huanxing.resolve_common_skills_dir(&global_config.workspace_dir);
-        let mut skills =
-            crate::skills::load_skills_with_config(&workspace_dir, global_config);
+        let common_skills_dir = global_config
+            .huanxing
+            .resolve_common_skills_dir(&global_config.workspace_dir);
+        let mut skills = crate::skills::load_skills_with_config(&workspace_dir, global_config);
         if common_skills_dir.exists() {
             let ws_names: std::collections::HashSet<String> =
                 skills.iter().map(|s| s.name.clone()).collect();
-            for skill in crate::skills::load_skills(&common_skills_dir) {
+            for skill in crate::skills::load_skills_with_config(&common_skills_dir, global_config) {
                 if !ws_names.contains(&skill.name) {
                     skills.push(skill);
                 }
@@ -224,8 +223,7 @@ impl TenantContext {
             create_session_backend(&workspace_dir, global_config);
 
         // ── D. Independent conversation histories ────────────────────
-        let conversation_histories: ConversationHistoryMap =
-            Arc::new(Mutex::new(HashMap::new()));
+        let conversation_histories: ConversationHistoryMap = Arc::new(Mutex::new(HashMap::new()));
 
         Ok(Self {
             agent_id: agent_id.to_string(),
@@ -258,21 +256,26 @@ impl TenantContext {
         // Load workspace config.toml overrides (guardian may have one too)
         let overrides = load_workspace_overrides(&workspace_dir).await;
 
-        let effective_api_key = overrides.api_key.clone()
+        let effective_api_key = overrides
+            .api_key
+            .clone()
             .or_else(|| global_config.api_key.clone());
 
-        let model_name = overrides.default_model.as_deref()
+        let model_name = overrides
+            .default_model
+            .as_deref()
             .or(global_config.default_model.as_deref())
             .unwrap_or("claude-sonnet-4-6");
 
         // Load skills from guardian workspace + common skills directory
-        let common_skills_dir = global_config.huanxing.resolve_common_skills_dir(&global_config.workspace_dir);
-        let mut skills =
-            crate::skills::load_skills_with_config(&workspace_dir, global_config);
+        let common_skills_dir = global_config
+            .huanxing
+            .resolve_common_skills_dir(&global_config.workspace_dir);
+        let mut skills = crate::skills::load_skills_with_config(&workspace_dir, global_config);
         if common_skills_dir.exists() {
             let ws_names: std::collections::HashSet<String> =
                 skills.iter().map(|s| s.name.clone()).collect();
-            for skill in crate::skills::load_skills(&common_skills_dir) {
+            for skill in crate::skills::load_skills_with_config(&common_skills_dir, global_config) {
                 if !ws_names.contains(&skill.name) {
                     skills.push(skill);
                 }
@@ -318,8 +321,7 @@ impl TenantContext {
         let guardian_session_manager: Option<Arc<dyn SessionBackend>> =
             create_session_backend(&workspace_dir, global_config);
 
-        let conversation_histories: ConversationHistoryMap =
-            Arc::new(Mutex::new(HashMap::new()));
+        let conversation_histories: ConversationHistoryMap = Arc::new(Mutex::new(HashMap::new()));
 
         Ok(Self {
             agent_id: "guardian".to_string(),

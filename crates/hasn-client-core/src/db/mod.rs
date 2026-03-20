@@ -1,11 +1,11 @@
-pub mod schema;
-pub mod messages;
-pub mod conversations;
 pub mod contacts;
+pub mod conversations;
+pub mod messages;
+pub mod schema;
 
+use crate::model::AuthState;
 use rusqlite::{Connection, Result as SqlResult};
 use std::sync::Mutex;
-use crate::model::AuthState;
 
 /// 本地数据库
 pub struct Database {
@@ -18,13 +18,17 @@ impl Database {
         let conn = Connection::open(path)?;
 
         // 性能优化
-        conn.execute_batch("
+        conn.execute_batch(
+            "
             PRAGMA journal_mode = WAL;
             PRAGMA synchronous = NORMAL;
             PRAGMA foreign_keys = ON;
-        ")?;
+        ",
+        )?;
 
-        let db = Self { conn: Mutex::new(conn) };
+        let db = Self {
+            conn: Mutex::new(conn),
+        };
         db.init_tables()?;
         Ok(db)
     }
