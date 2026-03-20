@@ -4,8 +4,8 @@
 //! WsObserver 将事件缓冲到 Mutex<Vec<…>> 中；turn() 返回后，ws.rs
 //! 调用 take_events() 取出所有事件并转换为 WS 帧发送给客户端。
 
-use crate::observability::{Observer, ObserverEvent};
 use crate::observability::traits::ObserverMetric;
+use crate::observability::{Observer, ObserverEvent};
 use parking_lot::Mutex;
 use std::any::Any;
 use std::time::Duration;
@@ -52,7 +52,12 @@ impl Default for WsObserver {
 impl Observer for WsObserver {
     fn record_event(&self, event: &ObserverEvent) {
         // 只关心工具调用完成事件
-        if let ObserverEvent::ToolCall { tool, duration, success } = event {
+        if let ObserverEvent::ToolCall {
+            tool,
+            duration,
+            success,
+        } = event
+        {
             let display_name = tool_display_name(tool);
             self.records.lock().push(ToolCallRecord {
                 name: tool.clone(),

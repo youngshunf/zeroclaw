@@ -839,7 +839,7 @@ pub fn all_tools_with_runtime(
 
             // Register + invalidate + bind + update tools — need TenantRouter
             let hx_config = root_config.huanxing.clone();
-            let ws_dir: std::path::PathBuf = root_config.workspace_dir.clone().into();
+            let ws_dir: std::path::PathBuf = root_config.workspace_dir.clone();
             let router_result = tokio::task::block_in_place(|| {
                 tokio::runtime::Handle::current().block_on(crate::huanxing::TenantRouter::new(
                     hx_config,
@@ -1032,6 +1032,8 @@ pub fn all_tools_with_runtime(
                             .huanxing
                             .resolve_agents_dir(&root_config.workspace_dir);
                         let router_slot = crate::huanxing::skill_market_tools::new_router_slot();
+                        // 将 TenantRouter 注入 slot，使 skill 工具安装/卸载后能正确失效缓存
+                        let _ = router_slot.set(Arc::clone(&router));
                         tool_arcs.push(Arc::new(
                             crate::huanxing::skill_market_tools::HxSkillSearch {
                                 registry: registry.clone(),

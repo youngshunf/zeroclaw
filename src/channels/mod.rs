@@ -2570,39 +2570,70 @@ async fn process_channel_message(
 
     let timeout_budget_secs =
         channel_message_timeout_budget_secs(ctx.message_timeout_secs, ctx.max_tool_iterations);
+
+    // 多租户模式：在 task-local scope 内注入当前 tenant workspace，
+    // 确保 skill_market_tools 操作的是 agent 自己的 skills/ 目录。
+    #[cfg(feature = "huanxing")]
+    let tenant_workspace_for_scope = tenant_ctx
+        .as_ref()
+        .map(|t| t.workspace_dir.clone());
+
+    macro_rules! run_tool_loop_future {
+        () => {
+            tokio::time::timeout(
+                Duration::from_secs(timeout_budget_secs),
+                run_tool_call_loop(
+                    active_provider.as_ref(),
+                    &mut history,
+                    ctx.tools_registry.as_ref(),
+                    notify_observer.as_ref() as &dyn Observer,
+                    route.provider.as_str(),
+                    route.model.as_str(),
+                    runtime_defaults.temperature,
+                    true,
+                    Some(&*ctx.approval_manager),
+                    msg.channel.as_str(),
+                    Some(msg.reply_target.as_str()),
+                    &ctx.multimodal,
+                    ctx.max_tool_iterations,
+                    Some(cancellation_token.clone()),
+                    delta_tx,
+                    ctx.hooks.as_deref(),
+                    if msg.channel == "cli"
+                        || ctx.autonomy_level == AutonomyLevel::Full
+                    {
+                        &[]
+                    } else {
+                        ctx.non_cli_excluded_tools.as_ref()
+                    },
+                    ctx.tool_call_dedup_exempt.as_ref(),
+                    ctx.activated_tools.as_ref(),
+                    None,
+                ),
+            )
+        };
+    }
+
+    #[cfg(feature = "huanxing")]
+    let llm_result = if let Some(ws) = tenant_workspace_for_scope {
+        tokio::select! {
+            () = cancellation_token.cancelled() => LlmExecutionResult::Cancelled,
+            result = crate::huanxing::skill_market_tools::with_tenant_workspace(
+                ws,
+                run_tool_loop_future!(),
+            ) => LlmExecutionResult::Completed(result),
+        }
+    } else {
+        tokio::select! {
+            () = cancellation_token.cancelled() => LlmExecutionResult::Cancelled,
+            result = run_tool_loop_future!() => LlmExecutionResult::Completed(result),
+        }
+    };
+
+    #[cfg(not(feature = "huanxing"))]
     let llm_result = tokio::select! {
         () = cancellation_token.cancelled() => LlmExecutionResult::Cancelled,
-        result = tokio::time::timeout(
-            Duration::from_secs(timeout_budget_secs),
-            run_tool_call_loop(
-                active_provider.as_ref(),
-                &mut history,
-                ctx.tools_registry.as_ref(),
-                notify_observer.as_ref() as &dyn Observer,
-                route.provider.as_str(),
-                route.model.as_str(),
-                runtime_defaults.temperature,
-                true,
-                Some(&*ctx.approval_manager),
-                msg.channel.as_str(),
-                Some(msg.reply_target.as_str()),
-                &ctx.multimodal,
-                ctx.max_tool_iterations,
-                Some(cancellation_token.clone()),
-                delta_tx,
-                ctx.hooks.as_deref(),
-                if msg.channel == "cli"
-                    || ctx.autonomy_level == AutonomyLevel::Full
-                {
-                    &[]
-                } else {
-                    ctx.non_cli_excluded_tools.as_ref()
-                },
-                ctx.tool_call_dedup_exempt.as_ref(),
-                ctx.activated_tools.as_ref(),
-                None,
-            ),
-        ) => LlmExecutionResult::Completed(result),
+        result = run_tool_loop_future!() => LlmExecutionResult::Completed(result),
     };
 
     if let Some(handle) = draft_updater {
@@ -4781,7 +4812,10 @@ pub async fn start_channels(config: Config) -> Result<()> {
             {
                 Ok(router) => {
                     tracing::info!("HuanXing multi-tenant routing enabled");
-                    Some(Arc::new(router))
+                    let router = Arc::new(router);
+                    // 注册全局 router 供 skill_market_tools 失效缓存使用
+                    crate::huanxing::skill_market_tools::register_global_router(Arc::clone(&router));
+                    Some(router)
                 }
                 Err(e) => {
                     tracing::error!("Failed to initialize HuanXing tenant router: {e}");

@@ -168,16 +168,49 @@ impl TenantContext {
         let common_skills_dir = global_config
             .huanxing
             .resolve_common_skills_dir(&global_config.workspace_dir);
+
         let mut skills = crate::skills::load_skills_with_config(&workspace_dir, global_config);
+        let ws_skill_names: Vec<String> = skills.iter().map(|s| s.name.clone()).collect();
+        tracing::info!(
+            agent_id,
+            workspace = %workspace_dir.display(),
+            count = skills.len(),
+            names = ?ws_skill_names,
+            "【技能调试】agent 私有技能目录加载结果"
+        );
+
+        tracing::info!(
+            agent_id,
+            common_skills_dir = %common_skills_dir.display(),
+            exists = common_skills_dir.exists(),
+            "【技能调试】公共技能目录状态"
+        );
+
         if common_skills_dir.exists() {
             let ws_names: std::collections::HashSet<String> =
                 skills.iter().map(|s| s.name.clone()).collect();
-            for skill in crate::skills::load_skills_with_config(&common_skills_dir, global_config) {
+            let common_skills = crate::skills::load_skills_with_config(&common_skills_dir, global_config);
+            let common_names: Vec<String> = common_skills.iter().map(|s| s.name.clone()).collect();
+            tracing::info!(
+                agent_id,
+                count = common_skills.len(),
+                names = ?common_names,
+                "【技能调试】公共技能目录加载结果"
+            );
+            for skill in common_skills {
                 if !ws_names.contains(&skill.name) {
                     skills.push(skill);
                 }
             }
         }
+
+        let all_skill_names: Vec<String> = skills.iter().map(|s| s.name.clone()).collect();
+        tracing::info!(
+            agent_id,
+            total = skills.len(),
+            names = ?all_skill_names,
+            "【技能调试】合并后技能总数"
+        );
 
         let tool_descs: Vec<(&str, &str)> = Vec::new();
 
@@ -190,13 +223,13 @@ impl TenantContext {
             None,
         );
 
-        tracing::debug!(
+        let has_skills_section = system_prompt.contains("<available_skills>");
+        tracing::info!(
             agent_id,
-            workspace = %workspace_dir.display(),
             prompt_len = system_prompt.len(),
             skills_count = skills.len(),
-            has_workspace_config = overrides.api_key.is_some(),
-            "Built full system prompt for tenant"
+            has_skills_section,
+            "【技能调试】系统提示词构建完成"
         );
 
         // ── B. Create per-tenant memory ──────────────────────────────

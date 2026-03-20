@@ -20,12 +20,42 @@ pub fn new_router_slot() -> RouterSlot {
     Arc::new(std::sync::OnceLock::new())
 }
 
+/// 进程级全局 TenantRouter 引用，由 channels/mod.rs 在初始化后注入。
+/// skill 工具通过此引用失效缓存，无需依赖 RouterSlot 的传递链。
+static GLOBAL_TENANT_ROUTER: std::sync::OnceLock<Arc<crate::huanxing::TenantRouter>> =
+    std::sync::OnceLock::new();
+
+/// 注册全局 TenantRouter（由 channels/mod.rs 在 tenant_router 创建后调用）。
+pub fn register_global_router(router: Arc<crate::huanxing::TenantRouter>) {
+    let _ = GLOBAL_TENANT_ROUTER.set(router);
+}
+
+tokio::task_local! {
+    /// 当前正在处理消息的 tenant workspace 目录。
+    /// 在多租户消息处理路径中通过 `with_tenant_workspace` 注入，
+    /// 确保 skill 工具操作的是当前 tenant 的私有 skills/ 目录，
+    /// 而不是全局的 agents/ 根目录。
+    static CURRENT_TENANT_WORKSPACE: PathBuf;
+}
+
+/// 在当前 tokio task 范围内设置 tenant workspace，并执行 future。
+/// 多租户消息处理路径调用此函数，工具执行时通过 `tenant_workspace()` 读取。
+pub async fn with_tenant_workspace<F, T>(workspace: PathBuf, f: F) -> T
+where
+    F: std::future::Future<Output = T>,
+{
+    CURRENT_TENANT_WORKSPACE.scope(workspace, f).await
+}
+
 /// Invalidate the tenant cache for the current user (best-effort).
 fn invalidate_current_user(slot: &RouterSlot, fallback_ws: &Path) {
-    if let Some(router) = slot.get() {
-        // Extract agent_id from the effective workspace path
-        // Workspace pattern: agents/{agent_id}/
-        let ws = fallback_ws.to_path_buf();
+    // 优先使用全局 router（channels 里的那个，有实际消息缓存）
+    let router = GLOBAL_TENANT_ROUTER
+        .get()
+        .cloned()
+        .or_else(|| slot.get().cloned());
+    if let Some(router) = router {
+        let ws = tenant_workspace(fallback_ws);
         if let Some(agent_id) = ws.file_name().and_then(|n| n.to_str()) {
             router.invalidate_agent(agent_id);
             tracing::debug!(agent_id, "Tenant cache invalidated after skill change");
@@ -34,10 +64,12 @@ fn invalidate_current_user(slot: &RouterSlot, fallback_ws: &Path) {
 }
 
 /// Get the effective workspace dir for the current tenant.
-/// Falls back to the static `workspace_dir` on the tool struct
-/// (which is the agents_dir) if no tenant context is active.
+/// 多租户模式下从 task-local CURRENT_TENANT_WORKSPACE 读取 per-tenant 目录；
+/// 非多租户模式下（CLI/单机）回退到工具构建时传入的 workspace_dir（agents_dir）。
 fn tenant_workspace(fallback: &Path) -> PathBuf {
-    fallback.to_path_buf()
+    CURRENT_TENANT_WORKSPACE
+        .try_with(|ws| ws.clone())
+        .unwrap_or_else(|_| fallback.to_path_buf())
 }
 
 /// Format a risk level with emoji.

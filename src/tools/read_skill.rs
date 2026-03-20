@@ -201,19 +201,11 @@ description = "Ship safely"
         let common_dir = tmp.path().join("common-skills");
         let skill_dir = common_dir.join("skills/newsnow");
         std::fs::create_dir_all(&skill_dir).unwrap();
-        std::fs::write(
-            skill_dir.join("SKILL.md"),
-            "# Newsnow\n\nFetch hot news.\n",
-        )
-        .unwrap();
+        std::fs::write(skill_dir.join("SKILL.md"), "# Newsnow\n\nFetch hot news.\n").unwrap();
 
-        let tool = ReadSkillTool::new(workspace, false, None)
-            .with_extra_skills_dir(common_dir);
+        let tool = ReadSkillTool::new(workspace, false, None).with_extra_skills_dir(common_dir);
 
-        let result = tool
-            .execute(json!({ "name": "newsnow" }))
-            .await
-            .unwrap();
+        let result = tool.execute(json!({ "name": "newsnow" })).await.unwrap();
 
         assert!(result.success, "error: {:?}", result.error);
         assert!(result.output.contains("# Newsnow"));
@@ -234,16 +226,15 @@ description = "Ship safely"
         std::fs::create_dir_all(&common_skill).unwrap();
         std::fs::write(common_skill.join("SKILL.md"), "# Default Newsnow\n").unwrap();
 
-        let tool = ReadSkillTool::new(workspace, false, None)
-            .with_extra_skills_dir(common_dir);
+        let tool = ReadSkillTool::new(workspace, false, None).with_extra_skills_dir(common_dir);
 
-        let result = tool
-            .execute(json!({ "name": "newsnow" }))
-            .await
-            .unwrap();
+        let result = tool.execute(json!({ "name": "newsnow" })).await.unwrap();
 
         assert!(result.success);
-        assert!(result.output.contains("Custom Newsnow"), "workspace version should win");
+        assert!(
+            result.output.contains("Custom Newsnow"),
+            "workspace version should win"
+        );
     }
 
     #[tokio::test]

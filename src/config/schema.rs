@@ -6713,7 +6713,7 @@ impl Default for Config {
             plugins: PluginsConfig::default(),
             locale: None,
             #[cfg(feature = "huanxing")]
-            huanxing: Default::default(),
+            huanxing: crate::huanxing::HuanXingConfig::default(),
         }
     }
 }
@@ -9432,6 +9432,8 @@ default_temperature = 0.7
                 dingtalk: None,
                 wecom: None,
                 qq: None,
+                #[cfg(feature = "huanxing")]
+                napcat: None,
                 twitter: None,
                 mochat: None,
                 #[cfg(feature = "channel-nostr")]
@@ -9483,6 +9485,8 @@ default_temperature = 0.7
             linkedin: LinkedInConfig::default(),
             plugins: PluginsConfig::default(),
             locale: None,
+            #[cfg(feature = "huanxing")]
+            huanxing: crate::huanxing::HuanXingConfig::default(),
         };
 
         let toml_str = toml::to_string_pretty(&config).unwrap();
@@ -9819,6 +9823,8 @@ tool_dispatcher = "xml"
             linkedin: LinkedInConfig::default(),
             plugins: PluginsConfig::default(),
             locale: None,
+            #[cfg(feature = "huanxing")]
+            huanxing: crate::huanxing::HuanXingConfig::default(),
         };
 
         config.save().await.unwrap();
@@ -10218,6 +10224,8 @@ allowed_users = ["@ops:matrix.org"]
             dingtalk: None,
             wecom: None,
             qq: None,
+            #[cfg(feature = "huanxing")]
+            napcat: None,
             twitter: None,
             mochat: None,
             nostr: None,
@@ -10507,6 +10515,8 @@ channel_id = "C123"
             dingtalk: None,
             wecom: None,
             qq: None,
+            #[cfg(feature = "huanxing")]
+            napcat: None,
             twitter: None,
             mochat: None,
             nostr: None,
