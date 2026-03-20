@@ -2179,40 +2179,32 @@ async fn process_channel_message(
     // Preserve user turn before the LLM call so interrupted requests keep context.
     #[cfg(feature = "huanxing")]
     let tenant_session_store = if let Some(ref tenant) = tenant_ctx {
-        // Per-tenant session store: sessions/ inside tenant workspace
-        match session_store::SessionStore::new(&tenant.workspace_dir) {
-            Ok(store) => {
-                // Hydrate tenant conversation histories from persisted JSONL on first access
-                let should_hydrate = {
-                    let histories = effective_histories
+        // Per-tenant session backend: created in TenantContext based on config
+        if let Some(ref backend) = tenant.session_manager {
+            // Hydrate tenant conversation histories from persisted sessions on first access
+            let should_hydrate = {
+                let histories = effective_histories
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                !histories.contains_key(&history_key)
+            };
+            if should_hydrate {
+                let msgs = backend.load(&history_key);
+                if !msgs.is_empty() {
+                    let mut histories = effective_histories
                         .lock()
                         .unwrap_or_else(|e| e.into_inner());
-                    !histories.contains_key(&history_key)
-                };
-                if should_hydrate {
-                    let msgs = store.load(&history_key);
-                    if !msgs.is_empty() {
-                        let mut histories = effective_histories
-                            .lock()
-                            .unwrap_or_else(|e| e.into_inner());
-                        histories.entry(history_key.clone()).or_insert(msgs);
-                        tracing::debug!(
-                            agent_id = %tenant.agent_id,
-                            history_key = %history_key,
-                            "Hydrated tenant session from disk"
-                        );
-                    }
+                    histories.entry(history_key.clone()).or_insert(msgs);
+                    tracing::debug!(
+                        agent_id = %tenant.agent_id,
+                        history_key = %history_key,
+                        "Hydrated tenant session from disk"
+                    );
                 }
-                Some(store)
             }
-            Err(e) => {
-                tracing::warn!(
-                    agent_id = %tenant.agent_id,
-                    error = %e,
-                    "Failed to create per-tenant session store"
-                );
-                None
-            }
+            Some(Arc::clone(backend))
+        } else {
+            None
         }
     } else {
         None

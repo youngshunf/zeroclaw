@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex};
 
 use serde::Deserialize;
 
+use crate::channels::session_backend::SessionBackend;
 use crate::memory::{self, Memory};
 use crate::providers::ChatMessage;
 
@@ -98,8 +99,8 @@ pub struct TenantContext {
     /// Per-tenant vector memory (brain.db in tenant workspace).
     pub memory: Arc<dyn Memory>,
 
-    /// Per-tenant session manager (reserved for future session persistence).
-    pub session_manager: Option<()>,
+    /// Per-tenant session persistence backend (JSONL or SQLite, based on config).
+    pub session_manager: Option<Arc<dyn SessionBackend>>,
 
     /// Per-tenant conversation histories (isolated from other tenants).
     pub conversation_histories: ConversationHistoryMap,
@@ -218,8 +219,9 @@ impl TenantContext {
             effective_api_key.as_deref(),
         )?);
 
-        // ── C. Session manager (stubbed — upstream doesn't have session API yet)
-        let tenant_session_manager: Option<()> = None;
+        // ── C. Session backend (JSONL or SQLite based on channels_config) ──
+        let tenant_session_manager: Option<Arc<dyn SessionBackend>> =
+            create_session_backend(&workspace_dir, global_config);
 
         // ── D. Independent conversation histories ────────────────────
         let conversation_histories: ConversationHistoryMap =
@@ -312,8 +314,9 @@ impl TenantContext {
             effective_api_key.as_deref(),
         )?);
 
-        // Per-tenant session manager for guardian (stubbed)
-        let guardian_session_manager: Option<()> = None;
+        // Per-tenant session backend for guardian
+        let guardian_session_manager: Option<Arc<dyn SessionBackend>> =
+            create_session_backend(&workspace_dir, global_config);
 
         let conversation_histories: ConversationHistoryMap =
             Arc::new(Mutex::new(HashMap::new()));
@@ -403,4 +406,57 @@ fn default_guardian_prompt() -> String {
 
 注册完成后，用户将获得专属的 AI 助手。"#
         .to_string()
+}
+
+/// Create a session backend based on `channels_config.session_backend`.
+/// Returns `None` if session persistence is disabled or creation fails.
+fn create_session_backend(
+    workspace_dir: &std::path::Path,
+    global_config: &crate::config::Config,
+) -> Option<Arc<dyn SessionBackend>> {
+    if !global_config.channels_config.session_persistence {
+        return None;
+    }
+    match global_config.channels_config.session_backend.as_str() {
+        "sqlite" => {
+            match crate::channels::session_sqlite::SqliteSessionBackend::new(workspace_dir) {
+                Ok(b) => {
+                    // Auto-migrate existing JSONL files
+                    if let Ok(n) = b.migrate_from_jsonl(workspace_dir) {
+                        if n > 0 {
+                            tracing::info!(
+                                workspace = %workspace_dir.display(),
+                                migrated = n,
+                                "Migrated JSONL sessions to SQLite"
+                            );
+                        }
+                    }
+                    Some(Arc::new(b))
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        workspace = %workspace_dir.display(),
+                        error = %e,
+                        "Failed to create SQLite session backend, falling back to JSONL"
+                    );
+                    create_jsonl_fallback(workspace_dir)
+                }
+            }
+        }
+        _ => create_jsonl_fallback(workspace_dir),
+    }
+}
+
+fn create_jsonl_fallback(workspace_dir: &std::path::Path) -> Option<Arc<dyn SessionBackend>> {
+    match crate::channels::session_store::SessionStore::new(workspace_dir) {
+        Ok(store) => Some(Arc::new(store)),
+        Err(e) => {
+            tracing::warn!(
+                workspace = %workspace_dir.display(),
+                error = %e,
+                "Failed to create JSONL session backend"
+            );
+            None
+        }
+    }
 }

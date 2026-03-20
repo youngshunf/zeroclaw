@@ -49,3 +49,11 @@ lcov.info
 
 # Wrangler cache
 .wrangler/
+clients/desktop/.vite
+daemon_state.json
+server-config/admin/memory
+server-config/admin/sessions
+server-config/admin/state
+server-config/guardian/memory
+server-config/guardian/sessions
+server-config/guardian/state
