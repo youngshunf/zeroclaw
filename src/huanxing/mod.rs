@@ -42,6 +42,7 @@ pub mod templates;
 pub mod tenant;
 pub mod tenant_heartbeat;
 pub mod tools;
+pub mod ws_observer;
 
 pub use api_client::ApiClient;
 pub use config::HuanXingConfig;

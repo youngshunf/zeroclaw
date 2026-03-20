@@ -299,6 +299,12 @@ impl Agent {
         self.memory_session_id = session_id;
     }
 
+    /// HUANXING: ws.rs 在每次 turn 前注入 WsObserver，收集工具调用事件用于 WS 推送
+    #[cfg(feature = "huanxing")]
+    pub fn set_observer(&mut self, observer: std::sync::Arc<dyn crate::observability::Observer>) {
+        self.observer = observer;
+    }
+
     /// Hydrate the agent with prior chat messages (e.g. from a session backend).
     ///
     /// Ensures a system prompt is prepended if history is empty, then appends all
