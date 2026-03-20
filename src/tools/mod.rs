@@ -1063,6 +1063,11 @@ pub fn all_tools_with_runtime(
                             crate::huanxing::skill_market_tools::HxSkillList {
                                 registry: registry.clone(),
                                 workspace_dir: agents_dir_market.clone(),
+                                common_skills_dir: if common_skills_dir.exists() {
+                                    Some(common_skills_dir.clone())
+                                } else {
+                                    None
+                                },
                             },
                         ));
                         tool_arcs.push(Arc::new(

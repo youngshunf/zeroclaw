@@ -331,7 +331,10 @@ async fn handle_socket(socket: WebSocket, state: AppState, default_session_id: O
     }
 }
 
-/// 初始化一个新的 AgentSession，从持久化存储恢复历史
+/// 初始化一个新的 AgentSession，从持久化存储恢复历史。
+///
+/// HUANXING：当 `agent_name` 对应的工作区存在时，使用该工作区的 config 创建 Agent，
+/// 使 system_prompt（SOUL.md 等）、memory（brain.db）、skills 完全独立隔离。
 fn init_agent_session(
     state: &AppState,
     session_id: &str,
@@ -340,31 +343,48 @@ fn init_agent_session(
     let config = state.config.lock().clone();
 
     // HUANXING: 按 agent_name 解析用户工作区，创建隔离的 per-user session backend
+    // 同时确定 per-agent workspace，用于创建隔离的 Agent（system_prompt/memory/skills）。
     #[cfg(feature = "huanxing")]
-    let per_user_backend: Option<std::sync::Arc<dyn crate::channels::session_backend::SessionBackend>> = {
+    let (per_user_backend, agent_workspace): (
+        Option<std::sync::Arc<dyn crate::channels::session_backend::SessionBackend>>,
+        Option<std::path::PathBuf>,
+    ) = {
         if config.huanxing.enabled {
             if let Some(agent_id) = _agent_name {
                 let agents_dir = config.huanxing.resolve_agents_dir(&config.workspace_dir);
                 let user_workspace = agents_dir.join(agent_id);
                 if user_workspace.exists() {
-                    crate::huanxing::tenant::create_session_backend_for_workspace(
+                    let backend = crate::huanxing::tenant::create_session_backend_for_workspace(
                         &user_workspace,
                         &config,
-                    )
+                    );
+                    (backend, Some(user_workspace))
                 } else {
                     // agent_name 不存在，回退到全局 backend（guardian/未注册用户）
-                    state.session_backend.clone()
+                    (state.session_backend.clone(), None)
                 }
             } else {
                 // 无 agent_name，使用全局 backend
-                state.session_backend.clone()
+                (state.session_backend.clone(), None)
             }
         } else {
-            state.session_backend.clone()
+            (state.session_backend.clone(), None)
         }
     };
 
-    // TODO: 按 agent_name 从对应目录加载 Agent 配置
+    // HUANXING: 当有 per-agent 工作区时，用工作区 workspace_dir 覆盖全局配置，
+    // 使 Agent 从对应目录加载 SOUL.md/IDENTITY.md/brain.db/skills/ 等，实现完整隔离。
+    #[cfg(feature = "huanxing")]
+    let mut agent = {
+        if let Some(ref workspace) = agent_workspace {
+            let mut agent_config = config.clone();
+            agent_config.workspace_dir = workspace.clone();
+            crate::agent::Agent::from_config(&agent_config)?
+        } else {
+            crate::agent::Agent::from_config(&config)?
+        }
+    };
+    #[cfg(not(feature = "huanxing"))]
     let mut agent = crate::agent::Agent::from_config(&config)?;
     agent.set_memory_session_id(Some(session_id.to_string()));
 

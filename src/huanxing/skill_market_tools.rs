@@ -159,7 +159,7 @@ impl Tool for HxSkillSearch {
     }
 
     fn description(&self) -> &str {
-        "搜索技能市场。输入关键词，返回匹配的技能列表（名称、描述、分类、风险等级等）。"
+        "搜索技能市场，寻找当前 Agent 尚未拥有的新技能。仅在用户明确要求获取新能力、且该技能不在当前可用技能列表中时才调用。"
     }
 
     fn parameters_schema(&self) -> Value {
@@ -372,7 +372,7 @@ impl Tool for HxSkillInstall {
     }
 
     fn description(&self) -> &str {
-        "安装一个技能到当前 Agent。技能将在下次对话中生效。"
+        "安装一个新技能到当前 Agent。仅在用户明确要求获取新能力、且该技能不在当前可用技能列表中时才调用。技能将在下次对话中生效。"
     }
 
     fn parameters_schema(&self) -> Value {
@@ -684,6 +684,8 @@ impl Tool for HxSkillUninstall {
 pub struct HxSkillList {
     pub registry: Arc<RegistryLoader>,
     pub workspace_dir: PathBuf,
+    /// 公共技能目录（可选），用于在列表中显示公共技能
+    pub common_skills_dir: Option<PathBuf>,
 }
 
 #[async_trait]
@@ -693,7 +695,7 @@ impl Tool for HxSkillList {
     }
 
     fn description(&self) -> &str {
-        "列出当前 Agent 已安装的所有技能，包含版本和更新状态。"
+        "列出当前 Agent 已安装的私有技能及平台公共技能。注意：系统提示词中 <available_skills> 列出的技能均已可用，通常无需调用此工具。"
     }
 
     fn parameters_schema(&self) -> Value {
@@ -713,17 +715,35 @@ impl Tool for HxSkillList {
 
         let _ = self.registry.ensure_loaded().await;
 
-        // Scan workspace/skills/ directory — directory is the source of truth
-        let skills_dir = ws.join("skills");
-        let mut skill_ids: Vec<String> = Vec::new();
+        // 收集私有技能 ID（来自 agent workspace）
+        let private_skills_dir = ws.join("skills");
+        let mut private_skill_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-        if skills_dir.exists() {
-            if let Ok(mut entries) = tokio::fs::read_dir(&skills_dir).await {
+        if private_skills_dir.exists() {
+            if let Ok(mut entries) = tokio::fs::read_dir(&private_skills_dir).await {
                 while let Ok(Some(entry)) = entries.next_entry().await {
                     if entry.path().is_dir() {
                         let name = entry.file_name().to_string_lossy().to_string();
                         if !name.starts_with('.') {
-                            skill_ids.push(name);
+                            private_skill_ids.insert(name);
+                        }
+                    }
+                }
+            }
+        }
+
+        // 收集公共技能 ID（来自 common_skills_dir，私有技能同名时跳过）
+        let mut common_skill_ids: Vec<String> = Vec::new();
+        if let Some(ref common_dir) = self.common_skills_dir {
+            let common_skills_dir = common_dir.join("skills");
+            if common_skills_dir.exists() {
+                if let Ok(mut entries) = tokio::fs::read_dir(&common_skills_dir).await {
+                    while let Ok(Some(entry)) = entries.next_entry().await {
+                        if entry.path().is_dir() {
+                            let name = entry.file_name().to_string_lossy().to_string();
+                            if !name.starts_with('.') && !private_skill_ids.contains(&name) {
+                                common_skill_ids.push(name);
+                            }
                         }
                     }
                 }
@@ -731,8 +751,10 @@ impl Tool for HxSkillList {
         }
 
         let mut items: Vec<Value> = Vec::new();
-        for skill_id in &skill_ids {
-            let skill_path = skills_dir.join(skill_id);
+
+        // 私有技能
+        for skill_id in &private_skill_ids {
+            let skill_path = private_skills_dir.join(skill_id);
             let installed_ver = read_manifest_version(&skill_path)
                 .await
                 .unwrap_or_else(|| "unknown".to_string());
@@ -750,7 +772,6 @@ impl Tool for HxSkillList {
                         },
                     )
                 } else {
-                    // Not in registry — read name from manifest or use dir name
                     let name = read_manifest_name(&skill_path)
                         .await
                         .unwrap_or_else(|| skill_id.clone());
@@ -763,6 +784,32 @@ impl Tool for HxSkillList {
                 "version": installed_ver,
                 "has_update": has_update,
                 "latest_version": latest_ver,
+                "source": "private",
+            }));
+        }
+
+        // 公共技能（标记 source=common，已可直接使用，无需安装）
+        for skill_id in &common_skill_ids {
+            let skill_path = self.common_skills_dir.as_ref().unwrap().join("skills").join(skill_id);
+            let installed_ver = read_manifest_version(&skill_path)
+                .await
+                .unwrap_or_else(|| "unknown".to_string());
+
+            let registry_name = if let Some(entry) = self.registry.find_skill(skill_id).await {
+                entry.name.clone()
+            } else {
+                read_manifest_name(&skill_path)
+                    .await
+                    .unwrap_or_else(|| skill_id.clone())
+            };
+
+            items.push(json!({
+                "id": skill_id,
+                "name": registry_name,
+                "version": installed_ver,
+                "has_update": false,
+                "latest_version": null,
+                "source": "common",
             }));
         }
 

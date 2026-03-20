@@ -388,6 +388,30 @@ impl TenantContext {
         ctx.is_guardian = false; // Admin is not guardian — it has its own tool permissions
         Ok(ctx)
     }
+
+    /// 桌面端专用：直接从 Agent 工作区加载，不需要 DB 查询。
+    ///
+    /// 桌面端是单用户模式，agent 所有者即当前登录用户，无需多用户 DB。
+    /// `user_id` 传空字符串，model/provider/template 等均从工作区 config.toml 读取。
+    pub async fn load_desktop(
+        agent_id: &str,
+        workspace_dir: PathBuf,
+        global_config: &crate::config::Config,
+    ) -> anyhow::Result<Self> {
+        Self::load(
+            agent_id,
+            "",         // 桌面端单用户，无 DB user_id
+            workspace_dir,
+            None,       // model：从工作区 config.toml 读取
+            None,       // provider：从工作区 config.toml 读取
+            None,       // template
+            None,       // nickname
+            None,       // star_name
+            None,       // plan
+            global_config,
+        )
+        .await
+    }
 }
 
 // ── Helpers ──────────────────────────────────────────────────

@@ -690,15 +690,18 @@ pub fn skills_to_prompt_with_mode(
     let mut prompt = match mode {
         crate::config::SkillsPromptInjectionMode::Full => String::from(
             "## Available Skills\n\n\
-             Skill instructions and tool metadata are preloaded below.\n\
-             Follow these instructions directly; do not read skill files at runtime unless the user asks.\n\n\
+             The following skills are ALREADY ACTIVE and ready to use — no installation needed.\n\
+             When a user request matches a skill, USE IT DIRECTLY by following its instructions.\n\
+             Do NOT call hx_skill_search or hx_skill_install for skills already listed here.\n\
+             Only use hx_skill_search/hx_skill_install when the user explicitly asks for a NEW capability not listed below.\n\n\
              <available_skills>\n",
         ),
         crate::config::SkillsPromptInjectionMode::Compact => String::from(
             "## Available Skills\n\n\
-             Skill summaries are preloaded below to keep context compact.\n\
-             Skill instructions are loaded on demand: call `read_skill(name)` with the skill's `<name>` when you need the full skill file.\n\
-             The `location` field is included for reference.\n\n\
+             The following skills are ALREADY ACTIVE and ready to use — no installation needed.\n\
+             When a user request matches a skill, USE IT DIRECTLY: call `read_skill(name)` to load the full instructions, then follow them.\n\
+             Do NOT call hx_skill_search or hx_skill_install for skills already listed here.\n\
+             Only use hx_skill_search/hx_skill_install when the user explicitly asks for a NEW capability not listed below.\n\n\
              <available_skills>\n",
         ),
     };
