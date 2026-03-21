@@ -262,7 +262,14 @@ impl Tool for ShellTool {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        if self.security.is_rate_limited() {
+        // 多租户：优先使用注入的 per-tenant security policy，回落到工具自身的全局策略。
+        #[cfg(feature = "huanxing")]
+        let security = crate::huanxing::skill_market_tools::tenant_security()
+            .unwrap_or_else(|| self.security.clone());
+        #[cfg(not(feature = "huanxing"))]
+        let security = self.security.clone();
+
+        if security.is_rate_limited() {
             return Ok(ToolResult {
                 success: false,
                 output: String::new(),
@@ -270,7 +277,7 @@ impl Tool for ShellTool {
             });
         }
 
-        match self.security.validate_command_execution(&command, approved) {
+        match security.validate_command_execution(&command, approved) {
             Ok(_) => {}
             Err(reason) => {
                 return Ok(ToolResult {
@@ -281,7 +288,7 @@ impl Tool for ShellTool {
             }
         }
 
-        if let Some(path) = self.security.forbidden_path_argument(&command) {
+        if let Some(path) = security.forbidden_path_argument(&command) {
             return Ok(ToolResult {
                 success: false,
                 output: String::new(),
@@ -289,7 +296,7 @@ impl Tool for ShellTool {
             });
         }
 
-        if !self.security.record_action() {
+        if !security.record_action() {
             return Ok(ToolResult {
                 success: false,
                 output: String::new(),
@@ -302,7 +309,7 @@ impl Tool for ShellTool {
         // (CWE-200), then re-add only safe, functional variables.
         let mut cmd = match self
             .runtime
-            .build_shell_command(&command, &self.security.workspace_dir)
+            .build_shell_command(&command, &security.workspace_dir)
         {
             Ok(cmd) => cmd,
             Err(e) => {
@@ -319,8 +326,8 @@ impl Tool for ShellTool {
         // 三层 .env 加载: config_dir/.env < workspace/.env < skill/.env < 进程环境变量
         // 仅白名单变量（SAFE_ENV_VARS + shell_env_passthrough）会被注入。
         let env_vars = resolve_env_vars(
-            &self.security,
-            Some(&self.security.workspace_dir),
+            &security,
+            Some(&security.workspace_dir),
             None, // skill_dir: shell 工具不知道 skill 上下文；skill 工具通过 SkillToolHandler 注入
         );
         for (key, val) in &env_vars {

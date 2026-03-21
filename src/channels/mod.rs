@@ -2617,12 +2617,17 @@ async fn process_channel_message(
     let elapsed_before_llm_ms = started_at.elapsed().as_millis() as u64;
     tracing::info!(elapsed_before_llm_ms, "⏱ Starting LLM call");
 
-    // HUANXING: 多租户模式——在 task-local scope 内注入 tenant workspace，
-    // 确保 skill_market_tools 操作的是 agent 自己的 skills/ 目录。
+    // HUANXING: 多租户模式——在 task-local scope 内注入 tenant workspace 和 security policy，
+    // 确保 skill_market_tools 和 shell/file 工具操作的是 agent 自己的配置。
     #[cfg(feature = "huanxing")]
     let tenant_workspace_for_scope = tenant_ctx
         .as_ref()
         .map(|t| t.workspace_dir.clone());
+
+    #[cfg(feature = "huanxing")]
+    let tenant_security_for_scope = tenant_ctx
+        .as_ref()
+        .and_then(|t| t.security.clone());
 
     macro_rules! run_tool_loop_future {
         () => {
@@ -2662,12 +2667,25 @@ async fn process_channel_message(
 
     #[cfg(feature = "huanxing")]
     let llm_result = if let Some(ws) = tenant_workspace_for_scope {
-        tokio::select! {
-            () = cancellation_token.cancelled() => LlmExecutionResult::Cancelled,
-            result = crate::huanxing::skill_market_tools::with_tenant_workspace(
-                ws,
-                run_tool_loop_future!(),
-            ) => LlmExecutionResult::Completed(result),
+        if let Some(sec) = tenant_security_for_scope {
+            // 有 per-tenant security policy：同时注入 workspace 和 security
+            tokio::select! {
+                () = cancellation_token.cancelled() => LlmExecutionResult::Cancelled,
+                result = crate::huanxing::skill_market_tools::with_tenant_context(
+                    ws,
+                    sec,
+                    run_tool_loop_future!(),
+                ) => LlmExecutionResult::Completed(result),
+            }
+        } else {
+            // 只有 workspace（无 autonomy 覆盖）
+            tokio::select! {
+                () = cancellation_token.cancelled() => LlmExecutionResult::Cancelled,
+                result = crate::huanxing::skill_market_tools::with_tenant_workspace(
+                    ws,
+                    run_tool_loop_future!(),
+                ) => LlmExecutionResult::Completed(result),
+            }
         }
     } else {
         tokio::select! {

@@ -58,6 +58,13 @@ impl Tool for FileEditTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing 'path' parameter"))?;
 
+        // 多租户：优先使用注入的 per-tenant security policy。
+        #[cfg(feature = "huanxing")]
+        let security = crate::huanxing::skill_market_tools::tenant_security()
+            .unwrap_or_else(|| self.security.clone());
+        #[cfg(not(feature = "huanxing"))]
+        let security = self.security.clone();
+
         let old_string = args
             .get("old_string")
             .and_then(|v| v.as_str())
@@ -77,7 +84,7 @@ impl Tool for FileEditTool {
         }
 
         // ── 2. Autonomy check ──────────────────────────────────────
-        if !self.security.can_act() {
+        if !security.can_act() {
             return Ok(ToolResult {
                 success: false,
                 output: String::new(),
@@ -86,7 +93,7 @@ impl Tool for FileEditTool {
         }
 
         // ── 3. Rate limit check ────────────────────────────────────
-        if self.security.is_rate_limited() {
+        if security.is_rate_limited() {
             return Ok(ToolResult {
                 success: false,
                 output: String::new(),
@@ -95,7 +102,7 @@ impl Tool for FileEditTool {
         }
 
         // ── 4. Path pre-validation ─────────────────────────────────
-        if !self.security.is_path_allowed(path) {
+        if !security.is_path_allowed(path) {
             return Ok(ToolResult {
                 success: false,
                 output: String::new(),
@@ -103,7 +110,7 @@ impl Tool for FileEditTool {
             });
         }
 
-        let full_path = self.security.resolve_tool_path(path);
+        let full_path = security.resolve_tool_path(path);
 
         // ── 5. Canonicalize parent ─────────────────────────────────
         let Some(parent) = full_path.parent() else {
@@ -126,12 +133,12 @@ impl Tool for FileEditTool {
         };
 
         // ── 6. Resolved path post-validation ───────────────────────
-        if !self.security.is_resolved_path_allowed(&resolved_parent) {
+        if !security.is_resolved_path_allowed(&resolved_parent) {
             return Ok(ToolResult {
                 success: false,
                 output: String::new(),
                 error: Some(
-                    self.security
+                    security
                         .resolved_path_violation_message(&resolved_parent),
                 ),
             });
@@ -147,12 +154,12 @@ impl Tool for FileEditTool {
 
         let resolved_target = resolved_parent.join(file_name);
 
-        if self.security.is_runtime_config_path(&resolved_target) {
+        if security.is_runtime_config_path(&resolved_target) {
             return Ok(ToolResult {
                 success: false,
                 output: String::new(),
                 error: Some(
-                    self.security
+                    security
                         .runtime_config_violation_message(&resolved_target),
                 ),
             });
@@ -173,7 +180,7 @@ impl Tool for FileEditTool {
         }
 
         // ── 8. Record action ───────────────────────────────────────
-        if !self.security.record_action() {
+        if !security.record_action() {
             return Ok(ToolResult {
                 success: false,
                 output: String::new(),

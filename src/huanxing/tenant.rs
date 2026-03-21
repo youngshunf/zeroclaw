@@ -16,6 +16,7 @@ use serde::Deserialize;
 use crate::channels::session_backend::SessionBackend;
 use crate::memory::{self, Memory};
 use crate::providers::ChatMessage;
+use crate::security::SecurityPolicy;
 
 // ── Workspace config.toml partial overlay ────────────────────
 //
@@ -34,6 +35,9 @@ struct WorkspaceOverrides {
     agent: AgentOverrides,
     #[serde(default)]
     memory: Option<MemoryOverrides>,
+    /// [autonomy] 节覆盖全局安全策略（allowed_commands / forbidden_paths 等）
+    #[serde(default)]
+    autonomy: Option<crate::config::AutonomyConfig>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -104,6 +108,11 @@ pub struct TenantContext {
 
     /// Per-tenant conversation histories (isolated from other tenants).
     pub conversation_histories: ConversationHistoryMap,
+
+    /// Per-tenant security policy built from workspace config.toml [autonomy] section.
+    /// Overrides the global SecurityPolicy for this tenant's shell/file tool calls.
+    /// None means no workspace-level override — tools fall back to global policy.
+    pub security: Option<Arc<SecurityPolicy>>,
 }
 
 // Manual Debug impl because Arc<dyn Memory> doesn't impl Debug.
@@ -258,6 +267,33 @@ impl TenantContext {
         // ── D. Independent conversation histories ────────────────────
         let conversation_histories: ConversationHistoryMap = Arc::new(Mutex::new(HashMap::new()));
 
+        // ── E. Per-tenant security policy from [autonomy] in workspace config.toml ──
+        // 以全局 autonomy 为基础，用 workspace config.toml 中的 [autonomy] 节覆盖。
+        // 若 workspace 没有 [autonomy] 节，则 tenant_security = None（工具回落到全局策略）。
+        let tenant_security: Option<Arc<SecurityPolicy>> =
+            overrides.autonomy.as_ref().map(|autonomy_override| {
+                let mut merged = global_config.autonomy.clone();
+                if !autonomy_override.allowed_commands.is_empty() {
+                    merged.allowed_commands = autonomy_override.allowed_commands.clone();
+                }
+                if !autonomy_override.forbidden_paths.is_empty() {
+                    merged.forbidden_paths = autonomy_override.forbidden_paths.clone();
+                }
+                if !autonomy_override.allowed_roots.is_empty() {
+                    merged.allowed_roots = autonomy_override.allowed_roots.clone();
+                }
+                merged.level = autonomy_override.level.clone();
+                merged.workspace_only = autonomy_override.workspace_only;
+                merged.block_high_risk_commands = autonomy_override.block_high_risk_commands;
+                if autonomy_override.max_actions_per_hour > 0 {
+                    merged.max_actions_per_hour = autonomy_override.max_actions_per_hour;
+                }
+                if autonomy_override.max_cost_per_day_cents > 0 {
+                    merged.max_cost_per_day_cents = autonomy_override.max_cost_per_day_cents;
+                }
+                Arc::new(SecurityPolicy::from_config(&merged, &workspace_dir))
+            });
+
         Ok(Self {
             agent_id: agent_id.to_string(),
             user_id: user_id.to_string(),
@@ -275,6 +311,7 @@ impl TenantContext {
             memory: tenant_memory,
             session_manager: tenant_session_manager,
             conversation_histories,
+            security: tenant_security,
         })
     }
 
@@ -356,6 +393,30 @@ impl TenantContext {
 
         let conversation_histories: ConversationHistoryMap = Arc::new(Mutex::new(HashMap::new()));
 
+        let guardian_security: Option<Arc<SecurityPolicy>> =
+            overrides.autonomy.as_ref().map(|autonomy_override| {
+                let mut merged = global_config.autonomy.clone();
+                if !autonomy_override.allowed_commands.is_empty() {
+                    merged.allowed_commands = autonomy_override.allowed_commands.clone();
+                }
+                if !autonomy_override.forbidden_paths.is_empty() {
+                    merged.forbidden_paths = autonomy_override.forbidden_paths.clone();
+                }
+                if !autonomy_override.allowed_roots.is_empty() {
+                    merged.allowed_roots = autonomy_override.allowed_roots.clone();
+                }
+                merged.level = autonomy_override.level.clone();
+                merged.workspace_only = autonomy_override.workspace_only;
+                merged.block_high_risk_commands = autonomy_override.block_high_risk_commands;
+                if autonomy_override.max_actions_per_hour > 0 {
+                    merged.max_actions_per_hour = autonomy_override.max_actions_per_hour;
+                }
+                if autonomy_override.max_cost_per_day_cents > 0 {
+                    merged.max_cost_per_day_cents = autonomy_override.max_cost_per_day_cents;
+                }
+                Arc::new(SecurityPolicy::from_config(&merged, &workspace_dir))
+            });
+
         Ok(Self {
             agent_id: "guardian".to_string(),
             user_id: String::new(),
@@ -373,6 +434,7 @@ impl TenantContext {
             memory: guardian_memory,
             session_manager: guardian_session_manager,
             conversation_histories,
+            security: guardian_security,
         })
     }
 

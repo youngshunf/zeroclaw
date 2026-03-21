@@ -54,7 +54,14 @@ impl Tool for FileReadTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing 'path' parameter"))?;
 
-        if self.security.is_rate_limited() {
+        // 多租户：优先使用注入的 per-tenant security policy。
+        #[cfg(feature = "huanxing")]
+        let security = crate::huanxing::skill_market_tools::tenant_security()
+            .unwrap_or_else(|| self.security.clone());
+        #[cfg(not(feature = "huanxing"))]
+        let security = self.security.clone();
+
+        if security.is_rate_limited() {
             return Ok(ToolResult {
                 success: false,
                 output: String::new(),
@@ -63,7 +70,7 @@ impl Tool for FileReadTool {
         }
 
         // Security check: validate path is within workspace
-        if !self.security.is_path_allowed(path) {
+        if !security.is_path_allowed(path) {
             return Ok(ToolResult {
                 success: false,
                 output: String::new(),
@@ -74,7 +81,7 @@ impl Tool for FileReadTool {
         // Record action BEFORE canonicalization so that every non-trivially-rejected
         // request consumes rate limit budget. This prevents attackers from probing
         // path existence (via canonicalize errors) without rate limit cost.
-        if !self.security.record_action() {
+        if !security.record_action() {
             return Ok(ToolResult {
                 success: false,
                 output: String::new(),
@@ -82,7 +89,7 @@ impl Tool for FileReadTool {
             });
         }
 
-        let full_path = self.security.resolve_tool_path(path);
+        let full_path = security.resolve_tool_path(path);
 
         // Resolve path before reading to block symlink escapes.
         let resolved_path = match tokio::fs::canonicalize(&full_path).await {
@@ -96,12 +103,12 @@ impl Tool for FileReadTool {
             }
         };
 
-        if !self.security.is_resolved_path_allowed(&resolved_path) {
+        if !security.is_resolved_path_allowed(&resolved_path) {
             return Ok(ToolResult {
                 success: false,
                 output: String::new(),
                 error: Some(
-                    self.security
+                    security
                         .resolved_path_violation_message(&resolved_path),
                 ),
             });

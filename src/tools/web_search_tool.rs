@@ -1,6 +1,5 @@
 use super::traits::{Tool, ToolResult};
 use crate::security::SecurityPolicy;
-use super::web_search_provider_routing::{resolve_web_search_provider, WebSearchProviderRoute};
 use async_trait::async_trait;
 use regex::Regex;
 use reqwest::StatusCode;
