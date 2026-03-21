@@ -30,7 +30,22 @@ import {
   type AgentInfo,
   type CreateAgentParams,
 } from '../lib/agent-api';
-import { AGENT_TEMPLATES, type AgentTemplate } from '../lib/agent-templates';
+import { AGENT_TEMPLATES, listAvailableTemplates } from '../lib/agent-templates';
+
+// ── 模板类型（兼容 hub 模板和本地模板）──────────────────────────
+
+interface AvailableTemplate {
+  id: string;
+  name: string;
+  description: string;
+  icon: string;
+  fromHub: boolean;
+  // 本地模板专有字段
+  model?: string;
+  temperature?: number;
+  soulMd?: string;
+  identityMd?: string;
+}
 
 // ── Create Agent Dialog ────────────────────────────────────────
 
@@ -41,26 +56,57 @@ interface CreateDialogProps {
 }
 
 function CreateAgentDialog({ open, onClose, onCreate }: CreateDialogProps) {
-  const [name, setName] = useState('');
-  const [selectedTemplate, setSelectedTemplate] = useState<AgentTemplate>(AGENT_TEMPLATES[0]);
+  const [displayName, setDisplayName] = useState('');
+  const [selectedId, setSelectedId] = useState('assistant');
+  const [templates, setTemplates] = useState<AvailableTemplate[]>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  // 每次打开时加载模板（优先 hub，失败回退本地）
+  useEffect(() => {
+    if (!open) return;
+    setTemplatesLoading(true);
+    listAvailableTemplates().then((list) => {
+      const enriched: AvailableTemplate[] = list.map((t) => {
+        if (!t.fromHub) {
+          const local = AGENT_TEMPLATES.find((l) => l.id === t.id);
+          return { ...t, model: local?.model, temperature: local?.temperature, soulMd: local?.soulMd, identityMd: local?.identityMd };
+        }
+        return t;
+      });
+      setTemplates(enriched);
+      if (enriched.length > 0) setSelectedId(enriched[0].id);
+    }).finally(() => setTemplatesLoading(false));
+  }, [open]);
+
   if (!open) return null;
+
+  const selectedTemplate = templates.find((t) => t.id === selectedId) ?? templates[0];
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setLoading(true);
     try {
-      await onCreate({
-        name: name.trim() || selectedTemplate.name,
-        model: selectedTemplate.model,
-        temperature: selectedTemplate.temperature,
-        soul_md: selectedTemplate.soulMd,
-        identity_md: selectedTemplate.identityMd,
-      });
-      setName('');
+      // name 是目录名（仅 [a-zA-Z0-9_-]），自动生成；display_name 是显示名，支持中文
+      const autoName = `${selectedTemplate?.id ?? 'agent'}-${Date.now().toString(36).slice(-4)}`;
+      const params: CreateAgentParams = {
+        name: autoName,
+        display_name: displayName.trim() || selectedTemplate?.name,
+        model: selectedTemplate?.model,
+        temperature: selectedTemplate?.temperature,
+      };
+
+      if (selectedTemplate?.fromHub) {
+        params.template = selectedTemplate.id;
+      } else {
+        params.soul_md = selectedTemplate?.soulMd;
+        params.identity_md = selectedTemplate?.identityMd;
+      }
+
+      await onCreate(params);
+      setDisplayName('');
       onClose();
     } catch (err: any) {
       setError(err.message || '创建失败');
@@ -88,45 +134,52 @@ function CreateAgentDialog({ open, onClose, onCreate }: CreateDialogProps) {
         )}
 
         <label className="mb-2 block text-sm text-gray-600">选择模板</label>
-        <div className="mb-4 grid grid-cols-3 gap-2">
-          {AGENT_TEMPLATES.map((tpl) => (
-            <button
-              key={tpl.id}
-              type="button"
-              onClick={() => {
-                setSelectedTemplate(tpl);
-                if (!name) setName('');
-              }}
-              className={[
-                'flex flex-col items-center gap-1 rounded-xl border p-3 text-center transition-all',
-                selectedTemplate.id === tpl.id
-                  ? 'border-[#7c3aed] bg-[#7c3aed]/15 text-[#7c3aed]'
-                  : 'border-gray-200 bg-[#FAFAFA]/60 text-gray-600 hover:border-[#7c3aed]',
-              ].join(' ')}
-            >
-              <span className="text-xl">{tpl.icon}</span>
-              <span className="text-xs font-medium">{tpl.name}</span>
-            </button>
-          ))}
-        </div>
+        {templatesLoading ? (
+          <div className="mb-4 flex items-center justify-center py-6">
+            <Loader2 className="h-5 w-5 animate-spin text-[#7c3aed]" />
+          </div>
+        ) : (
+          <div className="mb-4 grid grid-cols-3 gap-2">
+            {templates.map((tpl) => (
+              <button
+                key={tpl.id}
+                type="button"
+                onClick={() => setSelectedId(tpl.id)}
+                className={[
+                  'flex flex-col items-center gap-1 rounded-xl border p-3 text-center transition-all',
+                  selectedId === tpl.id
+                    ? 'border-[#7c3aed] bg-[#7c3aed]/15 text-[#7c3aed]'
+                    : 'border-gray-200 bg-[#FAFAFA]/60 text-gray-600 hover:border-[#7c3aed]',
+                ].join(' ')}
+              >
+                <span className="text-xl">{tpl.icon}</span>
+                <span className="text-xs font-medium">{tpl.name}</span>
+              </button>
+            ))}
+          </div>
+        )}
 
-        <p className="mb-4 text-xs text-gray-400">{selectedTemplate.description}</p>
+        {selectedTemplate && (
+          <p className="mb-4 text-xs text-gray-400">{selectedTemplate.description}</p>
+        )}
 
-        <label className="mb-1 block text-sm text-gray-600">名称（可选）</label>
+        <label className="mb-1 block text-sm text-gray-600">名称（可选，支持中文）</label>
         <input
           type="text"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder={selectedTemplate.name}
+          value={displayName}
+          onChange={(e) => setDisplayName(e.target.value)}
+          placeholder={selectedTemplate?.name ?? '给你的 Agent 起个名字'}
           className="mb-4 w-full rounded-lg border border-gray-300 bg-[#F9FAFB] px-3 py-2 text-gray-900 placeholder:text-gray-400 focus:border-[#7c3aed] focus:outline-none"
           autoFocus
         />
 
-        <div className="mb-4 flex items-center gap-2 text-xs text-gray-400">
-          <span>模型: {selectedTemplate.model}</span>
-          <span>·</span>
-          <span>温度: {selectedTemplate.temperature}</span>
-        </div>
+        {selectedTemplate?.model && (
+          <div className="mb-4 flex items-center gap-2 text-xs text-gray-400">
+            <span>模型: {selectedTemplate.model}</span>
+            <span>·</span>
+            <span>温度: {selectedTemplate.temperature}</span>
+          </div>
+        )}
 
         <div className="flex justify-end gap-3">
           <button
@@ -138,7 +191,7 @@ function CreateAgentDialog({ open, onClose, onCreate }: CreateDialogProps) {
           </button>
           <button
             type="submit"
-            disabled={loading}
+            disabled={loading || templatesLoading}
             className="flex items-center gap-2 rounded-lg bg-[#7c3aed] px-4 py-2 text-sm font-medium text-white hover:bg-[#6d28d9] disabled:opacity-50"
           >
             {loading && <Loader2 className="h-4 w-4 animate-spin" />}
