@@ -11,7 +11,7 @@ mod sidecar;
 use commands::{auth, hasn, zeroclaw};
 use sidecar::SidecarManager;
 use std::sync::Arc;
-use tauri::{Emitter, Manager};
+use tauri::Emitter;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {

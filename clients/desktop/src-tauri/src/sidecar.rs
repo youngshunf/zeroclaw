@@ -1182,29 +1182,6 @@ enabled = ["web_search", "file_read", "file_write", "shell"]
     )
 }
 
-/// Agent 身份文件
-fn generate_identity_md(name: &str, user_uuid: Option<&str>) -> String {
-    format!(
-        r#"# {name}
-
-你是唤星 AI 平台上的个人 AI 助手。
-
-## 你的身份
-- 名字: {name}
-- 平台: 唤星 AI
-- 用户 ID: {user_id}
-
-## 行为准则
-- 保持友好专业的态度
-- 简洁明了地回答问题
-- 遇到不确定的事情如实说明
-- 保护用户隐私
-"#,
-        name = name,
-        user_id = user_uuid.unwrap_or("未知"),
-    )
-}
-
 /// 简易时间戳（不依赖 chrono crate）
 fn chrono_now() -> String {
     let d = std::time::SystemTime::now()

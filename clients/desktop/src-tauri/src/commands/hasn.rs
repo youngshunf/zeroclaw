@@ -37,7 +37,7 @@ pub async fn get_conversations() -> Result<Vec<Conversation>, String> {
 }
 
 #[tauri::command]
-pub async fn get_messages(conversation_id: String) -> Result<Vec<Message>, String> {
+pub async fn get_messages(_conversation_id: String) -> Result<Vec<Message>, String> {
     // TODO: Phase 2
     Ok(vec![])
 }
@@ -50,7 +50,7 @@ pub async fn send_message(to: String, content: String) -> Result<Message, String
 }
 
 #[tauri::command]
-pub async fn mark_conversation_read(conversation_id: String) -> Result<(), String> {
+pub async fn mark_conversation_read(_conversation_id: String) -> Result<(), String> {
     // TODO: Phase 2
     Ok(())
 }
@@ -62,7 +62,7 @@ pub async fn get_contacts() -> Result<Vec<Contact>, String> {
 }
 
 #[tauri::command]
-pub async fn send_friend_request(star_id: String, message: Option<String>) -> Result<(), String> {
+pub async fn send_friend_request(star_id: String, _message: Option<String>) -> Result<(), String> {
     // TODO: Phase 2
     tracing::info!("send_friend_request to={}", star_id);
     Err("好友请求待实现 (Phase 2)".into())

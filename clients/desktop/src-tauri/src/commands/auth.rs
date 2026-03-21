@@ -11,7 +11,7 @@ pub struct AuthState {
 }
 
 #[tauri::command]
-pub async fn login(phone: String, code: String) -> Result<AuthState, String> {
+pub async fn login(phone: String, _code: String) -> Result<AuthState, String> {
     // TODO: Phase 1 实现
     // 1. 验证手机号+验证码
     // 2. 获取 JWT + HASN token
