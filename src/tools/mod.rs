@@ -879,7 +879,7 @@ pub fn all_tools_with_runtime(
                     let router = std::sync::Arc::new(router);
                     let agents_dir = root_config
                         .huanxing
-                        .resolve_agents_dir(&root_config.workspace_dir);
+                        .resolve_agents_dir(root_config.config_path.parent().unwrap_or(&root_config.workspace_dir));
                     let common_skills_dir = root_config
                         .huanxing
                         .resolve_common_skills_dir(&root_config.workspace_dir);
@@ -1021,7 +1021,7 @@ pub fn all_tools_with_runtime(
                     let hasn_url = root_config.huanxing.hasn_url().to_string();
                     let agents_dir_hasn = root_config
                         .huanxing
-                        .resolve_agents_dir(&root_config.workspace_dir);
+                        .resolve_agents_dir(root_config.config_path.parent().unwrap_or(&root_config.workspace_dir));
                     tool_arcs.push(Arc::new(crate::huanxing::hasn_tools::HasnSend::new(
                         hx_api.clone().unwrap_or_else(|| {
                             crate::huanxing::ApiClient::new(
@@ -1057,7 +1057,7 @@ pub fn all_tools_with_runtime(
                     if let Some(ref registry) = hub_registry {
                         let agents_dir_market = root_config
                             .huanxing
-                            .resolve_agents_dir(&root_config.workspace_dir);
+                            .resolve_agents_dir(root_config.config_path.parent().unwrap_or(&root_config.workspace_dir));
                         let router_slot = crate::huanxing::skill_market_tools::new_router_slot();
                         // 将 TenantRouter 注入 slot，使 skill 工具安装/卸载后能正确失效缓存
                         let _ = router_slot.set(Arc::clone(&router));
@@ -1111,7 +1111,7 @@ pub fn all_tools_with_runtime(
                     {
                         let agents_dir_secret = root_config
                             .huanxing
-                            .resolve_agents_dir(&root_config.workspace_dir);
+                            .resolve_agents_dir(root_config.config_path.parent().unwrap_or(&root_config.workspace_dir));
                         tool_arcs.push(Arc::new(crate::huanxing::secret_tools::HxSetSecret {
                             workspace_dir: agents_dir_secret.clone(),
                         }));

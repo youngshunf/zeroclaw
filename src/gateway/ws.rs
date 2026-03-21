@@ -273,7 +273,7 @@ async fn handle_socket(socket: WebSocket, state: AppState, default_session_id: O
                     let backend = if let Some(ref aname) = agent_name {
                         let config = state.config.lock().clone();
                         if config.huanxing.enabled {
-                            let agents_dir = config.huanxing.resolve_agents_dir(&config.workspace_dir);
+                            let agents_dir = config.huanxing.resolve_agents_dir(config.config_path.parent().unwrap_or(&config.workspace_dir));
                             let user_workspace = agents_dir.join(aname);
                             if user_workspace.exists() {
                                 crate::huanxing::tenant::create_session_backend_for_workspace(
@@ -351,7 +351,7 @@ fn init_agent_session(
     ) = {
         if config.huanxing.enabled {
             if let Some(agent_id) = _agent_name {
-                let agents_dir = config.huanxing.resolve_agents_dir(&config.workspace_dir);
+                let agents_dir = config.huanxing.resolve_agents_dir(config.config_path.parent().unwrap_or(&config.workspace_dir));
                 let user_workspace = agents_dir.join(agent_id);
                 if user_workspace.exists() {
                     let backend = crate::huanxing::tenant::create_session_backend_for_workspace(

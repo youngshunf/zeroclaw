@@ -181,10 +181,13 @@ impl HuanXingConfig {
     }
 
     /// Resolve the agents directory.
-    pub fn resolve_agents_dir(&self, workspace_dir: &std::path::Path) -> PathBuf {
+    ///
+    /// 默认值为 `config_dir/agents`（即 `~/.huanxing/agents`），
+    /// 而不是 `workspace_dir/agents`（workspace 是 ZeroClaw 原版单 Agent 工作区）。
+    pub fn resolve_agents_dir(&self, config_dir: &std::path::Path) -> PathBuf {
         self.agents_dir
             .clone()
-            .unwrap_or_else(|| workspace_dir.join("agents"))
+            .unwrap_or_else(|| config_dir.join("agents"))
     }
 
     /// Resolve the guardian workspace.

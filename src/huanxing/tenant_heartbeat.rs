@@ -309,7 +309,10 @@ impl TenantHeartbeatManager {
             PathBuf::from(ws)
         } else {
             let hx = &self.config.huanxing;
-            hx.resolve_agents_dir(&self.config.workspace_dir)
+            let config_dir = self.config.config_path.parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| self.config.workspace_dir.clone());
+            hx.resolve_agents_dir(&config_dir)
                 .join(&tenant.agent_id)
         }
     }

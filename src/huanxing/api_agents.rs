@@ -122,7 +122,7 @@ async fn list_agents(State(state): State<AppState>) -> impl IntoResponse {
         return (StatusCode::OK, Json(AgentListResponse { agents: vec![], current: String::new() })).into_response();
     }
 
-    let agents_dir = config.huanxing.resolve_agents_dir(&config.workspace_dir);
+    let agents_dir = config.huanxing.resolve_agents_dir(config.config_path.parent().unwrap_or(&config.workspace_dir));
 
     let mut agents: Vec<AgentInfo> = Vec::new();
 
@@ -181,7 +181,7 @@ async fn create_agent(
             .into_response();
     }
 
-    let agents_dir = config.huanxing.resolve_agents_dir(&config.workspace_dir);
+    let agents_dir = config.huanxing.resolve_agents_dir(config.config_path.parent().unwrap_or(&config.workspace_dir));
     let workspace = agents_dir.join(&req.name);
 
     // 检查是否已存在
@@ -266,7 +266,7 @@ async fn delete_agent(
             .into_response();
     }
 
-    let agents_dir = config.huanxing.resolve_agents_dir(&config.workspace_dir);
+    let agents_dir = config.huanxing.resolve_agents_dir(config.config_path.parent().unwrap_or(&config.workspace_dir));
     let workspace = agents_dir.join(&name);
 
     if !workspace.exists() {
@@ -296,7 +296,7 @@ async fn list_files(
     Path(name): Path<String>,
 ) -> impl IntoResponse {
     let config = state.config.lock().clone();
-    let agents_dir = config.huanxing.resolve_agents_dir(&config.workspace_dir);
+    let agents_dir = config.huanxing.resolve_agents_dir(config.config_path.parent().unwrap_or(&config.workspace_dir));
     let workspace = agents_dir.join(&name);
 
     if !workspace.exists() {
@@ -326,7 +326,7 @@ async fn read_file(
     Path((name, filename)): Path<(String, String)>,
 ) -> impl IntoResponse {
     let config = state.config.lock().clone();
-    let agents_dir = config.huanxing.resolve_agents_dir(&config.workspace_dir);
+    let agents_dir = config.huanxing.resolve_agents_dir(config.config_path.parent().unwrap_or(&config.workspace_dir));
     let file_path = agents_dir.join(&name).join(&filename);
 
     // 防止路径遍历
@@ -360,7 +360,7 @@ async fn write_file(
     body: Bytes,
 ) -> impl IntoResponse {
     let config = state.config.lock().clone();
-    let agents_dir = config.huanxing.resolve_agents_dir(&config.workspace_dir);
+    let agents_dir = config.huanxing.resolve_agents_dir(config.config_path.parent().unwrap_or(&config.workspace_dir));
     let workspace = agents_dir.join(&name);
 
     // 防止路径遍历

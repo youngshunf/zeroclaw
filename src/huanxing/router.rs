@@ -125,7 +125,10 @@ impl TenantRouter {
         // 2. Cache miss — query DB.
         match self.db.find_by_channel(channel, sender_id).await {
             Ok(Some(record)) => {
-                let agents_dir = self.config.resolve_agents_dir(&self.workspace_dir);
+                let config_dir = self.global_config.config_path.parent()
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_else(|| self.workspace_dir.clone());
+                let agents_dir = self.config.resolve_agents_dir(&config_dir);
                 let tenant_workspace = agents_dir.join(&record.agent_id);
 
                 match TenantContext::load(
