@@ -25,6 +25,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use crate::gateway::AppState;
+use crate::huanxing::templates::{TemplateEngine, UserInfo, WorkspaceVariant};
 
 // ── 数据结构 ──────────────────────────────────────────────
 
@@ -57,27 +58,14 @@ pub struct AgentListResponse {
 pub struct CreateAgentRequest {
     /// Agent 目录名（只允许 [a-zA-Z0-9_-]，长度 ≤ 32）
     pub name: String,
-    /// 显示名称
+    /// 显示名称（用于 config.toml display_name 和 {{star_name}} 占位符）
     pub display_name: Option<String>,
-    /// 模型名称
-    pub model: Option<String>,
-    /// 温度
-    pub temperature: Option<f64>,
-    /// Hub 模板 ID（从 hub/templates/ 加载）
+    /// Hub 模板 ID（从 hub/templates/ 加载），默认 "_base"
     pub template: Option<String>,
-    /// 覆盖写入 SOUL.md（优先于 template）
-    pub soul_md: Option<String>,
-    /// 覆盖写入 IDENTITY.md
-    pub identity_md: Option<String>,
-    /// 覆盖写入 AGENTS.md
-    pub agents_md: Option<String>,
-    /// 覆盖写入 USER.md
-    pub user_md: Option<String>,
-    /// 覆盖写入 TOOLS.md
-    pub tools_md: Option<String>,
     /// Provider API key（来自用户登录 session 的 llm_token）
+    /// 仅云端多租户使用；桌面端此字段忽略（继承全局配置）
     pub api_key: Option<String>,
-    /// Provider base URL
+    /// Provider base URL（仅云端多租户使用）
     pub base_url: Option<String>,
 }
 
@@ -165,7 +153,7 @@ async fn list_agents(State(state): State<AppState>) -> impl IntoResponse {
     (StatusCode::OK, Json(response)).into_response()
 }
 
-/// POST /api/agents — 创建新 Agent
+/// POST /api/agents — 从 hub 模板创建桌面端 Agent
 async fn create_agent(
     State(state): State<AppState>,
     Json(req): Json<CreateAgentRequest>,
@@ -181,7 +169,8 @@ async fn create_agent(
             .into_response();
     }
 
-    let agents_dir = config.huanxing.resolve_agents_dir(config.config_path.parent().unwrap_or(&config.workspace_dir));
+    let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
+    let agents_dir = config.huanxing.resolve_agents_dir(config_dir);
     let workspace = agents_dir.join(&req.name);
 
     // 检查是否已存在
@@ -193,62 +182,57 @@ async fn create_agent(
             .into_response();
     }
 
-    // 创建工作区目录
-    if let Err(e) = tokio::fs::create_dir_all(&workspace).await {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": format!("创建工作区目录失败: {e}")})),
-        )
-            .into_response();
-    }
+    // 确定 hub 模板目录
+    let hub_dir = config.huanxing.resolve_hub_dir()
+        .unwrap_or_else(|| config.workspace_dir.join("hub"));
+    let templates_dir = hub_dir.join("templates");
 
-    // 确定各工作区文件内容：优先 request 直传 > hub 模板 > 内置默认
-    let template_files = if let Some(ref tmpl) = req.template {
-        load_hub_template_files(&config, tmpl).await
-    } else {
-        TemplateFiles::default()
+    let template_id = req.template.as_deref().unwrap_or("_base");
+    let display_name = req.display_name.as_deref().unwrap_or(&req.name);
+
+    let user_info = UserInfo {
+        nickname: display_name,
+        phone: "",
+        star_name: display_name,
+        user_id: &req.name,
+        agent_id: &req.name,
+        template: template_id,
     };
 
-    // 写入工作区文件
-    let files: &[(&str, Option<&str>, &str)] = &[
-        ("SOUL.md", req.soul_md.as_deref().or(template_files.soul_md.as_deref()), DEFAULT_SOUL_MD),
-        ("IDENTITY.md", req.identity_md.as_deref().or(template_files.identity_md.as_deref()), DEFAULT_IDENTITY_MD),
-        ("AGENTS.md", req.agents_md.as_deref().or(template_files.agents_md.as_deref()), DEFAULT_AGENTS_MD),
-        ("USER.md", req.user_md.as_deref().or(template_files.user_md.as_deref()), DEFAULT_USER_MD),
-        ("TOOLS.md", req.tools_md.as_deref().or(template_files.tools_md.as_deref()), DEFAULT_TOOLS_MD),
-        ("MEMORY.md", None, DEFAULT_MEMORY_MD),
-    ];
+    let engine = TemplateEngine::new(templates_dir);
 
-    for (filename, custom, default) in files {
-        let content = custom.unwrap_or(default);
-        let path = workspace.join(filename);
-        if let Err(e) = tokio::fs::write(&path, content).await {
-            tracing::warn!(path = %path.display(), "写入工作区文件失败: {e}");
+    match engine
+        .create_workspace(&workspace, &user_info, None, None, WorkspaceVariant::Desktop)
+        .await
+    {
+        Ok(files) => {
+            tracing::info!(
+                name = req.name,
+                workspace = %workspace.display(),
+                template = template_id,
+                files = files.len(),
+                "桌面端 Agent 工作区创建完成"
+            );
+            (
+                StatusCode::CREATED,
+                Json(CreateAgentResponse {
+                    status: "ok".to_string(),
+                    name: req.name.clone(),
+                    config_dir: workspace.to_string_lossy().to_string(),
+                }),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            // 创建失败时清理已创建的目录
+            let _ = tokio::fs::remove_dir_all(&workspace).await;
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": format!("创建工作区失败: {e}")})),
+            )
+                .into_response()
         }
     }
-
-    // 写入 config.toml
-    let config_content = build_workspace_config_toml(&req);
-    if let Err(e) = tokio::fs::write(workspace.join("config.toml"), &config_content).await {
-        tracing::warn!(workspace = %workspace.display(), "写入 config.toml 失败: {e}");
-    }
-
-    tracing::info!(
-        name = req.name,
-        workspace = %workspace.display(),
-        template = req.template.as_deref().unwrap_or("default"),
-        "Agent 工作区创建完成"
-    );
-
-    (
-        StatusCode::CREATED,
-        Json(CreateAgentResponse {
-            status: "ok".to_string(),
-            name: req.name.clone(),
-            config_dir: workspace.to_string_lossy().to_string(),
-        }),
-    )
-        .into_response()
 }
 
 /// DELETE /api/agents/:name — 删除 Agent 工作区
@@ -385,13 +369,13 @@ async fn write_file(
 
 // ── 辅助函数 ──────────────────────────────────────────────
 
-/// 校验 agent name 只包含 [a-zA-Z0-9_-] 且长度 ≤ 32
+/// 校验 agent name：允许中文、字母、数字、下划线、连字符，长度 ≤ 32 字符（UTF-8）
 fn is_valid_agent_name(name: &str) -> bool {
     !name.is_empty()
-        && name.len() <= 32
+        && name.chars().count() <= 32
         && name
             .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
 }
 
 /// 从工作区目录加载 config.toml 的部分字段
@@ -403,152 +387,3 @@ async fn load_workspace_config(workspace: &std::path::Path) -> WorkspaceConfig {
     toml::from_str(&content).unwrap_or_default()
 }
 
-/// 从 hub 模板目录加载工作区文件内容
-async fn load_hub_template_files(
-    config: &crate::config::Config,
-    template_id: &str,
-) -> TemplateFiles {
-    let hub_dir = match config.huanxing.resolve_hub_dir() {
-        Some(d) => d,
-        None => {
-            // hub_dir 未配置，尝试默认路径
-            config.workspace_dir.join("hub")
-        }
-    };
-
-    let template_dir = hub_dir.join("templates").join(template_id);
-    if !template_dir.exists() {
-        // 尝试 _base 基础模板
-        let base_dir = hub_dir.join("templates").join("_base");
-        if !base_dir.exists() {
-            return TemplateFiles::default();
-        }
-        return load_template_dir(&base_dir).await;
-    }
-
-    // 先加载 _base，再用 template 文件覆盖
-    let base_dir = hub_dir.join("templates").join("_base");
-    let mut files = if base_dir.exists() {
-        load_template_dir(&base_dir).await
-    } else {
-        TemplateFiles::default()
-    };
-
-    let tmpl_files = load_template_dir(&template_dir).await;
-    if tmpl_files.soul_md.is_some() { files.soul_md = tmpl_files.soul_md; }
-    if tmpl_files.identity_md.is_some() { files.identity_md = tmpl_files.identity_md; }
-    if tmpl_files.agents_md.is_some() { files.agents_md = tmpl_files.agents_md; }
-    if tmpl_files.user_md.is_some() { files.user_md = tmpl_files.user_md; }
-    if tmpl_files.tools_md.is_some() { files.tools_md = tmpl_files.tools_md; }
-
-    files
-}
-
-/// 从目录加载模板文件
-async fn load_template_dir(dir: &std::path::Path) -> TemplateFiles {
-    let read = |name: &str| {
-        let path = dir.join(name);
-        async move { tokio::fs::read_to_string(path).await.ok() }
-    };
-
-    TemplateFiles {
-        soul_md: read("SOUL.md").await,
-        identity_md: read("IDENTITY.md").await,
-        agents_md: read("AGENTS.md").await,
-        user_md: read("USER.md").await,
-        tools_md: read("TOOLS.md").await,
-    }
-}
-
-/// 从 CreateAgentRequest 生成 config.toml 内容
-fn build_workspace_config_toml(req: &CreateAgentRequest) -> String {
-    let mut lines: Vec<String> = Vec::new();
-
-    if let Some(ref name) = req.display_name {
-        lines.push(format!("display_name = {:?}", name));
-    }
-    if let Some(ref model) = req.model {
-        lines.push(format!("default_model = {:?}", model));
-    }
-    if let Some(temp) = req.temperature {
-        lines.push(format!("default_temperature = {temp}"));
-    }
-    if let Some(ref key) = req.api_key {
-        lines.push(format!("api_key = {:?}", key));
-    }
-    if let Some(ref url) = req.base_url {
-        // base_url 存到 [llm] section
-        lines.push(String::new());
-        lines.push("[llm]".to_string());
-        lines.push(format!("base_url = {:?}", url));
-    }
-
-    lines.join("\n")
-}
-
-// ── 模板文件持有者 ──────────────────────────────────────
-
-#[derive(Default)]
-struct TemplateFiles {
-    soul_md: Option<String>,
-    identity_md: Option<String>,
-    agents_md: Option<String>,
-    user_md: Option<String>,
-    tools_md: Option<String>,
-}
-
-// ── 内置默认工作区文件 ────────────────────────────────────
-
-const DEFAULT_SOUL_MD: &str = r#"# SOUL.md
-
-你是一个友好、高效的 AI 助手。你善于倾听，回答清晰，能处理各种问题。
-
-## 性格特点
-- 真诚、有耐心、乐于助人
-- 回答简洁，有条理
-- 善于总结和组织信息
-
-## 行为边界
-- 保护用户隐私
-- 诚实表达不确定性
-- 拒绝有害请求
-"#;
-
-const DEFAULT_IDENTITY_MD: &str = r#"# IDENTITY.md
-
-- **Platform:** 唤星 AI
-- **Version:** 1.0
-"#;
-
-const DEFAULT_AGENTS_MD: &str = r#"# AGENTS.md
-
-## 基本原则
-
-1. 始终以用户利益为优先
-2. 保持诚实，不夸大能力
-3. 遇到不确定的问题，主动说明
-4. 保护用户隐私，不泄露敏感信息
-"#;
-
-const DEFAULT_USER_MD: &str = r#"# USER.md
-
-## 用户信息
-
-暂无用户信息记录。
-"#;
-
-const DEFAULT_TOOLS_MD: &str = r#"# TOOLS.md
-
-## 工具使用规范
-
-- 只在必要时使用工具
-- 使用工具前说明用途
-- 工具执行失败时优雅降级
-"#;
-
-const DEFAULT_MEMORY_MD: &str = r#"# MEMORY.md
-
-## 长期记忆
-
-暂无记忆记录。
-"#;

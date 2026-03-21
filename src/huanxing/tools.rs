@@ -11,7 +11,7 @@ use super::registry::RegistryLoader;
 use crate::huanxing::api_client::ApiClient;
 use crate::huanxing::db::TenantDb;
 use crate::huanxing::router::TenantRouter;
-use crate::huanxing::templates::{TemplateEngine, UserInfo};
+use crate::huanxing::templates::{TemplateEngine, UserInfo, WorkspaceVariant};
 use crate::tools::traits::{Tool, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
@@ -384,7 +384,7 @@ impl Tool for HxRegisterUser {
 
         match self
             .template_engine
-            .create_workspace(&workspace, &user_info, provider, api_key)
+            .create_workspace(&workspace, &user_info, provider, api_key, WorkspaceVariant::Cloud)
             .await
         {
             Ok(files) => {

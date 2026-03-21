@@ -110,6 +110,23 @@ pub struct OnboardingConfig {
 }
 
 // ═══════════════════════════════════════════════════════
+// Workspace variant
+// ═══════════════════════════════════════════════════════
+
+/// Determines which config.toml template is used when creating a workspace.
+///
+/// - `Cloud`: multi-tenant server deployment — writes `api_key`, `default_provider`,
+///   security restrictions. Uses `_base/config.toml.template`.
+/// - `Desktop`: single-user desktop deployment — inherits LLM credentials from the
+///   global `config.toml`; only writes `display_name`, `default_model`, `default_temperature`.
+///   Uses `_base_desktop/config.toml.template`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum WorkspaceVariant {
+    Cloud,
+    Desktop,
+}
+
+// ═══════════════════════════════════════════════════════
 // Template engine
 // ═══════════════════════════════════════════════════════
 
@@ -228,13 +245,14 @@ impl TemplateEngine {
     /// 1. Create workspace directory structure
     /// 2. Copy ALL _base files → overlay with template-specific files → then def.files extras
     /// 3. Install skills from hub registry (or fallback to template dir scanning)
-    /// 4. Generate per-agent config.toml
+    /// 4. Generate per-agent config.toml (cloud vs desktop variant)
     pub async fn create_workspace(
         &self,
         workspace_dir: &Path,
         user_info: &UserInfo<'_>,
         provider: Option<&str>,
         api_key: Option<&str>,
+        variant: WorkspaceVariant,
     ) -> Result<Vec<String>> {
         let template_name = user_info.template;
         let def = self.load_definition(template_name)?;
@@ -347,8 +365,8 @@ impl TemplateEngine {
         // 3. Install skills
         let installed_skills = self.install_skills(workspace_dir, &def).await?;
 
-        // 5. Generate per-agent config.toml
-        self.generate_agent_config(workspace_dir, &def, provider, api_key)
+        // 4. Generate per-agent config.toml (variant-specific)
+        self.generate_agent_config(workspace_dir, &def, provider, api_key, variant, user_info)
             .await?;
         created_files.push("config.toml".to_string());
 
@@ -505,45 +523,72 @@ impl TemplateEngine {
     }
 
     /// Generate per-agent config.toml from template.
+    ///
+    /// - `Cloud`: uses `_base/config.toml.template` — writes api_key, provider, permissions.
+    /// - `Desktop`: uses `_base_desktop/config.toml.template` — only writes display_name,
+    ///   model, temperature. LLM credentials stay in the global config.toml.
     async fn generate_agent_config(
         &self,
         workspace_dir: &Path,
         def: &TemplateDefinition,
         provider: Option<&str>,
         api_key: Option<&str>,
+        variant: WorkspaceVariant,
+        user_info: &UserInfo<'_>,
     ) -> Result<()> {
         let model = if def.model.is_empty() {
             "claude-sonnet-4-6"
         } else {
-            // Strip "anthropic/" prefix if present
             def.model.strip_prefix("anthropic/").unwrap_or(&def.model)
         };
-
-        let provider_str = provider.ok_or_else(|| {
-            anyhow::anyhow!("default_provider not configured in [huanxing] section of config.toml")
-        })?;
-        let api_key_str = api_key.unwrap_or("");
         let temperature = def
             .temperature
             .map(|t| t.to_string())
             .unwrap_or_else(|| "0.7".to_string());
 
-        // Try to read the config template
-        let template_path = self.templates_dir.join("_base/config.toml.template");
-        let config = if template_path.exists() {
-            let template_content = tokio::fs::read_to_string(&template_path).await?;
-            template_content
-                .replace("{{default_provider}}", provider_str)
-                .replace("{{default_model}}", model)
-                .replace("{{default_temperature}}", &temperature)
-                .replace("{{api_key}}", api_key_str)
-        } else {
-            tracing::warn!(
-                "Config template not found at {}, using minimal fallback",
-                template_path.display()
-            );
-            format!(
-                r#"default_provider = "{provider_str}"
+        let config = match variant {
+            WorkspaceVariant::Desktop => {
+                // 桌面端：只写 display_name / model / temperature，继承全局 LLM 配置
+                let template_path = self.templates_dir.join("_base_desktop/config.toml.template");
+                if template_path.exists() {
+                    let tmpl = tokio::fs::read_to_string(&template_path).await?;
+                    self.substitute_placeholders(&tmpl, user_info)
+                        .replace("{{default_model}}", model)
+                        .replace("{{default_temperature}}", &temperature)
+                } else {
+                    tracing::warn!(
+                        "桌面端 config 模板不存在: {}，使用内置回退",
+                        template_path.display()
+                    );
+                    format!(
+                        "display_name = {:?}\ndefault_model = \"{model}\"\ndefault_temperature = {temperature}\n",
+                        user_info.star_name
+                    )
+                }
+            }
+            WorkspaceVariant::Cloud => {
+                // 云端：必须有 provider，写入完整 LLM 配置
+                let provider_str = provider.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "default_provider not configured in [huanxing] section of config.toml"
+                    )
+                })?;
+                let api_key_str = api_key.unwrap_or("");
+
+                let template_path = self.templates_dir.join("_base/config.toml.template");
+                if template_path.exists() {
+                    let tmpl = tokio::fs::read_to_string(&template_path).await?;
+                    tmpl.replace("{{default_provider}}", provider_str)
+                        .replace("{{default_model}}", model)
+                        .replace("{{default_temperature}}", &temperature)
+                        .replace("{{api_key}}", api_key_str)
+                } else {
+                    tracing::warn!(
+                        "云端 config 模板不存在: {}，使用内置回退",
+                        template_path.display()
+                    );
+                    format!(
+                        r#"default_provider = "{provider_str}"
 default_model = "{model}"
 default_temperature = {temperature}
 api_key = "{api_key_str}"
@@ -557,7 +602,9 @@ max_messages = 100
 [memory]
 auto_save = true
 "#
-            )
+                    )
+                }
+            }
         };
 
         tokio::fs::write(workspace_dir.join("config.toml"), config).await?;
