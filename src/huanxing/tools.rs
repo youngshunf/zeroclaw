@@ -1611,7 +1611,8 @@ impl Tool for HxTts {
                 // Write to temp file and return path marker for channel layer to pick up
                 let tmp_dir = std::env::temp_dir().join("zeroclaw-tts");
                 let _ = std::fs::create_dir_all(&tmp_dir);
-                let filename = format!("{}.opus", uuid::Uuid::new_v4());
+                let ext = &self.tts_config.default_format;
+                let filename = format!("{}.{ext}", uuid::Uuid::new_v4());
                 let tmp_path = tmp_dir.join(&filename);
 
                 if let Err(e) = std::fs::write(&tmp_path, &audio_bytes) {
