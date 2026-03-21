@@ -105,10 +105,10 @@ struct WorkspaceConfig {
 pub fn agent_routes() -> Router<AppState> {
     Router::new()
         .route("/api/agents", get(list_agents).post(create_agent))
-        .route("/api/agents/:name", delete(delete_agent))
-        .route("/api/agents/:name/files", get(list_files))
+        .route("/api/agents/{name}", delete(delete_agent))
+        .route("/api/agents/{name}/files", get(list_files))
         .route(
-            "/api/agents/:name/files/:filename",
+            "/api/agents/{name}/files/{filename}",
             get(read_file).put(write_file),
         )
 }

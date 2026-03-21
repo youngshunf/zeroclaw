@@ -27,11 +27,13 @@
 //! serves all tenants. Only the agent context (prompt, memory, workspace)
 //! is per-tenant.
 
+pub mod api_agents;
 pub mod api_client;
 pub mod config;
 pub mod db;
 pub mod doc_tools;
 pub mod hasn_tools;
+pub mod hub_sync;
 pub mod permissions;
 pub mod registry;
 pub mod router;

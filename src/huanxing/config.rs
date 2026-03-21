@@ -92,6 +92,10 @@ pub struct HuanXingConfig {
     /// When set, enables registry-based skill loading and marketplace tools.
     pub hub_dir: Option<PathBuf>,
 
+    /// Hub Gitee 同步配置。
+    #[serde(default)]
+    pub hub_sync: HubSyncConfig,
+
     /// Multi-tenant heartbeat configuration.
     #[serde(default)]
     pub tenant_heartbeat: TenantHeartbeatConfig,
@@ -162,6 +166,7 @@ impl Default for HuanXingConfig {
             backup_dir: None,
             common_skills_dir: None,
             hub_dir: None,
+            hub_sync: HubSyncConfig::default(),
             tenant_heartbeat: TenantHeartbeatConfig::default(),
         }
     }
@@ -290,4 +295,35 @@ pub struct NapcatConfig {
     /// Allowed user IDs. Empty = deny all, "*" = allow all
     #[serde(default)]
     pub allowed_users: Vec<String>,
+}
+
+/// Hub Gitee 同步配置。
+///
+/// 控制从 Gitee 拉取 huanxing-hub 仓库（模板和技能）的行为。
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct HubSyncConfig {
+    /// Gitee 仓库路径（"owner/repo"）。
+    /// 默认：`"huanxing-team/huanxing-hub"`
+    pub gitee_repo: String,
+
+    /// 同步的分支名。默认：`"main"`
+    pub gitee_branch: String,
+
+    /// 启动时自动检查并同步。默认：`true`
+    pub auto_sync_on_startup: bool,
+
+    /// 超过多少小时后触发自动同步。默认：`24`
+    pub sync_interval_hours: u64,
+}
+
+impl Default for HubSyncConfig {
+    fn default() -> Self {
+        Self {
+            gitee_repo: "huanxing-team/huanxing-hub".to_string(),
+            gitee_branch: "main".to_string(),
+            auto_sync_on_startup: true,
+            sync_interval_hours: 24,
+        }
+    }
 }

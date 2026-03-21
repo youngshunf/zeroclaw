@@ -148,3 +148,107 @@ export const AGENT_TEMPLATES: AgentTemplate[] = [
 export function getTemplate(id: string): AgentTemplate | undefined {
   return AGENT_TEMPLATES.find((t) => t.id === id);
 }
+
+// ── Hub API 集成 ──────────────────────────────────────────────────────────────
+
+/**
+ * Hub 模板（来自 sidecar `/api/hub/templates`）。
+ * 与硬编码的 AgentTemplate 区别：由 Gitee 仓库动态维护。
+ */
+export interface HubTemplate {
+  id: string;
+  name: string;
+  emoji: string;
+  description: string;
+  tags: string[];
+  pricing_tier: string;
+}
+
+/** Hub 同步结果 */
+export interface HubSyncResult {
+  status: string;
+  updated: boolean;
+  version?: string;
+  templates: number;
+  skills: number;
+  synced_at: string;
+}
+
+/** Hub 同步状态 */
+export interface HubSyncStatus {
+  initialized: boolean;
+  hub_dir: string;
+  last_sync?: string;
+  version?: string;
+  templates_count: number;
+}
+
+/**
+ * 从 sidecar 获取 hub 模板列表。
+ *
+ * 如果 hub 未初始化，sidecar 会自动触发一次同步。
+ * 网络失败时回退到本地硬编码模板（`AGENT_TEMPLATES`）。
+ */
+export async function listHubTemplates(): Promise<HubTemplate[]> {
+  try {
+    const res = await fetch('/api/hub/templates');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    return data.templates ?? [];
+  } catch (e) {
+    console.warn('[hub] 获取 hub 模板失败，回退到本地模板:', e);
+    return [];
+  }
+}
+
+/**
+ * 手动触发 hub 同步（拉取 Gitee 最新模板）。
+ */
+export async function syncHub(): Promise<HubSyncResult> {
+  const res = await fetch('/api/hub/sync', { method: 'POST' });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'unknown' }));
+    throw new Error(err.error ?? `同步失败: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+/**
+ * 查询 hub 同步状态。
+ */
+export async function getHubSyncStatus(): Promise<HubSyncStatus> {
+  const res = await fetch('/api/hub/sync/status');
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+/**
+ * 获取可用模板列表：优先 hub API，失败时回退到硬编码模板。
+ *
+ * 返回的对象兼容 AgentTemplate 接口中的 id/name/description/icon 字段，
+ * 便于现有 UI 无缝切换。
+ */
+export async function listAvailableTemplates(): Promise<
+  Array<{ id: string; name: string; description: string; icon: string; fromHub: boolean }>
+> {
+  const hubTemplates = await listHubTemplates();
+
+  if (hubTemplates.length > 0) {
+    return hubTemplates.map((t) => ({
+      id: t.id,
+      name: t.name,
+      description: t.description,
+      icon: t.emoji || '🤖',
+      fromHub: true,
+    }));
+  }
+
+  // 回退到本地硬编码模板
+  return AGENT_TEMPLATES.map((t) => ({
+    id: t.id,
+    name: t.name,
+    description: t.description,
+    icon: t.icon,
+    fromHub: false,
+  }));
+}
