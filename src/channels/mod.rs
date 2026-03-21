@@ -2155,7 +2155,7 @@ async fn process_channel_message(
         ChannelRouteSelection {
             provider,
             model,
-            api_key: route.api_key,
+            api_key: tenant.api_key.clone().or(route.api_key),
         }
     } else {
         route
@@ -2887,7 +2887,7 @@ async fn process_channel_message(
             if ctx.auto_save_memory && msg.content.chars().count() >= AUTOSAVE_MIN_MESSAGE_CHARS {
                 // HuanXing: use tenant-scoped memory/model/provider for consolidation
                 #[cfg(feature = "huanxing")]
-                let (consolidation_memory, consolidation_model) =
+                let (consolidation_memory, consolidation_model, consolidation_provider) =
                     if let Some(ref tenant) = tenant_ctx {
                         (
                             Arc::clone(&tenant.memory),
@@ -2896,20 +2896,23 @@ async fn process_channel_message(
                                 .as_deref()
                                 .unwrap_or(ctx.model.as_str())
                                 .to_string(),
+                            Arc::clone(&active_provider),
                         )
                     } else {
-                        (Arc::clone(&ctx.memory), ctx.model.to_string())
+                        (
+                            Arc::clone(&ctx.memory),
+                            ctx.model.to_string(),
+                            Arc::clone(&ctx.provider),
+                        )
                     };
                 #[cfg(not(feature = "huanxing"))]
-                let (consolidation_memory, consolidation_model) =
-                    (Arc::clone(&ctx.memory), ctx.model.to_string());
-
-                let provider = Arc::clone(&ctx.provider);
+                let (consolidation_memory, consolidation_model, consolidation_provider) =
+                    (Arc::clone(&ctx.memory), ctx.model.to_string(), Arc::clone(&ctx.provider));
                 let user_msg = msg.content.clone();
                 let assistant_resp = delivered_response.clone();
                 tokio::spawn(async move {
                     if let Err(e) = crate::memory::consolidation::consolidate_turn(
-                        provider.as_ref(),
+                        consolidation_provider.as_ref(),
                         &consolidation_model,
                         consolidation_memory.as_ref(),
                         &user_msg,
