@@ -13,9 +13,6 @@ default_model = "claude-sonnet-4-6"
 title_model = "claude-haiku-4-5"   # 会话标题自动生成用的轻量模型
 default_temperature = 0.7
 
-[model_providers]
-openai_compat = { api_key = "{{llm_token}}", base_url = "{{llm_gateway}}" }
-
 # ── Agent 核心设置 ────────────────────────────────────────────
 [agent]
 compact_context = false          # 用大模型，不需要压缩模式

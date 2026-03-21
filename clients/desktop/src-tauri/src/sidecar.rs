@@ -888,17 +888,7 @@ impl SidecarManager {
         // 1. 创建目录结构
         std::fs::create_dir_all(&self.config_dir).map_err(|e| format!("创建配置目录失败: {e}"))?;
         let workspace_dir = self.config_dir.join("workspace");
-        for dir in &[
-            "workspace",
-            "workspace/memory",
-            "workspace/sessions",
-            "workspace/state",
-            "workspace/cron",
-            "workspace/skills",
-            "agents",
-        ] {
-            std::fs::create_dir_all(self.config_dir.join(dir)).ok();
-        }
+        std::fs::create_dir_all(self.config_dir.join("agents")).ok();
 
         // 2. 生成 config.toml
         let api_base = req
@@ -926,11 +916,8 @@ impl SidecarManager {
         let agent_dir = self.config_dir.join("agents").join("default");
         std::fs::create_dir_all(&agent_dir).ok();
 
-        let agent_toml = generate_agent_toml(star_name);
-        std::fs::write(agent_dir.join("agent.toml"), &agent_toml)
-            .map_err(|e| format!("写入 agent 配置失败: {e}"))?;
         result.agent_created = true;
-        tracing::info!("Default agent created: {}", agent_dir.display());
+        tracing::info!("Default agent dir created: {}", agent_dir.display());
 
         // 4. 创建完整 workspace — 从 workspace-scaffold/ 模板复制 + 占位符替换
         let now = chrono_now_pretty();
@@ -1121,9 +1108,6 @@ default_model = "claude-sonnet-4-6"
 title_model = "claude-haiku-4-5"
 default_temperature = 0.7
 
-[model_providers]
-openai_compat = {{ api_key = "{llm_token}", base_url = "{llm_gateway}" }}
-
 [memory]
 backend = "sqlite"
 auto_save = true
@@ -1141,8 +1125,6 @@ api_base_url = "{api_base}"
 kind = "native"
 "#,
             agent_name = agent_name,
-            llm_token = llm_token,
-            llm_gateway = llm_gateway,
             llm_gateway_base = llm_gateway.trim_end_matches("/v1"),
             api_base = api_base,
             port = port,
@@ -1158,28 +1140,6 @@ kind = "native"
         .replace("{{llm_gateway_base}}", llm_gateway_base)
         .replace("{{api_base}}", api_base)
         .replace("{{port}}", &port.to_string())
-}
-
-/// Agent 模板
-fn generate_agent_toml(name: &str) -> String {
-    format!(
-        r#"# 唤星默认 Agent
-name = "{name}"
-model = "claude-sonnet-4-6"
-temperature = 0.7
-
-[instructions]
-system = """
-你是{name}，一个友好、专业的 AI 助手。
-你善于思考，能够帮助用户解决各种问题。
-回复时简洁明了，避免不必要的废话。
-"""
-
-[tools]
-enabled = ["web_search", "file_read", "file_write", "shell"]
-"#,
-        name = name,
-    )
 }
 
 /// 简易时间戳（不依赖 chrono crate）
