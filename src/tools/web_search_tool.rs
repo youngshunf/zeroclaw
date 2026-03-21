@@ -1,5 +1,6 @@
 use super::traits::{Tool, ToolResult};
 use crate::security::SecurityPolicy;
+use super::web_search_provider_routing::{resolve_web_search_provider, WebSearchProviderRoute};
 use async_trait::async_trait;
 use regex::Regex;
 use reqwest::StatusCode;
@@ -13,6 +14,7 @@ use std::time::Duration;
 /// Supports providers: DuckDuckGo (free), Brave, Firecrawl, Tavily, Perplexity, Exa, and Jina.
 pub struct WebSearchTool {
     security: Arc<SecurityPolicy>,
+    /// Provider selector as configured by user. Routed via provider aliases at runtime.
     provider: String,
     fallback_providers: Vec<String>,
     api_keys: Vec<String>,
