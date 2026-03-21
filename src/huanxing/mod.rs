@@ -28,6 +28,7 @@
 //! is per-tenant.
 
 pub mod api_agents;
+pub mod api_sessions;
 pub mod api_client;
 pub mod config;
 pub mod db;

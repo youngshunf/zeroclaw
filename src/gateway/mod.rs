@@ -824,6 +824,10 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
     #[cfg(feature = "huanxing")]
     let app = app.merge(crate::huanxing::api_agents::agent_routes());
 
+    // ── HuanXing Session REST API（桌面端，requires huanxing feature）──
+    #[cfg(feature = "huanxing")]
+    let app = app.merge(crate::huanxing::api_sessions::session_routes());
+
     // ── HuanXing Hub 同步 API（requires huanxing feature）──
     #[cfg(feature = "huanxing")]
     let app = app.merge(crate::huanxing::hub_sync::hub_routes());
