@@ -162,6 +162,11 @@ fn load_skills_from_directory(skills_dir: &Path, allow_scripts: bool) -> Vec<Ski
         if !path.is_dir() {
             continue;
         }
+        // 跳过隐藏目录（以 . 开头，如 .trash、.git 等），这些不是有效的技能目录。
+        let dir_name = entry.file_name();
+        if dir_name.to_string_lossy().starts_with('.') {
+            continue;
+        }
 
         match audit::audit_skill_directory_with_options(
             &path,
