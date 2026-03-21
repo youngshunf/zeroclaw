@@ -1518,3 +1518,128 @@ fn mask_phone(phone: &str) -> String {
         phone.to_string()
     }
 }
+
+// ═══════════════════════════════════════════════════════
+// hx_tts — Text-to-Speech voice message
+// ═══════════════════════════════════════════════════════
+
+/// Agent tool to synthesize text-to-speech and return audio data
+/// for the channel layer to send as a voice message.
+pub struct HxTts {
+    tts_config: crate::config::TtsConfig,
+}
+
+impl HxTts {
+    pub fn new(tts_config: crate::config::TtsConfig) -> Self {
+        Self { tts_config }
+    }
+}
+
+#[async_trait]
+impl Tool for HxTts {
+    fn name(&self) -> &str {
+        "hx_tts"
+    }
+
+    fn description(&self) -> &str {
+        "将文字转换为语音消息。生成的音频会自动发送到当前会话。\n\
+         用途：主动语音播报、语音提醒、语音回复等。\n\
+         支持的音色：longanyang(温暖男声), longjing(温柔女声), longmiao(甜美女声), \
+         longxiaobai(阳光男声), longwan(知性女声), longyue(大气女声), \
+         longshuo(播音男声), longtong(童声) 等。"
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "要转换为语音的文字内容（最大4096字符）"
+                },
+                "voice": {
+                    "type": "string",
+                    "description": "音色选择（可选，默认使用配置的默认音色）"
+                }
+            },
+            "required": ["text"]
+        })
+    }
+
+    async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        let text = args
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+
+        if text.is_empty() {
+            return Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some("text 不能为空".into()),
+            });
+        }
+
+        if text.len() > 4096 {
+            return Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some("text 超过最大长度限制（4096字符）".into()),
+            });
+        }
+
+        let voice = args
+            .get("voice")
+            .and_then(|v| v.as_str())
+            .unwrap_or(&self.tts_config.default_voice);
+
+        // Synthesize audio using TTS manager
+        let tts_manager = match crate::channels::tts::TtsManager::new(&self.tts_config) {
+            Ok(m) => m,
+            Err(e) => {
+                return Ok(ToolResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some(format!("TTS 初始化失败: {e}")),
+                });
+            }
+        };
+
+        match tts_manager.synthesize_with_voice(text, voice).await {
+            Ok(audio_bytes) => {
+                // Write to temp file and return path marker for channel layer to pick up
+                let tmp_dir = std::env::temp_dir().join("zeroclaw-tts");
+                let _ = std::fs::create_dir_all(&tmp_dir);
+                let filename = format!("{}.opus", uuid::Uuid::new_v4());
+                let tmp_path = tmp_dir.join(&filename);
+
+                if let Err(e) = std::fs::write(&tmp_path, &audio_bytes) {
+                    return Ok(ToolResult {
+                        success: false,
+                        output: String::new(),
+                        error: Some(format!("写入音频文件失败: {e}")),
+                    });
+                }
+
+                tracing::info!(
+                    "hx_tts: synthesized {} bytes, saved to {}",
+                    audio_bytes.len(),
+                    tmp_path.display()
+                );
+
+                // Return VOICE marker — channel layer will detect this and send as voice message
+                Ok(ToolResult {
+                    success: true,
+                    output: format!("[VOICE:{}]", tmp_path.display()),
+                    error: None,
+                })
+            }
+            Err(e) => Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some(format!("语音合成失败: {e}")),
+            }),
+        }
+    }
+}

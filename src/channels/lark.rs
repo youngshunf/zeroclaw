@@ -1,4 +1,5 @@
 use super::traits::{Channel, ChannelMessage, SendMessage};
+use anyhow::Context as _;
 use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
 use prost::Message as ProstMessage;
@@ -1153,6 +1154,42 @@ impl LarkChannel {
                 Some(details) => (details.text, details.mentioned_open_ids),
                 None => return messages,
             },
+            "audio" => {
+                // Voice message — try to extract recognition (ASR) text from content.
+                // Feishu may include "recognition" field if speech recognition is enabled.
+                let recognition = serde_json::from_str::<serde_json::Value>(content_str)
+                    .ok()
+                    .and_then(|v| {
+                        v.get("recognition")
+                            .and_then(|r| r.as_str())
+                            .filter(|s| !s.is_empty())
+                            .map(String::from)
+                    });
+                match recognition {
+                    Some(text) => {
+                        tracing::info!("Lark: received voice message, ASR text: {text}");
+                        (format!("🎤 {text}"), Vec::new())
+                    }
+                    None => {
+                        // No ASR text available — extract file_key for potential download
+                        let file_key = serde_json::from_str::<serde_json::Value>(content_str)
+                            .ok()
+                            .and_then(|v| {
+                                v.get("file_key")
+                                    .and_then(|f| f.as_str())
+                                    .map(String::from)
+                            });
+                        tracing::info!(
+                            "Lark: received voice message without ASR (file_key: {:?})",
+                            file_key
+                        );
+                        (
+                            "🎤 [收到语音消息，暂不支持语音识别]".to_string(),
+                            Vec::new(),
+                        )
+                    }
+                }
+            }
             _ => {
                 tracing::debug!("Lark: skipping unsupported message type: {msg_type}");
                 return messages;
@@ -1201,6 +1238,109 @@ impl LarkChannel {
         });
 
         messages
+    }
+
+    /// Upload an audio file to Feishu/Lark and return the `file_key`.
+    pub async fn upload_audio_file(
+        &self,
+        token: &str,
+        audio_bytes: &[u8],
+        filename: &str,
+    ) -> anyhow::Result<String> {
+        let url = format!("{}/im/v1/files", self.api_base());
+
+        let form = reqwest::multipart::Form::new()
+            .text("file_type", "opus")
+            .text("file_name", filename.to_string())
+            .part(
+                "file",
+                reqwest::multipart::Part::bytes(audio_bytes.to_vec())
+                    .file_name(filename.to_string()),
+            );
+
+        let resp = self
+            .http_client()
+            .post(&url)
+            .header("Authorization", format!("Bearer {token}"))
+            .multipart(form)
+            .send()
+            .await
+            .context("Lark: failed to upload audio file")?;
+
+        let body: serde_json::Value = resp.json().await?;
+        let code = body["code"].as_i64().unwrap_or(-1);
+        if code != 0 {
+            anyhow::bail!("Lark upload audio failed (code {code}): {body}");
+        }
+
+        body["data"]["file_key"]
+            .as_str()
+            .map(String::from)
+            .ok_or_else(|| anyhow::anyhow!("Lark upload audio: missing file_key in response"))
+    }
+
+    /// Send an audio (voice) message to the specified recipient.
+    pub async fn send_audio_message(
+        &self,
+        recipient: &str,
+        file_key: &str,
+    ) -> anyhow::Result<()> {
+        let token = self.get_tenant_access_token().await?;
+
+        let receive_id_type = if recipient.starts_with("oc_") {
+            "chat_id"
+        } else {
+            "open_id"
+        };
+
+        let body = serde_json::json!({
+            "receive_id": recipient,
+            "msg_type": "audio",
+            "content": serde_json::json!({"file_key": file_key}).to_string(),
+        });
+
+        let url = format!(
+            "{}/im/v1/messages?receive_id_type={receive_id_type}",
+            self.api_base()
+        );
+
+        let (status, resp_body) = self.send_text_once(&url, &token, &body).await?;
+
+        if should_refresh_lark_tenant_token(status, &resp_body) {
+            self.invalidate_token().await;
+            let new_token = self.get_tenant_access_token().await?;
+            let (retry_status, retry_body) =
+                self.send_text_once(&url, &new_token, &body).await?;
+            ensure_lark_send_success(retry_status, &retry_body, "audio after token refresh")?;
+        } else {
+            ensure_lark_send_success(status, &resp_body, "audio")?;
+        }
+
+        tracing::info!("Lark: sent audio message to {recipient}");
+        Ok(())
+    }
+
+    /// Synthesize text to speech and send as audio message.
+    /// Uses the global TTS config to generate audio, then uploads to Feishu.
+    pub async fn tts_and_send(
+        &self,
+        recipient: &str,
+        text: &str,
+        tts_config: &crate::config::TtsConfig,
+    ) -> anyhow::Result<()> {
+        let tts_manager = super::tts::TtsManager::new(tts_config)?;
+        let audio_bytes = tts_manager.synthesize(text).await?;
+        tracing::info!(
+            "Lark TTS: synthesized {} bytes of audio for recipient {recipient}",
+            audio_bytes.len()
+        );
+
+        let token = self.get_tenant_access_token().await?;
+        let file_key = self
+            .upload_audio_file(&token, &audio_bytes, "voice.opus")
+            .await?;
+        self.send_audio_message(recipient, &file_key).await?;
+        Ok(())
     }
 }
 

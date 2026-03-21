@@ -970,6 +970,10 @@ fn default_openai_tts_speed() -> f64 {
     1.0
 }
 
+fn default_openai_tts_base_url() -> String {
+    "https://api.openai.com".into()
+}
+
 fn default_elevenlabs_model_id() -> String {
     "eleven_monolingual_v1".into()
 }
@@ -1050,6 +1054,11 @@ pub struct OpenAiTtsConfig {
     /// Playback speed multiplier (default `1.0`).
     #[serde(default = "default_openai_tts_speed")]
     pub speed: f64,
+    /// Base URL for OpenAI-compatible TTS API.
+    /// Default: `"https://api.openai.com"`.
+    /// For DashScope CosyVoice: `"https://dashscope.aliyuncs.com/compatible-mode"`.
+    #[serde(default = "default_openai_tts_base_url")]
+    pub base_url: String,
 }
 
 /// ElevenLabs TTS provider configuration.

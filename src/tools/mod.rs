@@ -1123,6 +1123,14 @@ pub fn all_tools_with_runtime(
                         }));
                         tracing::info!("HuanXing secret management tools registered (3 tools)");
                     }
+
+                    // TTS voice tool (1)
+                    if root_config.tts.enabled {
+                        tool_arcs.push(Arc::new(crate::huanxing::tools::HxTts::new(
+                            root_config.tts.clone(),
+                        )));
+                        tracing::info!("HuanXing TTS tool registered (hx_tts)");
+                    }
                 }
                 Err(e) => {
                     tracing::warn!("HuanXing router init failed, only lookup tool available: {e}");

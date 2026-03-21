@@ -36,16 +36,18 @@ pub trait TtsProvider: Send + Sync {
 // ── OpenAI TTS ───────────────────────────────────────────────────
 
 /// OpenAI TTS provider (`POST /v1/audio/speech`).
+/// Also supports OpenAI-compatible APIs (e.g. DashScope CosyVoice) via `base_url`.
 pub struct OpenAiTtsProvider {
     api_key: String,
     model: String,
     speed: f64,
+    base_url: String,
     client: reqwest::Client,
 }
 
 impl OpenAiTtsProvider {
     /// Create a new OpenAI TTS provider from config, resolving the API key
-    /// from config or `OPENAI_API_KEY` env var.
+    /// from config, `OPENAI_API_KEY`, or `DASHSCOPE_API_KEY` env var.
     pub fn new(config: &crate::config::OpenAiTtsConfig) -> Result<Self> {
         let api_key = config
             .api_key
@@ -54,17 +56,26 @@ impl OpenAiTtsProvider {
             .filter(|k| !k.is_empty())
             .map(ToOwned::to_owned)
             .or_else(|| {
+                std::env::var("DASHSCOPE_API_KEY")
+                    .ok()
+                    .map(|v| v.trim().to_string())
+                    .filter(|v| !v.is_empty())
+            })
+            .or_else(|| {
                 std::env::var("OPENAI_API_KEY")
                     .ok()
                     .map(|v| v.trim().to_string())
                     .filter(|v| !v.is_empty())
             })
-            .context("Missing OpenAI TTS API key: set [tts.openai].api_key or OPENAI_API_KEY")?;
+            .context("Missing TTS API key: set [tts.openai].api_key, DASHSCOPE_API_KEY, or OPENAI_API_KEY")?;
+
+        let base_url = config.base_url.trim_end_matches('/').to_string();
 
         Ok(Self {
             api_key,
             model: config.model.clone(),
             speed: config.speed,
+            base_url,
             client: reqwest::Client::builder()
                 .timeout(TTS_HTTP_TIMEOUT)
                 .build()
@@ -88,9 +99,10 @@ impl TtsProvider for OpenAiTtsProvider {
             "response_format": "opus",
         });
 
+        let url = format!("{}/v1/audio/speech", self.base_url);
         let resp = self
             .client
-            .post("https://api.openai.com/v1/audio/speech")
+            .post(&url)
             .bearer_auth(&self.api_key)
             .json(&body)
             .send()
@@ -527,6 +539,12 @@ impl TtsManager {
     /// Synthesize text using the default provider and voice.
     pub async fn synthesize(&self, text: &str) -> Result<Vec<u8>> {
         self.synthesize_with_provider(text, &self.default_provider, &self.default_voice)
+            .await
+    }
+
+    /// Synthesize text using the default provider with a specific voice.
+    pub async fn synthesize_with_voice(&self, text: &str, voice: &str) -> Result<Vec<u8>> {
+        self.synthesize_with_provider(text, &self.default_provider, voice)
             .await
     }
 

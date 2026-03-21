@@ -70,6 +70,15 @@ fn compose_onebot_content(content: &str, reply_message_id: Option<&str>) -> Stri
             parts.push(format!("[CQ:image,file={marker}]"));
             continue;
         }
+        if let Some(marker) = trimmed
+            .strip_prefix("[VOICE:")
+            .and_then(|v| v.strip_suffix(']'))
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+        {
+            parts.push(format!("[CQ:record,file={marker}]"));
+            continue;
+        }
         parts.push(line.to_string());
     }
 
@@ -119,6 +128,24 @@ fn parse_message_segments(message: &Value) -> String {
                     .filter(|v| !v.is_empty())
                 {
                     parts.push(format!("[IMAGE:{file}]"));
+                }
+            }
+            "record" => {
+                // Voice message: {"type":"record","data":{"file":"xxx.silk","url":"http://..."}}
+                if let Some(url) = data
+                    .and_then(|d| d.get("url"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|v| !v.is_empty())
+                {
+                    parts.push(format!("[VOICE:{url}]"));
+                } else if let Some(file) = data
+                    .and_then(|d| d.get("file"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|v| !v.is_empty())
+                {
+                    parts.push(format!("[VOICE:{file}]"));
                 }
             }
             _ => {}
