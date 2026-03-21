@@ -1,68 +1,103 @@
+# ═══════════════════════════════════════════════════════════════
+# ZeroClaw HuanXing — 服务器默认配置
+# 路径: server-config/config.toml
+#
+# 💡 这是项目仓库中的参考配置，服务器部署时需要调整：
+#   - 路径：macOS 路径 → /opt/huanxing/ 前缀
+#   - api_key：enc2 加密值 → 服务器上用明文或重新加密
+#   - server_id：按环境修改（如 huanxing-115-test）
+#
+# 📋 服务器实际配置: /opt/huanxing/config/config.toml
+# 📋 环境变量配置:   /opt/huanxing/config/.env（API Keys）
+# ═══════════════════════════════════════════════════════════════
+
+
+# ┌─────────────────────────────────────────────────────────────┐
+# │                    全局 LLM 配置                             │
+# │  Guardian/Admin 的默认 provider，租户可在自己的                │
+# │  config.toml 中覆盖                                         │
+# └─────────────────────────────────────────────────────────────┘
+
+# Guardian 工作区路径（必须设置，程序启动时加载 SOUL.md 等）
+workspace_dir = "server-config/guardian"
+
+# LLM API 密钥（本地用 enc2 加密；服务器部署时替换为明文）
 api_key = "enc2:77058663e7ce15d65c7d90e2f188278a25b260a99129e956ddffa8738e3a42800bddc1fd0ce13a43e361861851d07cb79d83da220e5d3f1a93772fa30b09ccf82a1054f4e5960b33763d7a57a0679b"
+
+# LLM Provider 配置
+# - "anthropic-custom:URL" = Anthropic 原生格式（支持 native tool calling）
+# - "custom:URL"           = OpenAI 兼容格式（/v1/chat/completions）
 default_provider = "anthropic-custom:https://llm.dcfuture.cn"
 default_model = "claude-sonnet-4-6"
 default_temperature = 0.7
+
+# 单次 LLM 请求超时（秒）
 provider_timeout_secs = 120
+
+# 模型/嵌入路由规则（高级功能，留空使用默认）
 model_routes = []
 embedding_routes = []
 
+# 额外的模型 provider 定义（高级，一般不需要）
 [model_providers]
 
+# 额外的 HTTP 头（如需要代理认证等）
 [extra_headers]
 
+
+# ┌─────────────────────────────────────────────────────────────┐
+# │                    可观测性                                  │
+# └─────────────────────────────────────────────────────────────┘
 [observability]
-backend = "none"
-runtime_trace_mode = "none"
+backend = "none"                              # 可选: none / prometheus
+runtime_trace_mode = "none"                   # 可选: none / file
 runtime_trace_path = "state/runtime-trace.jsonl"
 runtime_trace_max_entries = 200
 
+
+# ┌─────────────────────────────────────────────────────────────┐
+# │                    自治与权限（全局默认）                      │
+# │  Guardian 的自治设置；租户的权限在模板 config.toml 里定义       │
+# └─────────────────────────────────────────────────────────────┘
 [autonomy]
-level = "full"
-workspace_only = false
-allowed_commands = []
+level = "full"                                # full = 所有工具自动批准
+workspace_only = false                        # false = Guardian 可访问系统路径
+allowed_commands = []                         # 空 = 不限制
 forbidden_paths = []
 max_actions_per_hour = 1000
 max_cost_per_day_cents = 10000
 require_approval_for_medium_risk = true
 block_high_risk_commands = true
 shell_env_passthrough = []
+
+# Guardian 自动批准的工具列表
 auto_approve = [
-    "file_read",
-    "memory_recall",
-    "hx_lookup_sender",
-    "hx_local_find_user",
-    "hx_send_sms",
-    "hx_verify_sms",
-    "hx_register_user",
-    "hx_local_bind_channel",
-    "hx_invalidate_cache",
-    "hx_get_user",
-    "hx_check_quota",
-    "hx_get_subscription",
-    "hx_usage_stats",
-    "hx_local_list_users",
-    "hx_local_update_user",
-    "hx_local_stats",
-    "hasn_send",
-    "hasn_contacts",
-    "hasn_add_friend",
-    "hasn_inbox",
-    "hasn_respond_request",
+    # 基础
+    "file_read", "memory_recall",
+    # 唤星用户管理
+    "hx_lookup_sender", "hx_local_find_user",
+    "hx_send_sms", "hx_verify_sms",
+    "hx_register_user", "hx_local_bind_channel", "hx_invalidate_cache",
+    "hx_get_user", "hx_check_quota", "hx_get_subscription", "hx_usage_stats",
+    "hx_local_list_users", "hx_local_update_user", "hx_local_stats",
+    # HASN 社交网络
+    "hasn_send", "hasn_contacts", "hasn_add_friend", "hasn_inbox", "hasn_respond_request",
 ]
 always_ask = []
 allowed_roots = []
 non_cli_excluded_tools = []
 
+
+# ┌─────────────────────────────────────────────────────────────┐
+# │                    安全配置                                  │
+# └─────────────────────────────────────────────────────────────┘
 [security]
 roles = []
-canary_tokens = true
-semantic_guard = false
-semantic_guard_collection = "semantic_guard"
-semantic_guard_threshold = 0.82
+canary_tokens = true                          # 检测 prompt injection
+semantic_guard = false                        # 语义安全过滤
 
 [security.sandbox]
-backend = "auto"
-firejail_args = []
+backend = "auto"                              # auto = 按平台自动选择
 
 [security.resources]
 max_memory_mb = 512
@@ -74,473 +109,192 @@ memory_monitoring = true
 enabled = true
 log_path = "audit.log"
 max_size_mb = 100
-sign_events = false
 
 [security.otp]
-enabled = false
-method = "totp"
-token_ttl_secs = 30
-cache_valid_secs = 300
-gated_actions = [
-    "shell",
-    "file_write",
-    "browser_open",
-    "browser",
-    "memory_forget",
-]
-gated_domains = []
-gated_domain_categories = []
-challenge_max_attempts = 3
-
-[security.estop]
-enabled = false
-state_file = "~/.zeroclaw/estop-state.json"
-require_otp_to_resume = true
-
-[security.nevis]
-enabled = false
-instance_url = ""
-realm = "master"
-client_id = ""
-token_validation = "local"
-role_mapping = []
-require_mfa = false
-session_timeout_secs = 3600
-
-[security.syscall_anomaly]
-enabled = true
-strict_mode = false
-alert_on_unknown_syscall = true
-max_denied_events_per_minute = 5
-max_total_events_per_minute = 120
-max_alerts_per_minute = 30
-alert_cooldown_secs = 20
-log_path = "syscall-anomalies.log"
-baseline_syscalls = [
-    "read",
-    "write",
-    "open",
-    "openat",
-    "close",
-    "stat",
-    "fstat",
-    "newfstatat",
-    "lseek",
-    "mmap",
-    "mprotect",
-    "munmap",
-    "brk",
-    "rt_sigaction",
-    "rt_sigprocmask",
-    "ioctl",
-    "fcntl",
-    "access",
-    "pipe2",
-    "dup",
-    "dup2",
-    "dup3",
-    "epoll_create1",
-    "epoll_ctl",
-    "epoll_wait",
-    "poll",
-    "ppoll",
-    "select",
-    "futex",
-    "clock_gettime",
-    "nanosleep",
-    "getpid",
-    "gettid",
-    "set_tid_address",
-    "set_robust_list",
-    "clone",
-    "clone3",
-    "fork",
-    "execve",
-    "wait4",
-    "exit",
-    "exit_group",
-    "socket",
-    "connect",
-    "accept",
-    "accept4",
-    "listen",
-    "sendto",
-    "recvfrom",
-    "sendmsg",
-    "recvmsg",
-    "getsockname",
-    "getpeername",
-    "setsockopt",
-    "getsockopt",
-    "getrandom",
-    "statx",
-]
-
-[security.perplexity_filter]
-enable_perplexity_filter = false
-perplexity_threshold = 18.0
-suffix_window_chars = 64
-min_prompt_chars = 32
-symbol_ratio_threshold = 0.2
+enabled = false                               # OTP 验证（生产环境建议开启）
 
 [security.outbound_leak_guard]
-enabled = true
-action = "redact"
+enabled = true                                # 防止敏感信息外泄
+action = "redact"                             # redact = 自动脱敏
 sensitivity = 0.5
 
 [security.url_access]
-block_private_ip = true
-allow_cidrs = []
-allow_domains = []
+block_private_ip = true                       # 阻止访问内网 IP（SSRF 防护）
 allow_loopback = false
-require_first_visit_approval = false
-enforce_domain_allowlist = false
-domain_allowlist = []
-domain_blocklist = []
-approved_domains = []
 
-[backup]
-enabled = true
-max_keep = 10
-include_dirs = [
-    "config",
-    "memory",
-    "audit",
-    "knowledge",
-]
-destination_dir = "state/backups"
-compress = true
-encrypt = false
 
-[data_retention]
-enabled = false
-retention_days = 90
-dry_run = false
-categories = []
-
-[cloud_ops]
-enabled = false
-default_cloud = "aws"
-supported_clouds = [
-    "aws",
-    "azure",
-    "gcp",
-]
-iac_tools = ["terraform"]
-cost_threshold_monthly_usd = 100.0
-well_architected_frameworks = ["aws-waf"]
-
-[security_ops]
-enabled = false
-playbooks_dir = "~/.zeroclaw/playbooks"
-auto_triage = false
-require_approval_for_actions = true
-max_auto_severity = "low"
-report_output_dir = "~/.zeroclaw/security-reports"
-
-[runtime]
-kind = "native"
-
-[runtime.docker]
-image = "alpine:3.20"
-network = "none"
-memory_limit_mb = 512
-cpu_limit = 1.0
-read_only_rootfs = true
-mount_workspace = true
-allowed_workspace_roots = []
-
+# ┌─────────────────────────────────────────────────────────────┐
+# │                    可靠性（LLM 重试/降级）                    │
+# └─────────────────────────────────────────────────────────────┘
 [reliability]
-provider_retries = 2
-provider_backoff_ms = 500
-fallback_providers = []
-api_keys = []
-channel_initial_backoff_secs = 2
-channel_max_backoff_secs = 60
+provider_retries = 2                          # 单个 provider 最多重试次数
+provider_backoff_ms = 500                     # 重试退避时间
+fallback_providers = []                       # 降级 provider 列表
+channel_initial_backoff_secs = 2              # 渠道连接初始退避
+channel_max_backoff_secs = 60                 # 渠道连接最大退避
 scheduler_poll_secs = 15
 scheduler_retries = 2
 
 [reliability.model_fallbacks]
+# 模型降级映射，例如:
+# "claude-sonnet-4-6" = ["qwen3.5-plus", "gpt-4o"]
+
+
+# ┌─────────────────────────────────────────────────────────────┐
+# │                    Agent 核心设置                             │
+# └─────────────────────────────────────────────────────────────┘
+[agent]
+compact_context = true                        # 上下文过长时自动压缩
+max_tool_iterations = 15                      # 单次对话最多工具调用轮次
+max_history_messages = 100                    # 历史消息保留条数
+max_context_tokens = 32000                    # 最大上下文 token 数
+parallel_tools = false                        # 并行工具调用（实验性）
 
 [scheduler]
 enabled = true
 max_tasks = 64
 max_concurrent = 4
 
-[agent]
-compact_context = true
-max_tool_iterations = 15
-max_history_messages = 100
-max_context_tokens = 32000
-parallel_tools = false
-tool_dispatcher = "auto"
-tool_call_dedup_exempt = []
-tool_filter_groups = []
 
+# ┌─────────────────────────────────────────────────────────────┐
+# │                    技能系统                                  │
+# └─────────────────────────────────────────────────────────────┘
 [skills]
-open_skills_enabled = false
-open_skills_dir = "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-zeroclaw/server-config/huanxing-skills"
-allow_scripts = true
-prompt_injection_mode = "compact"
+open_skills_enabled = false                   # 开放技能市场
+allow_scripts = true                          # 允许技能运行脚本
+prompt_injection_mode = "compact"             # compact = 压缩注入技能 prompt
 
 [skills.skill_creation]
-enabled = false
-max_skills = 500
-similarity_threshold = 0.85
+enabled = false                               # 用户自建技能
 
-[query_classification]
-enabled = false
-rules = []
 
+# ┌─────────────────────────────────────────────────────────────┐
+# │                    心跳 & 定时任务                            │
+# └─────────────────────────────────────────────────────────────┘
 [heartbeat]
 enabled = true
-interval_minutes = 60
-two_phase = true
-adaptive = false
-min_interval_minutes = 5
-max_interval_minutes = 120
-deadman_timeout_minutes = 0
-max_run_history = 100
+interval_minutes = 60                         # 心跳间隔（分钟）
+max_tasks_per_tick = 3
 
 [cron]
 enabled = true
-catch_up_on_startup = true
+catch_up_on_startup = true                    # 启动时补执行错过的任务
 max_run_history = 50
 
+
+# ┌─────────────────────────────────────────────────────────────┐
+# │                    渠道配置（飞书 / NapCat QQ）               │
+# └─────────────────────────────────────────────────────────────┘
 [channels_config]
-cli = true
-message_timeout_secs = 300
-ack_reactions = true
-show_tool_calls = false
+cli = true                                    # CLI 交互模式
+message_timeout_secs = 300                    # 消息处理超时
+ack_reactions = true                          # 收到消息后发送确认表情
+show_tool_calls = false                       # 是否在回复中展示工具调用过程
 session_persistence = true
 session_backend = "sqlite"
-session_ttl_hours = 0
 
+# ── 飞书 ──
 [channels_config.feishu]
 app_id = "cli_a91dacdaca38dcd2"
+# app_secret 使用 enc2 加密（服务器部署时替换为对应环境的加密值）
 app_secret = "enc2:91901c57d7709f709c7636ba370d9a201e092640c3ae4ca99f2013b22217b7a7b0f0cb796f4d96045e2ad0ffe8fbeadfde835cbbdb2264b4c9024235"
-allowed_users = ["*"]
-receive_mode = "websocket"
+allowed_users = ["*"]                         # * = 允许所有用户
+receive_mode = "websocket"                    # websocket = 长连接（推荐）
 
+# ── NapCat（QQ 机器人）──
 [channels_config.napcat]
-websocket_url = "ws://127.0.0.1:3001"
-api_base_url = ""
+websocket_url = "ws://127.0.0.1:3001"         # NapCat WebSocket 地址
 allowed_users = ["*"]
 
+
+# ┌─────────────────────────────────────────────────────────────┐
+# │                    记忆系统                                  │
+# └─────────────────────────────────────────────────────────────┘
 [memory]
-backend = "sqlite"
-auto_save = true
-hygiene_enabled = true
-archive_after_days = 14
-purge_after_days = 90
+backend = "sqlite"                            # sqlite = 本地持久化
+auto_save = true                              # 自动保存对话到长期记忆
+hygiene_enabled = true                        # 定期清理旧记忆
+archive_after_days = 14                       # 14天后归档
+purge_after_days = 90                         # 90天后清除
 conversation_retention_days = 90
+auto_hydrate = true                           # brain.db 丢失时自动恢复
+snapshot_enabled = true                       # 启用记忆快照备份
+snapshot_on_hygiene = true                    # 清理时自动快照
+
+# ── 向量嵌入（语义搜索）──
 embedding_provider = "custom:https://llm.dcfuture.cn/v1"
-embedding_model = "text-embedding-v4"
+embedding_model = "text-embedding-v4"         # 通义 text-embedding-v4
 embedding_dimensions = 1024
-vector_weight = 0.7
-keyword_weight = 0.3
-min_relevance_score = 0.4
+vector_weight = 0.7                           # 向量相似度权重
+keyword_weight = 0.3                          # BM25 关键词权重
+min_relevance_score = 0.4                     # 最低相关性阈值
 embedding_cache_size = 2000
 chunk_max_tokens = 512
-response_cache_enabled = false
-response_cache_ttl_minutes = 60
-response_cache_max_entries = 5000
-response_cache_hot_entries = 256
-snapshot_enabled = true
-snapshot_on_hygiene = true
-auto_hydrate = true
 
-[memory.qdrant]
-collection = "zeroclaw_memories"
 
-[memory.mem0]
-url = "http://localhost:8765"
-user_id = "zeroclaw"
-app_name = "zeroclaw"
-infer = true
-
-[storage.provider.config]
-provider = ""
-schema = "public"
-table = "memories"
-
-[tunnel]
-provider = "none"
-
+# ┌─────────────────────────────────────────────────────────────┐
+# │                    网关配置                                  │
+# └─────────────────────────────────────────────────────────────┘
 [gateway]
-port = 42618
-host = "127.0.0.1"
-require_pairing = true
+port = 42618                                  # 网关端口
+host = "127.0.0.1"                            # 只监听本地
+require_pairing = true                        # 需要配对码连接
 allow_public_bind = false
 paired_tokens = ["enc2:a747455a73ad81991dbf19588c30842a954e104822dd236e751a6c34f8c9d8ee6407c3afc3a4a3de011efcd61a43d8406f271685517bde7d2047fce6fe0b999dd7149204634e9b38aeedb9662288b9d882f0b72b2f31ae0064f77ef5"]
-pair_rate_limit_per_minute = 10
-webhook_rate_limit_per_minute = 60
-trust_forwarded_headers = false
-rate_limit_max_keys = 10000
-idempotency_ttl_secs = 300
-idempotency_max_keys = 10000
-session_persistence = true
-session_ttl_hours = 0
 
 [gateway.pairing_dashboard]
 code_length = 8
 code_ttl_secs = 3600
 max_pending_codes = 3
-max_failed_attempts = 5
-lockout_secs = 300
 
-[composio]
-enabled = false
-entity_id = "default"
 
-[microsoft365]
-enabled = false
-auth_flow = "client_credentials"
-scopes = ["https://graph.microsoft.com/.default"]
-token_cache_encrypted = true
+# ┌─────────────────────────────────────────────────────────────┐
+# │                    网络工具                                  │
+# └─────────────────────────────────────────────────────────────┘
 
-[secrets]
-encrypt = true
+# ── 网页搜索 ──
+# API Key 建议放在 .env 文件中（TAVILY_API_KEY 等）
+[web_search]
+enabled = true
+provider = "tavily"                           # tavily / brave / exa / jina / duckduckgo
+max_results = 5
+timeout_secs = 15
 
-[browser]
-enabled = false
-allowed_domains = []
-backend = "agent_browser"
-native_headless = true
-native_webdriver_url = "http://127.0.0.1:9515"
-
-[browser.computer_use]
-endpoint = "http://127.0.0.1:8787/v1/actions"
-timeout_ms = 15000
-allow_remote_endpoint = false
-window_allowlist = []
-
-[browser_delegate]
-enabled = false
-cli_binary = "claude"
-chrome_profile_dir = ""
-allowed_domains = []
-blocked_domains = []
-task_timeout_secs = 120
-
-[http_request]
-enabled = false
-allowed_domains = []
-max_response_size = 1000000
+# ── 网页抓取 ──
+[web_fetch]
+enabled = true                                # ⚠️ 服务器上应设为 true
+allowed_domains = ["*"]
 timeout_secs = 30
-allow_private_hosts = false
 
+# ── 浏览器 ──
+[browser]
+enabled = false                               # 服务器无 GUI，默认关闭
+
+# ── HTTP 请求 ──
+[http_request]
+enabled = true                                # ⚠️ 技能脚本可能需要
+timeout_secs = 30
+
+# ── 多模态 ──
 [multimodal]
 max_images = 4
 max_image_size_mb = 5
 allow_remote_fetch = false
 
-[web_fetch]
-enabled = false
-allowed_domains = ["*"]
-blocked_domains = []
-max_response_size = 500000
-timeout_secs = 30
 
-[text_browser]
-enabled = false
-timeout_secs = 30
+# ┌─────────────────────────────────────────────────────────────┐
+# │                    加密密钥管理                               │
+# └─────────────────────────────────────────────────────────────┘
+[secrets]
+encrypt = true                                # 启用 enc2 加密
 
-[web_search]
-enabled = true
-provider = "tavily"
-api_key = "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"
-fallback_providers = []
-retries_per_provider = 0
-retry_backoff_ms = 250
-domain_filter = []
-language_filter = []
-exa_search_type = "auto"
-exa_include_text = false
-jina_site_filters = []
-max_results = 5
-timeout_secs = 15
-user_agent = "ZeroClaw/1.0"
 
-[project_intel]
-enabled = false
-default_language = "en"
-report_output_dir = "~/.zeroclaw/project-reports"
-risk_sensitivity = "medium"
-include_git_data = true
-include_jira_data = false
-
-[google_workspace]
-enabled = false
-allowed_services = []
-allowed_operations = []
-rate_limit_per_minute = 60
-timeout_secs = 30
-audit_log = false
-
-[proxy]
-enabled = false
-no_proxy = []
-scope = "zeroclaw"
-services = []
-
-[identity]
-format = "openclaw"
-
-[cost]
-enabled = false
-daily_limit_usd = 10.0
-monthly_limit_usd = 100.0
-warn_at_percent = 80
-allow_override = false
-
-[cost.prices."google/gemini-1.5-pro"]
-input = 1.25
-output = 5.0
-
-[cost.prices."anthropic/claude-sonnet-4-20250514"]
-input = 3.0
-output = 15.0
-
-[cost.prices."anthropic/claude-opus-4-20250514"]
-input = 15.0
-output = 75.0
-
-[cost.prices."anthropic/claude-3-haiku"]
-input = 0.25
-output = 1.25
-
-[cost.prices."openai/o1-preview"]
-input = 15.0
-output = 60.0
-
-[cost.prices."openai/gpt-4o"]
-input = 5.0
-output = 15.0
-
-[cost.prices."anthropic/claude-3.5-sonnet"]
-input = 3.0
-output = 15.0
-
-[cost.prices."openai/gpt-4o-mini"]
-input = 0.15
-output = 0.6
-
-[cost.prices."google/gemini-2.0-flash"]
-input = 0.1
-output = 0.4
-
-[peripherals]
-enabled = false
-boards = []
-
+# ┌─────────────────────────────────────────────────────────────┐
+# │                    委托 & Hooks                              │
+# └─────────────────────────────────────────────────────────────┘
 [delegate]
 timeout_secs = 120
 agentic_timeout_secs = 300
-
-[agents]
-
-[swarms]
 
 [hooks]
 enabled = true
@@ -548,144 +302,61 @@ enabled = true
 [hooks.builtin]
 command_logger = false
 
-[hooks.builtin.webhook_audit]
-enabled = false
-url = ""
-tool_patterns = []
-include_args = false
-max_args_bytes = 4096
 
-[hardware]
-enabled = false
-transport = "None"
-baud_rate = 115200
-workspace_datasheets = false
+# ┌─────────────────────────────────────────────────────────────┐
+# │                    代理（科学上网）                            │
+# │  服务器上通过 systemd Environment 设置 http_proxy 等           │
+# └─────────────────────────────────────────────────────────────┘
+[proxy]
+enabled = false                               # 代理由系统环境变量控制
 
-[transcription]
-enabled = false
-default_provider = "groq"
-api_url = "https://api.groq.com/openai/v1/audio/transcriptions"
-model = "whisper-large-v3-turbo"
-max_duration_secs = 120
 
-[tts]
-enabled = false
-default_provider = "openai"
-default_voice = "alloy"
-default_format = "mp3"
-max_text_length = 4096
-
-[mcp]
-enabled = false
-deferred_loading = true
-servers = []
-
-[nodes]
-enabled = false
-max_nodes = 16
-
-[workspace]
-enabled = false
-workspaces_dir = "~/.zeroclaw/workspaces"
-isolate_memory = true
-isolate_secrets = true
-isolate_audit = true
-cross_workspace_search = false
-
-[notion]
-enabled = false
-api_key = ""
-database_id = ""
-poll_interval_secs = 5
-status_property = "Status"
-input_property = "Input"
-result_property = "Result"
-max_concurrent = 4
-recover_stale = true
-
-[jira]
-enabled = false
-base_url = ""
-email = ""
-api_token = ""
-allowed_actions = ["get_ticket"]
-timeout_secs = 30
-
-[node_transport]
+# ┌─────────────────────────────────────────────────────────────┐
+# │                    备份配置                                  │
+# └─────────────────────────────────────────────────────────────┘
+[backup]
 enabled = true
-shared_secret = ""
-max_request_age_secs = 300
-require_https = true
-allowed_peers = []
-mutual_tls = false
-connection_pool_size = 4
+max_keep = 10
+include_dirs = ["config", "memory", "audit", "knowledge"]
+destination_dir = "state/backups"
+compress = true
 
-[knowledge]
-enabled = false
-db_path = "~/.zeroclaw/knowledge.db"
-max_nodes = 100000
-auto_capture = false
-suggest_on_query = true
-cross_workspace_search = false
 
-[linkedin]
-enabled = false
-api_version = "202602"
-
-[linkedin.content]
-rss_feeds = []
-github_users = []
-github_repos = []
-topics = []
-persona = ""
-instructions = ""
-
-[linkedin.image]
-enabled = false
-providers = [
-    "stability",
-    "imagen",
-    "dalle",
-    "flux",
-]
-fallback_card = true
-card_accent_color = "#0A66C2"
-temp_dir = "linkedin/images"
-
-[linkedin.image.stability]
-api_key_env = "STABILITY_API_KEY"
-model = "stable-diffusion-xl-1024-v1-0"
-
-[linkedin.image.imagen]
-api_key_env = "GOOGLE_VERTEX_API_KEY"
-project_id_env = "GOOGLE_CLOUD_PROJECT"
-region = "us-central1"
-
-[linkedin.image.dalle]
-api_key_env = "OPENAI_API_KEY"
-model = "dall-e-3"
-size = "1024x1024"
-
-[linkedin.image.flux]
-api_key_env = "FAL_API_KEY"
-model = "fal-ai/flux/schnell"
-
-[plugins]
-enabled = false
-plugins_dir = "~/.zeroclaw/plugins"
-auto_discover = false
-max_plugins = 50
+# ═══════════════════════════════════════════════════════════════
+#                    唤星多租户配置
+# ═══════════════════════════════════════════════════════════════
+#
+# 唤星（HuanXing）是 ZeroClaw 的多租户 AI Agent 平台层。
+# 每个注册用户获得独立的 Agent workspace、记忆、会话。
+#
+# 架构:
+#   Guardian  → 负责新用户引导、注册
+#   Admin     → 管理员专用，系统监控、运维
+#   Tenant    → 普通用户的 AI Agent
+#
+# ═══════════════════════════════════════════════════════════════
 
 [huanxing]
 enabled = true
-db_path = "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-zeroclaw/server-config/data/users.db"
-agents_dir = "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-zeroclaw/server-config/agents"
-guardian_workspace = "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-zeroclaw/server-config/guardian"
-admin_workspace = "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-zeroclaw/server-config/admin"
-admin_channels = ["feishu"]
-default_template = "finance"
-default_model = "claude-sonnet-4-6"
-default_provider = "anthropic-custom:https://llm.dcfuture.cn"
+
+# ── 数据路径（本地开发路径，服务器部署时改为 /opt/huanxing/...）──
+db_path = "server-config/data/users.db"                     # 用户数据库
+agents_dir = "server-config/agents"                         # 租户 Agent 工作区
+guardian_workspace = "server-config/guardian"                # Guardian 工作区
+admin_workspace = "server-config/admin"                     # Admin 工作区
+common_skills_dir = "server-config/common-skills"           # 公共技能目录
+templates_dir = "server-config/templates"                   # 模板目录（本地）
+hub_dir = ""                                                # Hub 目录（服务器上设为 /opt/huanxing/hub）
+
+# ── Admin 配置 ──
+admin_channels = ["feishu"]                   # Admin 只在飞书群可用
+
+# ── 租户默认值 ──
+default_template = "finance"                  # 新注册时默认模板
+default_model = "qwen3.5-plus"                # 租户默认模型
+default_provider = "anthropic-custom:https://llm.dcfuture.cn"  # 租户默认 provider
+
+# ── Guardian 专用工具（租户不可见）──
 guardian_only_tools = [
     "hx_register_user",
     "hx_invalidate_cache",
@@ -693,28 +364,60 @@ guardian_only_tools = [
     "hx_local_list_users",
     "hx_local_stats",
 ]
+
+# ── 唤星后端 API ──
 api_base_url = "https://api.huanxing.dcfuture.cn"
-agent_key = "wNYPBNNl61kwVLWgFW7N1yFJKb4yCqJxjSKy__RtG94"
-server_id = "huanxing-local-test"
 hasn_base_url = "https://api.huanxing.dcfuture.cn"
-templates_dir = "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-hub/templates"
-common_skills_dir = "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-zeroclaw/server-config/common-skills"
-hub_dir = "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-hub"
+agent_key = "wNYPBNNl61kwVLWgFW7N1yFJKb4yCqJxjSKy__RtG94"
+server_id = "huanxing-local-dev"              # 服务器部署时改为 "huanxing-115-test" 等
 
+# ── 模板系统 ──
 [huanxing.templates]
+# 模板特定覆盖（一般不需要，从 hub 自动读取）
 
+# ── Hub 自动同步（从 Gitee 拉取最新技能和模板）──
 [huanxing.hub_sync]
 gitee_repo = "huanxing-team/huanxing-hub"
 gitee_branch = "main"
-auto_sync_on_startup = true
-sync_interval_hours = 24
+auto_sync_on_startup = true                   # 启动时自动同步
+sync_interval_hours = 24                      # 每24小时同步一次
 
+# ── 租户心跳（定期检查租户健康状态）──
 [huanxing.tenant_heartbeat]
 enabled = true
-scan_interval_minutes = 5
-max_concurrent = 2
-per_tenant_timeout_secs = 60
+scan_interval_minutes = 5                     # 每5分钟扫描一次
+max_concurrent = 2                            # 最多同时处理2个租户
+per_tenant_timeout_secs = 60                  # 每租户心跳超时
+
+
+# ═══════════════════════════════════════════════════════════════
+#                    以下为默认关闭的可选功能
+#               （按需开启，大部分场景不需要修改）
+# ═══════════════════════════════════════════════════════════════
+
+[runtime]
+kind = "native"
+
+[composio]
+enabled = false
+
+[mcp]
+enabled = false
+
+[plugins]
+enabled = false
+
+[knowledge]
+enabled = false
+
+[cost]
+enabled = false
+
+[identity]
+format = "openclaw"
+
+[node_transport]
+enabled = true
 
 [verifiable_intent]
 enabled = false
-strictness = "strict"
