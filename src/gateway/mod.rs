@@ -801,8 +801,6 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         .route("/api/cost", get(api::handle_api_cost))
         .route("/api/cli-tools", get(api::handle_api_cli_tools))
         .route("/api/health", get(api::handle_api_health))
-        .route("/api/sessions", get(api::handle_api_sessions_list))
-        .route("/api/sessions/{id}", delete(api::handle_api_session_delete))
         // ── Pairing + Device management API ──
         .route("/api/pairing/initiate", post(api_pairing::initiate_pairing))
         .route("/api/pair", post(api_pairing::submit_pairing_enhanced))
@@ -825,8 +823,14 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
     let app = app.merge(crate::huanxing::api_agents::agent_routes());
 
     // ── HuanXing Session REST API（桌面端，requires huanxing feature）──
+    // huanxing 版本完整接管 /api/sessions 路由（含原上游的 GET + DELETE），
+    // 非 huanxing 构建则在此处注册上游实现。
     #[cfg(feature = "huanxing")]
     let app = app.merge(crate::huanxing::api_sessions::session_routes());
+    #[cfg(not(feature = "huanxing"))]
+    let app = app
+        .route("/api/sessions", get(api::handle_api_sessions_list))
+        .route("/api/sessions/{id}", delete(api::handle_api_session_delete));
 
     // ── HuanXing Hub 同步 API（requires huanxing feature）──
     #[cfg(feature = "huanxing")]
