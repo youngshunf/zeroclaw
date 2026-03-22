@@ -2,6 +2,7 @@ import React from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useState, useEffect, Suspense } from 'react';
 import NavRail, { type TabKey } from './NavRail';
+import { useHasnConversations, useHasnContacts } from '@/huanxing/hooks/useHasn';
 
 // Settings-related paths
 const settingsPaths = ['/dashboard', '/config', '/cost', '/logs', '/doctor', '/devices', '/integrations', '/tools', '/cron', '/memory', '/about'];
@@ -35,6 +36,8 @@ export default function HuanxingLayout() {
   const location = useLocation();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<TabKey>(() => routeToTab(location.pathname) ?? 'agent');
+  const { totalUnread } = useHasnConversations();
+  const { friendRequests } = useHasnContacts();
 
   // Sync tab with route changes (skip for independent pages like /profile)
   useEffect(() => {
@@ -60,7 +63,7 @@ export default function HuanxingLayout() {
       <NavRail
         activeTab={activeTab}
         onTabChange={handleTabChange}
-        badges={{ agent: 3, hasn: 5, contacts: 1 }}
+        badges={{ hasn: totalUnread, contacts: friendRequests.filter((r) => r.status === 'pending').length }}
       />
       <div className="hx-content">
         <Suspense

@@ -9,19 +9,40 @@ mod commands;
 mod sidecar;
 
 use commands::{auth, hasn, zeroclaw};
+use hasn::HasnClientState;
 use sidecar::SidecarManager;
 use std::sync::Arc;
 use tauri::Emitter;
 
+/// HASN API 基础 URL
+const HASN_API_BASE: &str = "https://api.huanxing.dcfuture.cn";
+
+/// HASN 本地数据库路径
+fn hasn_db_path() -> String {
+    let dir = dirs::home_dir()
+        .unwrap_or_default()
+        .join(".huanxing")
+        .join("hasn");
+    std::fs::create_dir_all(&dir).ok();
+    dir.join("hasn.db").to_string_lossy().to_string()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let manager = Arc::new(SidecarManager::new());
+
+    // 初始化 HASN 客户端状态
+    let hasn_state = Arc::new(
+        HasnClientState::new(HASN_API_BASE, &hasn_db_path())
+            .expect("初始化 HASN 客户端失败"),
+    );
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_notification::init())
         .manage(manager.clone())
+        .manage(hasn_state.clone())
         .setup({
             let mgr = manager.clone();
             move |app| {
@@ -80,14 +101,22 @@ pub fn run() {
             auth::login,
             auth::logout,
             auth::get_auth_state,
+            // HASN 连接管理
+            hasn::hasn_connect,
+            hasn::hasn_disconnect,
+            hasn::hasn_status,
             // HASN IM
             hasn::get_conversations,
             hasn::get_messages,
             hasn::send_message,
             hasn::mark_conversation_read,
+            // HASN 联系人
             hasn::get_contacts,
             hasn::send_friend_request,
+            hasn::get_friend_requests,
             hasn::respond_friend_request,
+            // HASN Agent
+            hasn::get_my_agents,
             // ZeroClaw sidecar
             zeroclaw::start_zeroclaw,
             zeroclaw::stop_zeroclaw,
