@@ -269,13 +269,59 @@ impl HasnApiClient {
         Ok(())
     }
 
-    /// WebSocket 连接 URL
-    pub fn ws_native_url(&self, token: &str) -> String {
+    /// WebSocket 连接 URL (对齐 29 文档: /ws/client + client_jwt)
+    pub fn ws_client_url(&self, client_jwt: &str) -> String {
         let ws_base = self
             .base_url
             .replace("https://", "wss://")
             .replace("http://", "ws://");
-        format!("{}/api/v1/hasn/ws/native?token={}", ws_base, token)
+        format!("{}/api/v1/hasn/ws/client?token={}", ws_base, client_jwt)
+    }
+
+    // ═══════════════════════════════════
+    // 客户端注册与 JWT (对齐 29/30 文档)
+    // ═══════════════════════════════════
+
+    /// 注册客户端设备
+    pub async fn register_client(
+        &self,
+        client_type: &str,
+        device_name: Option<&str>,
+    ) -> Result<RegisterClientResponse, HasnError> {
+        let mut body = serde_json::json!({
+            "client_type": client_type,
+        });
+        if let Some(name) = device_name {
+            body["device_name"] = serde_json::Value::String(name.to_string());
+        }
+
+        let req = self
+            .hasn_request(Method::POST, "/auth/register-client")
+            .json(&body);
+        self.send_hasn(req).await
+    }
+
+    /// 签发 Client JWT
+    pub async fn get_client_token(
+        &self,
+        client_id: &str,
+    ) -> Result<ClientTokenResponse, HasnError> {
+        let req = self
+            .hasn_request(Method::POST, "/auth/client-token")
+            .json(&serde_json::json!({ "client_id": client_id }));
+        self.send_hasn(req).await
+    }
+
+    /// 获取当前用户 HASN 身份
+    pub async fn get_me(&self) -> Result<serde_json::Value, HasnError> {
+        let req = self.hasn_request(Method::GET, "/me");
+        self.send_hasn(req).await
+    }
+
+    /// 获取我的 Agent 列表（含在线状态）
+    pub async fn list_my_agents(&self) -> Result<Vec<AgentInfo>, HasnError> {
+        let req = self.hasn_request(Method::GET, "/me/agents");
+        self.send_hasn(req).await
     }
 }
 
