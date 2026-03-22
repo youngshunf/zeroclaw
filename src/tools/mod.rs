@@ -235,6 +235,41 @@ impl Tool for ArcDelegatingTool {
     }
 }
 
+// ── Per-request security policy override (task-local) ────────────
+//
+// During channel message processing, the orchestrator can inject a
+// per-tenant security policy via `with_active_security`.  Tool
+// implementations call `get_active_security()` to prefer this
+// request-scoped policy over the global one baked into the tool at
+// construction time.  This mechanism replaces the previous
+// `#[cfg(feature = "huanxing")]` branches in shell.rs / file_*.rs
+// and is useful for *any* per-request SecurityPolicy override
+// scenario, not just multi-tenant.
+
+tokio::task_local! {
+    static ACTIVE_SECURITY: Arc<SecurityPolicy>;
+}
+
+/// Retrieve the per-request security policy, if one was injected.
+///
+/// Tools should prefer this over their construction-time policy:
+/// ```ignore
+/// let security = get_active_security().unwrap_or_else(|| self.security.clone());
+/// ```
+pub fn get_active_security() -> Option<Arc<SecurityPolicy>> {
+    ACTIVE_SECURITY.try_with(|s| s.clone()).ok()
+}
+
+/// Run a future with a per-request security policy injected into the
+/// task-local scope.  Tools executed within this scope will see the
+/// overridden policy via [`get_active_security`].
+pub async fn with_active_security<F, T>(security: Arc<SecurityPolicy>, f: F) -> T
+where
+    F: std::future::Future<Output = T>,
+{
+    ACTIVE_SECURITY.scope(security, f).await
+}
+
 fn boxed_registry_from_arcs(tools: Vec<Arc<dyn Tool>>) -> Vec<Box<dyn Tool>> {
     tools.into_iter().map(ArcDelegatingTool::boxed).collect()
 }

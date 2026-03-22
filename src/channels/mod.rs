@@ -17,6 +17,7 @@
 pub mod bluesky;
 pub mod clawdtalk;
 pub mod cli;
+pub mod context_resolver;
 pub mod dingtalk;
 pub mod discord;
 pub mod email_channel;
@@ -100,6 +101,7 @@ use crate::approval::ApprovalManager;
 use crate::config::Config;
 use crate::identity;
 use crate::memory::{self, Memory};
+use crate::channels::session_backend::SessionBackend;
 use crate::observability::traits::{ObserverEvent, ObserverMetric};
 use crate::observability::{self, runtime_trace, Observer};
 use crate::providers::{self, ChatMessage, Provider};
@@ -384,10 +386,12 @@ struct ChannelRuntimeContext {
     /// approval since no operator is present on channel runs.
     approval_manager: Arc<ApprovalManager>,
     activated_tools: Option<std::sync::Arc<std::sync::Mutex<crate::tools::ActivatedToolSet>>>,
-    /// HuanXing multi-tenant router (None when huanxing.enabled = false).
-    #[cfg(feature = "huanxing")]
-    tenant_router: Option<Arc<crate::huanxing::TenantRouter>>,
-    /// Deferred router slot for skill market tools (set after router creation).
+    /// Message context resolver — abstracts single-tenant vs multi-tenant
+    /// context lookup.  In single-tenant mode this is a [`DefaultContextResolver`];
+    /// with the `huanxing` feature it's a [`MultiTenantResolver`] backed by
+    /// [`TenantRouter`].
+    context_resolver: Arc<dyn crate::channels::context_resolver::MessageContextResolver>,
+    /// HuanXing: deferred router slot for skill market tools.
     #[cfg(feature = "huanxing")]
     skill_market_router_slot: Option<crate::huanxing::skill_market_tools::RouterSlot>,
 }
@@ -2040,21 +2044,18 @@ async fn process_channel_message(
         return;
     }
 
-    // ── HuanXing multi-tenant routing ────────────────────
-    #[cfg(feature = "huanxing")]
-    let tenant_ctx = if let Some(router) = ctx.tenant_router.as_ref() {
-        let tenant = router.resolve(&msg.channel, &msg.sender).await;
-        tracing::debug!(
-            agent_id = %tenant.agent_id,
-            is_guardian = tenant.is_guardian,
-            channel = %msg.channel,
-            sender = %msg.sender,
-            "Tenant resolved"
-        );
-        Some(tenant)
-    } else {
-        None
-    };
+    // ── Resolve per-message context via abstraction layer ──────
+    let msg_ctx = ctx.context_resolver.resolve(&msg.channel, &msg.sender).await;
+    let is_multi_tenant = ctx.context_resolver.is_multi_tenant();
+
+    tracing::debug!(
+        agent_id = %msg_ctx.agent_id,
+        is_guardian = msg_ctx.is_guardian,
+        is_multi_tenant,
+        channel = %msg.channel,
+        sender = %msg.sender,
+        "Message context resolved"
+    );
 
     println!(
         "  💬 [{}] from {}: {}",
@@ -2139,65 +2140,73 @@ async fn process_channel_message(
     #[allow(unused_mut)]
     let mut runtime_defaults = runtime_defaults_snapshot(ctx.as_ref());
 
-    // ── HuanXing: override model/provider from tenant context ────
-    #[cfg(feature = "huanxing")]
-    let route = if let Some(tenant) = tenant_ctx.as_ref() {
-        let provider = tenant
+    // ── Override model/provider/temperature/api_key from resolved context ────
+    let route = {
+        let provider = msg_ctx
             .provider
             .as_deref()
             .unwrap_or(&route.provider)
             .to_string();
-        let model = tenant.model.as_deref().unwrap_or(&route.model).to_string();
-        if let Some(temp) = tenant.temperature {
+        let model = msg_ctx.model.as_deref().unwrap_or(&route.model).to_string();
+        if let Some(temp) = msg_ctx.temperature {
             runtime_defaults.temperature = temp;
         }
-        if let Some(ref key) = tenant.api_key {
+        if let Some(ref key) = msg_ctx.api_key {
             runtime_defaults.api_key = Some(key.clone());
         }
         ChannelRouteSelection {
             provider,
             model,
-            api_key: tenant.api_key.clone().or(route.api_key),
+            api_key: msg_ctx.api_key.clone().or(route.api_key),
         }
-    } else {
-        route
     };
 
-    // ── HuanXing: per-tenant provider with tenant api_key ────
-    #[cfg(feature = "huanxing")]
-    let tenant_provider = if let Some(ref tenant) = tenant_ctx {
-        if let Some(ref tenant_api_key) = tenant.api_key {
-            match create_resilient_provider_nonblocking(
-                &route.provider,
-                Some(tenant_api_key.clone()),
-                None,
-                runtime_defaults.reliability.clone(),
-                ctx.provider_runtime_options.clone(),
-            )
-            .await
-            {
-                Ok(provider) => Some(Arc::from(provider)),
-                Err(err) => {
-                    tracing::warn!(
-                        tenant_agent_id = %tenant.agent_id,
-                        error = %err,
-                        "Failed to create provider with tenant api_key, falling back to global"
-                    );
-                    None
+    // ── Create per-request provider (with tenant api_key if set) ────
+    let active_provider = if let Some(ref tenant_api_key) = msg_ctx.api_key {
+        match create_resilient_provider_nonblocking(
+            &route.provider,
+            Some(tenant_api_key.clone()),
+            None,
+            runtime_defaults.reliability.clone(),
+            ctx.provider_runtime_options.clone(),
+        )
+        .await
+        {
+            Ok(provider) => Arc::from(provider),
+            Err(err) => {
+                tracing::warn!(
+                    agent_id = %msg_ctx.agent_id,
+                    error = %err,
+                    "Failed to create provider with tenant api_key, falling back to global"
+                );
+                match get_or_create_provider(ctx.as_ref(), &route.provider, route.api_key.as_deref()).await {
+                    Ok(p) => p,
+                    Err(err) => {
+                        let safe_err = providers::sanitize_api_error(&err.to_string());
+                        let message = format!(
+                            "⚠️ Failed to initialize provider `{}`. Please run `/models` to choose another provider.\nDetails: {safe_err}",
+                            route.provider
+                        );
+                        if let Some(channel) = target_channel.as_ref() {
+                            let _ = channel
+                                .send(
+                                    &SendMessage::new(message, &msg.reply_target)
+                                        .in_thread(msg.thread_ts.clone()),
+                                )
+                                .await;
+                        }
+                        return;
+                    }
                 }
             }
-        } else {
-            None
         }
     } else {
-        None
-    };
-
-    #[cfg(feature = "huanxing")]
-    let active_provider = if let Some(p) = tenant_provider {
-        p
-    } else {
-        match get_or_create_provider(ctx.as_ref(), &route.provider, route.api_key.as_deref()).await
+        match get_or_create_provider(
+            ctx.as_ref(),
+            &route.provider,
+            route.api_key.as_deref(),
+        )
+        .await
         {
             Ok(provider) => provider,
             Err(err) => {
@@ -2219,51 +2228,13 @@ async fn process_channel_message(
         }
     };
 
-    #[cfg(not(feature = "huanxing"))]
-    let active_provider = match get_or_create_provider(
-        ctx.as_ref(),
-        &route.provider,
-        route.api_key.as_deref(),
-    )
-    .await
-    {
-        Ok(provider) => provider,
-        Err(err) => {
-            let safe_err = providers::sanitize_api_error(&err.to_string());
-            let message = format!(
-                "⚠️ Failed to initialize provider `{}`. Please run `/models` to choose another provider.\nDetails: {safe_err}",
-                route.provider
-            );
-            if let Some(channel) = target_channel.as_ref() {
-                let _ = channel
-                    .send(
-                        &SendMessage::new(message, &msg.reply_target)
-                            .in_thread(msg.thread_ts.clone()),
-                    )
-                    .await;
-            }
-            return;
-        }
-    };
-
-    // ── HuanXing: resolve effective per-tenant resources ─────────
-    #[cfg(feature = "huanxing")]
-    let effective_memory: &dyn Memory = if let Some(tenant) = tenant_ctx.as_ref() {
-        tenant.memory.as_ref()
-    } else {
-        ctx.memory.as_ref()
-    };
-    #[cfg(not(feature = "huanxing"))]
-    let effective_memory: &dyn Memory = ctx.memory.as_ref();
-
-    #[cfg(feature = "huanxing")]
-    let effective_histories: &ConversationHistoryMap = if let Some(tenant) = tenant_ctx.as_ref() {
-        &tenant.conversation_histories
+    // ── Effective per-request resources from resolved context ─────────
+    let effective_memory: Arc<dyn Memory> = Arc::clone(&msg_ctx.memory);
+    let effective_histories: &ConversationHistoryMap = if is_multi_tenant {
+        &msg_ctx.conversation_histories
     } else {
         &ctx.conversation_histories
     };
-    #[cfg(not(feature = "huanxing"))]
-    let effective_histories: &ConversationHistoryMap = &ctx.conversation_histories;
 
     if ctx.auto_save_memory
         && msg.content.chars().count() >= AUTOSAVE_MIN_MESSAGE_CHARS
@@ -2301,10 +2272,9 @@ async fn process_channel_message(
     };
 
     // Preserve user turn before the LLM call so interrupted requests keep context.
-    #[cfg(feature = "huanxing")]
-    let tenant_session_store = if let Some(ref tenant) = tenant_ctx {
-        // Per-tenant session backend: created in TenantContext based on config
-        if let Some(ref backend) = tenant.session_manager {
+    // Multi-tenant: use per-tenant session backend; single-tenant: use global.
+    let tenant_session_store: Option<Arc<dyn SessionBackend>> = if is_multi_tenant {
+        if let Some(ref backend) = msg_ctx.session_manager {
             // Hydrate tenant conversation histories from persisted sessions on first access
             let should_hydrate = {
                 let histories = effective_histories
@@ -2320,7 +2290,7 @@ async fn process_channel_message(
                         .unwrap_or_else(|e| e.into_inner());
                     histories.entry(history_key.clone()).or_insert(msgs);
                     tracing::debug!(
-                        agent_id = %tenant.agent_id,
+                        agent_id = %msg_ctx.agent_id,
                         history_key = %history_key,
                         "Hydrated tenant session from disk"
                     );
@@ -2334,29 +2304,24 @@ async fn process_channel_message(
         None
     };
 
-    #[cfg(feature = "huanxing")]
-    {
-        if tenant_ctx.is_some() {
-            let user_turn = ChatMessage::user(&msg.content);
-            if let Some(ref store) = tenant_session_store {
-                if let Err(e) = store.append(&history_key, &user_turn) {
-                    tracing::warn!("Failed to persist tenant session turn: {e}");
-                }
+    if is_multi_tenant {
+        let user_turn = ChatMessage::user(&msg.content);
+        if let Some(ref store) = tenant_session_store {
+            if let Err(e) = store.append(&history_key, &user_turn) {
+                tracing::warn!("Failed to persist tenant session turn: {e}");
             }
-            let mut histories = effective_histories
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
-            let turns = histories.entry(history_key.clone()).or_default();
-            turns.push(user_turn);
-            while turns.len() > MAX_CHANNEL_HISTORY {
-                turns.remove(0);
-            }
-        } else {
-            append_sender_turn(ctx.as_ref(), &history_key, ChatMessage::user(&msg.content));
         }
+        let mut histories = effective_histories
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let turns = histories.entry(history_key.clone()).or_default();
+        turns.push(user_turn);
+        while turns.len() > MAX_CHANNEL_HISTORY {
+            turns.remove(0);
+        }
+    } else {
+        append_sender_turn(ctx.as_ref(), &history_key, ChatMessage::user(&msg.content));
     }
-    #[cfg(not(feature = "huanxing"))]
-    append_sender_turn(ctx.as_ref(), &history_key, ChatMessage::user(&msg.content));
 
     // Build history from per-sender conversation cache.
     let prior_turns_raw = if force_fresh_session {
@@ -2426,7 +2391,7 @@ async fn process_channel_message(
 
     let mem_recall_start = Instant::now();
     let sender_memory_fut = build_memory_context(
-        effective_memory,
+        effective_memory.as_ref(),
         &msg.content,
         ctx.min_relevance_score,
         Some(&msg.sender),
@@ -2434,7 +2399,7 @@ async fn process_channel_message(
 
     let (sender_memory, group_memory) = if is_group_chat {
         let group_memory_fut = build_memory_context(
-            effective_memory,
+            effective_memory.as_ref(),
             &msg.content,
             ctx.min_relevance_score,
             Some(&history_key),
@@ -2461,17 +2426,11 @@ async fn process_channel_message(
         format!("{sender_memory}\n{group_memory}")
     };
 
-    // HUANXING: 多租户时使用 tenant 专属 system prompt；否则走上游逻辑
-    #[cfg(feature = "huanxing")]
-    let base_system_prompt = if let Some(tenant) = tenant_ctx.as_ref() {
-        tenant.system_prompt.clone()
+    // System prompt: multi-tenant uses msg_ctx.system_prompt; single-tenant
+    // uses the global prompt (refreshing for new sessions).
+    let base_system_prompt = if is_multi_tenant {
+        msg_ctx.system_prompt.clone()
     } else if had_prior_history {
-        ctx.system_prompt.as_str().to_string()
-    } else {
-        refreshed_new_session_system_prompt(ctx.as_ref())
-    };
-    #[cfg(not(feature = "huanxing"))]
-    let base_system_prompt = if had_prior_history {
         ctx.system_prompt.as_str().to_string()
     } else {
         refreshed_new_session_system_prompt(ctx.as_ref())
@@ -2619,17 +2578,20 @@ async fn process_channel_message(
     let elapsed_before_llm_ms = started_at.elapsed().as_millis() as u64;
     tracing::info!(elapsed_before_llm_ms, "⏱ Starting LLM call");
 
-    // HUANXING: 多租户模式——在 task-local scope 内注入 tenant workspace 和 security policy，
-    // 确保 skill_market_tools 和 shell/file 工具操作的是 agent 自己的配置。
-    #[cfg(feature = "huanxing")]
-    let tenant_workspace_for_scope = tenant_ctx
-        .as_ref()
-        .map(|t| t.workspace_dir.clone());
+    // Multi-tenant: inject per-tenant workspace and security policy into task-local
+    // scope so tools (shell, file_read/write/edit, skill_market) operate on the
+    // correct tenant's directory and security policy.
+    let tenant_workspace_for_scope: Option<std::path::PathBuf> = if is_multi_tenant {
+        Some(msg_ctx.workspace_dir.clone())
+    } else {
+        None
+    };
 
-    #[cfg(feature = "huanxing")]
-    let tenant_security_for_scope = tenant_ctx
-        .as_ref()
-        .and_then(|t| t.security.clone());
+    let tenant_security_for_scope: Option<Arc<SecurityPolicy>> = if is_multi_tenant {
+        msg_ctx.security.clone()
+    } else {
+        None
+    };
 
     let default_pacing: crate::config::PacingConfig = Default::default();
 
@@ -2668,10 +2630,11 @@ async fn process_channel_message(
         };
     }
 
+    // Run the LLM tool loop, optionally scoped to tenant workspace + security
     #[cfg(feature = "huanxing")]
     let llm_result = if let Some(ws) = tenant_workspace_for_scope {
         if let Some(sec) = tenant_security_for_scope {
-            // 有 per-tenant security policy：同时注入 workspace 和 security
+            // Both workspace and security override
             tokio::select! {
                 () = cancellation_token.cancelled() => LlmExecutionResult::Cancelled,
                 result = crate::huanxing::skill_market_tools::with_tenant_context(
@@ -2681,7 +2644,7 @@ async fn process_channel_message(
                 ) => LlmExecutionResult::Completed(result),
             }
         } else {
-            // 只有 workspace（无 autonomy 覆盖）
+            // Workspace only, no security override
             tokio::select! {
                 () = cancellation_token.cancelled() => LlmExecutionResult::Cancelled,
                 result = crate::huanxing::skill_market_tools::with_tenant_workspace(
@@ -2696,7 +2659,6 @@ async fn process_channel_message(
             result = run_tool_loop_future!() => LlmExecutionResult::Completed(result),
         }
     };
-
     #[cfg(not(feature = "huanxing"))]
     let llm_result = tokio::select! {
         () = cancellation_token.cancelled() => LlmExecutionResult::Cancelled,
@@ -2858,15 +2820,14 @@ async fn process_channel_message(
                 format!("{tool_summary}\n{delivered_response}")
             };
 
-            // HuanXing: 有 tenant 时只写 tenant session store；无 tenant 时走全局 JSONL
-            #[cfg(feature = "huanxing")]
+            // Persist assistant turn: multi-tenant uses per-tenant session store;
+            // single-tenant uses global append_sender_turn.
             {
                 let assistant_turn = ChatMessage::assistant(&history_response);
                 if let Some(ref store) = tenant_session_store {
                     if let Err(e) = store.append(&history_key, &assistant_turn) {
                         tracing::warn!("Failed to persist tenant assistant turn: {e}");
                     }
-                    // 仍需写内存历史（append_sender_turn 也会写）
                     let mut histories = effective_histories
                         .lock()
                         .unwrap_or_else(|e| e.into_inner());
@@ -2879,22 +2840,14 @@ async fn process_channel_message(
                     append_sender_turn(ctx.as_ref(), &history_key, assistant_turn);
                 }
             }
-            #[cfg(not(feature = "huanxing"))]
-            append_sender_turn(
-                ctx.as_ref(),
-                &history_key,
-                ChatMessage::assistant(&history_response),
-            );
 
             // Fire-and-forget LLM-driven memory consolidation.
             if ctx.auto_save_memory && msg.content.chars().count() >= AUTOSAVE_MIN_MESSAGE_CHARS {
-                // HuanXing: use tenant-scoped memory/model/provider for consolidation
-                #[cfg(feature = "huanxing")]
                 let (consolidation_memory, consolidation_model, consolidation_provider) =
-                    if let Some(ref tenant) = tenant_ctx {
+                    if is_multi_tenant {
                         (
-                            Arc::clone(&tenant.memory),
-                            tenant
+                            Arc::clone(&msg_ctx.memory),
+                            msg_ctx
                                 .model
                                 .as_deref()
                                 .unwrap_or(ctx.model.as_str())
@@ -2908,9 +2861,6 @@ async fn process_channel_message(
                             Arc::clone(&ctx.provider),
                         )
                     };
-                #[cfg(not(feature = "huanxing"))]
-                let (consolidation_memory, consolidation_model, consolidation_provider) =
-                    (Arc::clone(&ctx.memory), ctx.model.to_string(), Arc::clone(&ctx.provider));
                 let user_msg = msg.content.clone();
                 let assistant_resp = delivered_response.clone();
                 tokio::spawn(async move {
@@ -3056,7 +3006,6 @@ async fn process_channel_message(
                     // inherit this failed request as unfinished context.
                     let fail_turn =
                         ChatMessage::assistant("[Task failed — not continuing this request]");
-                    #[cfg(feature = "huanxing")]
                     {
                         if let Some(ref store) = tenant_session_store {
                             let _ = store.append(&history_key, &fail_turn);
@@ -3072,8 +3021,6 @@ async fn process_channel_message(
                             append_sender_turn(ctx.as_ref(), &history_key, fail_turn);
                         }
                     }
-                    #[cfg(not(feature = "huanxing"))]
-                    append_sender_turn(ctx.as_ref(), &history_key, fail_turn);
                 }
                 if let Some(channel) = target_channel.as_ref() {
                     if let Some(ref draft_id) = draft_message_id {
@@ -3118,7 +3065,6 @@ async fn process_channel_message(
             // inherit this timed-out request as unfinished context.
             let timeout_turn =
                 ChatMessage::assistant("[Task timed out — not continuing this request]");
-            #[cfg(feature = "huanxing")]
             {
                 if let Some(ref store) = tenant_session_store {
                     let _ = store.append(&history_key, &timeout_turn);
@@ -3134,8 +3080,6 @@ async fn process_channel_message(
                     append_sender_turn(ctx.as_ref(), &history_key, timeout_turn);
                 }
             }
-            #[cfg(not(feature = "huanxing"))]
-            append_sender_turn(ctx.as_ref(), &history_key, timeout_turn);
             if let Some(channel) = target_channel.as_ref() {
                 let error_text =
                     "⚠️ Request timed out while waiting for the model. Please try again.";
@@ -4852,7 +4796,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
         memory: Arc::clone(&mem),
         tools_registry: Arc::clone(&tools_registry),
         observer,
-        system_prompt: Arc::new(system_prompt),
+        system_prompt: Arc::new(system_prompt.clone()),
         model: Arc::new(model.clone()),
         temperature,
         auto_save_memory: config.memory.auto_save,
@@ -4913,59 +4857,120 @@ pub async fn start_channels(config: Config) -> Result<()> {
         },
         approval_manager: Arc::new(ApprovalManager::for_non_interactive(&config.autonomy)),
         activated_tools: ch_activated_handle,
-        #[cfg(feature = "huanxing")]
-        tenant_router: if config.huanxing.enabled {
-            // Sync common skills from hub before loading tenant contexts
-            if let Some(ref hub_dir) = config.huanxing.hub_dir {
-                let common_skills_dir = config
-                    .huanxing
-                    .resolve_common_skills_dir(&config.workspace_dir);
-                match crate::huanxing::sync::sync_common_skills(hub_dir, &common_skills_dir).await {
-                    Ok((added, updated, removed, skipped)) => {
-                        if added + updated + removed > 0 {
-                            tracing::info!(
-                                added,
-                                updated,
-                                removed,
-                                skipped,
-                                "Common skills synced from hub"
-                            );
+        context_resolver: {
+            #[cfg(feature = "huanxing")]
+            {
+                if config.huanxing.enabled {
+                    // Sync common skills from hub before loading tenant contexts
+                    if let Some(ref hub_dir) = config.huanxing.hub_dir {
+                        let common_skills_dir = config
+                            .huanxing
+                            .resolve_common_skills_dir(&config.workspace_dir);
+                        match crate::huanxing::sync::sync_common_skills(hub_dir, &common_skills_dir).await {
+                            Ok((added, updated, removed, skipped)) => {
+                                if added + updated + removed > 0 {
+                                    tracing::info!(
+                                        added,
+                                        updated,
+                                        removed,
+                                        skipped,
+                                        "Common skills synced from hub"
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!("Common skills sync failed (non-fatal): {e}");
+                            }
                         }
                     }
-                    Err(e) => {
-                        tracing::warn!("Common skills sync failed (non-fatal): {e}");
+                    match crate::huanxing::TenantRouter::new(
+                        config.huanxing.clone(),
+                        config.workspace_dir.clone(),
+                        Arc::new(config.clone()),
+                    )
+                    .await
+                    {
+                        Ok(router) => {
+                            tracing::info!("HuanXing multi-tenant routing enabled");
+                            let router = Arc::new(router);
+                            // 注册全局 router 供 skill_market_tools 失效缓存使用
+                            crate::huanxing::skill_market_tools::register_global_router(Arc::clone(&router));
+                            Arc::new(crate::huanxing::MultiTenantResolver::new(router))
+                                as Arc<dyn crate::channels::context_resolver::MessageContextResolver>
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to initialize HuanXing tenant router: {e}; falling back to single-tenant");
+                            Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
+                                crate::channels::context_resolver::MessageContext {
+                                    agent_id: "default".to_string(),
+                                    is_guardian: false,
+                                    nickname: None,
+                                    star_name: None,
+                                    model: Some(model.clone()),
+                                    provider: None,
+                                    api_key: config.api_key.clone(),
+                                    temperature: Some(temperature),
+                                    system_prompt: system_prompt.clone(),
+                                    memory: Arc::clone(&mem),
+                                    conversation_histories: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                                    session_manager: None,
+                                    workspace_dir: config.workspace_dir.clone(),
+                                    security: None,
+                                },
+                            )) as Arc<dyn crate::channels::context_resolver::MessageContextResolver>
+                        }
                     }
+                } else {
+                    // huanxing feature enabled but config.huanxing.enabled = false
+                    Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
+                        crate::channels::context_resolver::MessageContext {
+                            agent_id: "default".to_string(),
+                            is_guardian: false,
+                            nickname: None,
+                            star_name: None,
+                            model: Some(model.clone()),
+                            provider: None,
+                            api_key: config.api_key.clone(),
+                            temperature: Some(temperature),
+                            system_prompt: system_prompt.clone(),
+                            memory: Arc::clone(&mem),
+                            conversation_histories: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                            session_manager: None,
+                            workspace_dir: config.workspace_dir.clone(),
+                            security: None,
+                        },
+                    )) as Arc<dyn crate::channels::context_resolver::MessageContextResolver>
                 }
             }
-            match crate::huanxing::TenantRouter::new(
-                config.huanxing.clone(),
-                config.workspace_dir.clone(),
-                Arc::new(config.clone()),
-            )
-            .await
+            #[cfg(not(feature = "huanxing"))]
             {
-                Ok(router) => {
-                    tracing::info!("HuanXing multi-tenant routing enabled");
-                    let router = Arc::new(router);
-                    // 注册全局 router 供 skill_market_tools 失效缓存使用
-                    crate::huanxing::skill_market_tools::register_global_router(Arc::clone(&router));
-                    Some(router)
-                }
-                Err(e) => {
-                    tracing::error!("Failed to initialize HuanXing tenant router: {e}");
-                    None
-                }
+                Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
+                    crate::channels::context_resolver::MessageContext {
+                        agent_id: "default".to_string(),
+                        is_guardian: false,
+                        nickname: None,
+                        star_name: None,
+                        model: Some(model.clone()),
+                        provider: None,
+                        api_key: config.api_key.clone(),
+                        temperature: Some(temperature),
+                        system_prompt: system_prompt.clone(),
+                        memory: Arc::clone(&mem),
+                        conversation_histories: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                        session_manager: None,
+                        workspace_dir: config.workspace_dir.clone(),
+                        security: None,
+                    },
+                )) as Arc<dyn crate::channels::context_resolver::MessageContextResolver>
             }
-        } else {
-            None
         },
         #[cfg(feature = "huanxing")]
         skill_market_router_slot: None,
     });
 
     // Hydrate in-memory conversation histories from persisted JSONL session files.
-    // HUANXING: 多租户模式下跳过全局 session_store 水化；各租户在首次收到消息时按需水化
-    #[cfg(not(feature = "huanxing"))]
+    // Multi-tenant mode: guardian uses global session_store;
+    // registered users hydrate on-demand from tenant.session_manager.
     if let Some(ref store) = runtime_ctx.session_store {
         let mut hydrated = 0usize;
         let mut histories = runtime_ctx
@@ -4981,28 +4986,10 @@ pub async fn start_channels(config: Config) -> Result<()> {
         }
         drop(histories);
         if hydrated > 0 {
-            tracing::info!("📂 Restored {hydrated} session(s) from disk");
-        }
-    }
-    #[cfg(feature = "huanxing")]
-    {
-        // 多租户模式：guardian 用全局 session_store，注册用户在首次消息时按需从 tenant.session_manager 水化
-        if let Some(ref store) = runtime_ctx.session_store {
-            let mut hydrated = 0usize;
-            let mut histories = runtime_ctx
-                .conversation_histories
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
-            for key in store.list_sessions() {
-                let msgs = store.load(&key);
-                if !msgs.is_empty() {
-                    hydrated += 1;
-                    histories.insert(key, msgs);
-                }
-            }
-            drop(histories);
-            if hydrated > 0 {
+            if runtime_ctx.context_resolver.is_multi_tenant() {
                 tracing::info!("📂 Restored {hydrated} guardian session(s) from disk");
+            } else {
+                tracing::info!("📂 Restored {hydrated} session(s) from disk");
             }
         }
     }
@@ -5284,8 +5271,24 @@ mod tests {
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
-            #[cfg(feature = "huanxing")]
-            tenant_router: None,
+            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
+                crate::channels::context_resolver::MessageContext {
+                    agent_id: "test".to_string(),
+                    is_guardian: false,
+                    nickname: None,
+                    star_name: None,
+                    model: None,
+                    provider: None,
+                    api_key: None,
+                    temperature: None,
+                    system_prompt: String::new(),
+                    memory: Arc::new(crate::memory::NoneMemory),
+                    conversation_histories: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                    session_manager: None,
+                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                    security: None,
+                },
+            )),
             #[cfg(feature = "huanxing")]
             skill_market_router_slot: None,
         };
@@ -5403,8 +5406,24 @@ mod tests {
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
-            #[cfg(feature = "huanxing")]
-            tenant_router: None,
+            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
+                crate::channels::context_resolver::MessageContext {
+                    agent_id: "test".to_string(),
+                    is_guardian: false,
+                    nickname: None,
+                    star_name: None,
+                    model: None,
+                    provider: None,
+                    api_key: None,
+                    temperature: None,
+                    system_prompt: String::new(),
+                    memory: Arc::new(crate::memory::NoneMemory),
+                    conversation_histories: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                    session_manager: None,
+                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                    security: None,
+                },
+            )),
             #[cfg(feature = "huanxing")]
             skill_market_router_slot: None,
         };
@@ -5478,8 +5497,24 @@ mod tests {
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
-            #[cfg(feature = "huanxing")]
-            tenant_router: None,
+            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
+                crate::channels::context_resolver::MessageContext {
+                    agent_id: "test".to_string(),
+                    is_guardian: false,
+                    nickname: None,
+                    star_name: None,
+                    model: None,
+                    provider: None,
+                    api_key: None,
+                    temperature: None,
+                    system_prompt: String::new(),
+                    memory: Arc::new(crate::memory::NoneMemory),
+                    conversation_histories: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                    session_manager: None,
+                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                    security: None,
+                },
+            )),
             #[cfg(feature = "huanxing")]
             skill_market_router_slot: None,
         };
@@ -5572,8 +5607,24 @@ mod tests {
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
-            #[cfg(feature = "huanxing")]
-            tenant_router: None,
+            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
+                crate::channels::context_resolver::MessageContext {
+                    agent_id: "test".to_string(),
+                    is_guardian: false,
+                    nickname: None,
+                    star_name: None,
+                    model: None,
+                    provider: None,
+                    api_key: None,
+                    temperature: None,
+                    system_prompt: String::new(),
+                    memory: Arc::new(crate::memory::NoneMemory),
+                    conversation_histories: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                    session_manager: None,
+                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                    security: None,
+                },
+            )),
             #[cfg(feature = "huanxing")]
             skill_market_router_slot: None,
         };
@@ -6116,8 +6167,24 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
-            #[cfg(feature = "huanxing")]
-            tenant_router: None,
+            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
+                crate::channels::context_resolver::MessageContext {
+                    agent_id: "test".to_string(),
+                    is_guardian: false,
+                    nickname: None,
+                    star_name: None,
+                    model: None,
+                    provider: None,
+                    api_key: None,
+                    temperature: None,
+                    system_prompt: String::new(),
+                    memory: Arc::new(crate::memory::NoneMemory),
+                    conversation_histories: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                    session_manager: None,
+                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                    security: None,
+                },
+            )),
             #[cfg(feature = "huanxing")]
             skill_market_router_slot: None,
         });
@@ -6200,8 +6267,24 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
-            #[cfg(feature = "huanxing")]
-            tenant_router: None,
+            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
+                crate::channels::context_resolver::MessageContext {
+                    agent_id: "test".to_string(),
+                    is_guardian: false,
+                    nickname: None,
+                    star_name: None,
+                    model: None,
+                    provider: None,
+                    api_key: None,
+                    temperature: None,
+                    system_prompt: String::new(),
+                    memory: Arc::new(crate::memory::NoneMemory),
+                    conversation_histories: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                    session_manager: None,
+                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                    security: None,
+                },
+            )),
             #[cfg(feature = "huanxing")]
             skill_market_router_slot: None,
         });
@@ -6298,8 +6381,24 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
-            #[cfg(feature = "huanxing")]
-            tenant_router: None,
+            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
+                crate::channels::context_resolver::MessageContext {
+                    agent_id: "test".to_string(),
+                    is_guardian: false,
+                    nickname: None,
+                    star_name: None,
+                    model: None,
+                    provider: None,
+                    api_key: None,
+                    temperature: None,
+                    system_prompt: String::new(),
+                    memory: Arc::new(crate::memory::NoneMemory),
+                    conversation_histories: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                    session_manager: None,
+                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                    security: None,
+                },
+            )),
             #[cfg(feature = "huanxing")]
             skill_market_router_slot: None,
         });
@@ -6381,8 +6480,24 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
-            #[cfg(feature = "huanxing")]
-            tenant_router: None,
+            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
+                crate::channels::context_resolver::MessageContext {
+                    agent_id: "test".to_string(),
+                    is_guardian: false,
+                    nickname: None,
+                    star_name: None,
+                    model: None,
+                    provider: None,
+                    api_key: None,
+                    temperature: None,
+                    system_prompt: String::new(),
+                    memory: Arc::new(crate::memory::NoneMemory),
+                    conversation_histories: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                    session_manager: None,
+                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                    security: None,
+                },
+            )),
             #[cfg(feature = "huanxing")]
             skill_market_router_slot: None,
         });
@@ -6474,8 +6589,24 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
-            #[cfg(feature = "huanxing")]
-            tenant_router: None,
+            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
+                crate::channels::context_resolver::MessageContext {
+                    agent_id: "test".to_string(),
+                    is_guardian: false,
+                    nickname: None,
+                    star_name: None,
+                    model: None,
+                    provider: None,
+                    api_key: None,
+                    temperature: None,
+                    system_prompt: String::new(),
+                    memory: Arc::new(crate::memory::NoneMemory),
+                    conversation_histories: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                    session_manager: None,
+                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                    security: None,
+                },
+            )),
             #[cfg(feature = "huanxing")]
             skill_market_router_slot: None,
         });
@@ -6588,8 +6719,24 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
-            #[cfg(feature = "huanxing")]
-            tenant_router: None,
+            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
+                crate::channels::context_resolver::MessageContext {
+                    agent_id: "test".to_string(),
+                    is_guardian: false,
+                    nickname: None,
+                    star_name: None,
+                    model: None,
+                    provider: None,
+                    api_key: None,
+                    temperature: None,
+                    system_prompt: String::new(),
+                    memory: Arc::new(crate::memory::NoneMemory),
+                    conversation_histories: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                    session_manager: None,
+                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                    security: None,
+                },
+            )),
             #[cfg(feature = "huanxing")]
             skill_market_router_slot: None,
         });
@@ -6683,8 +6830,24 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
-            #[cfg(feature = "huanxing")]
-            tenant_router: None,
+            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
+                crate::channels::context_resolver::MessageContext {
+                    agent_id: "test".to_string(),
+                    is_guardian: false,
+                    nickname: None,
+                    star_name: None,
+                    model: None,
+                    provider: None,
+                    api_key: None,
+                    temperature: None,
+                    system_prompt: String::new(),
+                    memory: Arc::new(crate::memory::NoneMemory),
+                    conversation_histories: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                    session_manager: None,
+                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                    security: None,
+                },
+            )),
             #[cfg(feature = "huanxing")]
             skill_market_router_slot: None,
         });
@@ -6793,8 +6956,24 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
-            #[cfg(feature = "huanxing")]
-            tenant_router: None,
+            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
+                crate::channels::context_resolver::MessageContext {
+                    agent_id: "test".to_string(),
+                    is_guardian: false,
+                    nickname: None,
+                    star_name: None,
+                    model: None,
+                    provider: None,
+                    api_key: None,
+                    temperature: None,
+                    system_prompt: String::new(),
+                    memory: Arc::new(crate::memory::NoneMemory),
+                    conversation_histories: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                    session_manager: None,
+                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                    security: None,
+                },
+            )),
             #[cfg(feature = "huanxing")]
             skill_market_router_slot: None,
         });
@@ -6888,8 +7067,24 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
-            #[cfg(feature = "huanxing")]
-            tenant_router: None,
+            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
+                crate::channels::context_resolver::MessageContext {
+                    agent_id: "test".to_string(),
+                    is_guardian: false,
+                    nickname: None,
+                    star_name: None,
+                    model: None,
+                    provider: None,
+                    api_key: None,
+                    temperature: None,
+                    system_prompt: String::new(),
+                    memory: Arc::new(crate::memory::NoneMemory),
+                    conversation_histories: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                    session_manager: None,
+                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                    security: None,
+                },
+            )),
             #[cfg(feature = "huanxing")]
             skill_market_router_slot: None,
         });
@@ -6973,8 +7168,24 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
-            #[cfg(feature = "huanxing")]
-            tenant_router: None,
+            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
+                crate::channels::context_resolver::MessageContext {
+                    agent_id: "test".to_string(),
+                    is_guardian: false,
+                    nickname: None,
+                    star_name: None,
+                    model: None,
+                    provider: None,
+                    api_key: None,
+                    temperature: None,
+                    system_prompt: String::new(),
+                    memory: Arc::new(crate::memory::NoneMemory),
+                    conversation_histories: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                    session_manager: None,
+                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                    security: None,
+                },
+            )),
             #[cfg(feature = "huanxing")]
             skill_market_router_slot: None,
         });
@@ -7169,8 +7380,24 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
-            #[cfg(feature = "huanxing")]
-            tenant_router: None,
+            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
+                crate::channels::context_resolver::MessageContext {
+                    agent_id: "test".to_string(),
+                    is_guardian: false,
+                    nickname: None,
+                    star_name: None,
+                    model: None,
+                    provider: None,
+                    api_key: None,
+                    temperature: None,
+                    system_prompt: String::new(),
+                    memory: Arc::new(crate::memory::NoneMemory),
+                    conversation_histories: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                    session_manager: None,
+                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                    security: None,
+                },
+            )),
             #[cfg(feature = "huanxing")]
             skill_market_router_slot: None,
         });
@@ -7274,8 +7501,24 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
-            #[cfg(feature = "huanxing")]
-            tenant_router: None,
+            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
+                crate::channels::context_resolver::MessageContext {
+                    agent_id: "test".to_string(),
+                    is_guardian: false,
+                    nickname: None,
+                    star_name: None,
+                    model: None,
+                    provider: None,
+                    api_key: None,
+                    temperature: None,
+                    system_prompt: String::new(),
+                    memory: Arc::new(crate::memory::NoneMemory),
+                    conversation_histories: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                    session_manager: None,
+                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                    security: None,
+                },
+            )),
             #[cfg(feature = "huanxing")]
             skill_market_router_slot: None,
         });
@@ -7394,8 +7637,24 @@ BTC is currently around $65,000 based on latest tool output."#
             )),
             activated_tools: None,
             query_classification: crate::config::QueryClassificationConfig::default(),
-            #[cfg(feature = "huanxing")]
-            tenant_router: None,
+            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
+                crate::channels::context_resolver::MessageContext {
+                    agent_id: "test".to_string(),
+                    is_guardian: false,
+                    nickname: None,
+                    star_name: None,
+                    model: None,
+                    provider: None,
+                    api_key: None,
+                    temperature: None,
+                    system_prompt: String::new(),
+                    memory: Arc::new(crate::memory::NoneMemory),
+                    conversation_histories: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                    session_manager: None,
+                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                    security: None,
+                },
+            )),
             #[cfg(feature = "huanxing")]
             skill_market_router_slot: None,
         });
@@ -7511,8 +7770,24 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
-            #[cfg(feature = "huanxing")]
-            tenant_router: None,
+            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
+                crate::channels::context_resolver::MessageContext {
+                    agent_id: "test".to_string(),
+                    is_guardian: false,
+                    nickname: None,
+                    star_name: None,
+                    model: None,
+                    provider: None,
+                    api_key: None,
+                    temperature: None,
+                    system_prompt: String::new(),
+                    memory: Arc::new(crate::memory::NoneMemory),
+                    conversation_histories: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                    session_manager: None,
+                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                    security: None,
+                },
+            )),
             #[cfg(feature = "huanxing")]
             skill_market_router_slot: None,
         });
@@ -7610,8 +7885,24 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
-            #[cfg(feature = "huanxing")]
-            tenant_router: None,
+            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
+                crate::channels::context_resolver::MessageContext {
+                    agent_id: "test".to_string(),
+                    is_guardian: false,
+                    nickname: None,
+                    star_name: None,
+                    model: None,
+                    provider: None,
+                    api_key: None,
+                    temperature: None,
+                    system_prompt: String::new(),
+                    memory: Arc::new(crate::memory::NoneMemory),
+                    conversation_histories: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                    session_manager: None,
+                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                    security: None,
+                },
+            )),
             #[cfg(feature = "huanxing")]
             skill_market_router_slot: None,
         });
@@ -7693,8 +7984,24 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
-            #[cfg(feature = "huanxing")]
-            tenant_router: None,
+            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
+                crate::channels::context_resolver::MessageContext {
+                    agent_id: "test".to_string(),
+                    is_guardian: false,
+                    nickname: None,
+                    star_name: None,
+                    model: None,
+                    provider: None,
+                    api_key: None,
+                    temperature: None,
+                    system_prompt: String::new(),
+                    memory: Arc::new(crate::memory::NoneMemory),
+                    conversation_histories: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                    session_manager: None,
+                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                    security: None,
+                },
+            )),
             #[cfg(feature = "huanxing")]
             skill_market_router_slot: None,
         });
@@ -8462,8 +8769,24 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
-            #[cfg(feature = "huanxing")]
-            tenant_router: None,
+            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
+                crate::channels::context_resolver::MessageContext {
+                    agent_id: "test".to_string(),
+                    is_guardian: false,
+                    nickname: None,
+                    star_name: None,
+                    model: None,
+                    provider: None,
+                    api_key: None,
+                    temperature: None,
+                    system_prompt: String::new(),
+                    memory: Arc::new(crate::memory::NoneMemory),
+                    conversation_histories: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                    session_manager: None,
+                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                    security: None,
+                },
+            )),
             #[cfg(feature = "huanxing")]
             skill_market_router_slot: None,
         });
@@ -8596,8 +8919,24 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
-            #[cfg(feature = "huanxing")]
-            tenant_router: None,
+            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
+                crate::channels::context_resolver::MessageContext {
+                    agent_id: "test".to_string(),
+                    is_guardian: false,
+                    nickname: None,
+                    star_name: None,
+                    model: None,
+                    provider: None,
+                    api_key: None,
+                    temperature: None,
+                    system_prompt: String::new(),
+                    memory: Arc::new(crate::memory::NoneMemory),
+                    conversation_histories: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                    session_manager: None,
+                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                    security: None,
+                },
+            )),
             #[cfg(feature = "huanxing")]
             skill_market_router_slot: None,
         });
@@ -8770,8 +9109,24 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
-            #[cfg(feature = "huanxing")]
-            tenant_router: None,
+            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
+                crate::channels::context_resolver::MessageContext {
+                    agent_id: "test".to_string(),
+                    is_guardian: false,
+                    nickname: None,
+                    star_name: None,
+                    model: None,
+                    provider: None,
+                    api_key: None,
+                    temperature: None,
+                    system_prompt: String::new(),
+                    memory: Arc::new(crate::memory::NoneMemory),
+                    conversation_histories: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                    session_manager: None,
+                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                    security: None,
+                },
+            )),
             #[cfg(feature = "huanxing")]
             skill_market_router_slot: None,
         });
@@ -8881,8 +9236,24 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
-            #[cfg(feature = "huanxing")]
-            tenant_router: None,
+            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
+                crate::channels::context_resolver::MessageContext {
+                    agent_id: "test".to_string(),
+                    is_guardian: false,
+                    nickname: None,
+                    star_name: None,
+                    model: None,
+                    provider: None,
+                    api_key: None,
+                    temperature: None,
+                    system_prompt: String::new(),
+                    memory: Arc::new(crate::memory::NoneMemory),
+                    conversation_histories: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                    session_manager: None,
+                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                    security: None,
+                },
+            )),
             #[cfg(feature = "huanxing")]
             skill_market_router_slot: None,
         });
@@ -9455,8 +9826,24 @@ This is an example JSON object for profile settings."#;
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
-            #[cfg(feature = "huanxing")]
-            tenant_router: None,
+            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
+                crate::channels::context_resolver::MessageContext {
+                    agent_id: "test".to_string(),
+                    is_guardian: false,
+                    nickname: None,
+                    star_name: None,
+                    model: None,
+                    provider: None,
+                    api_key: None,
+                    temperature: None,
+                    system_prompt: String::new(),
+                    memory: Arc::new(crate::memory::NoneMemory),
+                    conversation_histories: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                    session_manager: None,
+                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                    security: None,
+                },
+            )),
             #[cfg(feature = "huanxing")]
             skill_market_router_slot: None,
         });
@@ -9545,8 +9932,24 @@ This is an example JSON object for profile settings."#;
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
-            #[cfg(feature = "huanxing")]
-            tenant_router: None,
+            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
+                crate::channels::context_resolver::MessageContext {
+                    agent_id: "test".to_string(),
+                    is_guardian: false,
+                    nickname: None,
+                    star_name: None,
+                    model: None,
+                    provider: None,
+                    api_key: None,
+                    temperature: None,
+                    system_prompt: String::new(),
+                    memory: Arc::new(crate::memory::NoneMemory),
+                    conversation_histories: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                    session_manager: None,
+                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                    security: None,
+                },
+            )),
             #[cfg(feature = "huanxing")]
             skill_market_router_slot: None,
         });
@@ -9710,8 +10113,24 @@ This is an example JSON object for profile settings."#;
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
-            #[cfg(feature = "huanxing")]
-            tenant_router: None,
+            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
+                crate::channels::context_resolver::MessageContext {
+                    agent_id: "test".to_string(),
+                    is_guardian: false,
+                    nickname: None,
+                    star_name: None,
+                    model: None,
+                    provider: None,
+                    api_key: None,
+                    temperature: None,
+                    system_prompt: String::new(),
+                    memory: Arc::new(crate::memory::NoneMemory),
+                    conversation_histories: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                    session_manager: None,
+                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                    security: None,
+                },
+            )),
             #[cfg(feature = "huanxing")]
             skill_market_router_slot: None,
         });
@@ -9824,8 +10243,24 @@ This is an example JSON object for profile settings."#;
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
-            #[cfg(feature = "huanxing")]
-            tenant_router: None,
+            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
+                crate::channels::context_resolver::MessageContext {
+                    agent_id: "test".to_string(),
+                    is_guardian: false,
+                    nickname: None,
+                    star_name: None,
+                    model: None,
+                    provider: None,
+                    api_key: None,
+                    temperature: None,
+                    system_prompt: String::new(),
+                    memory: Arc::new(crate::memory::NoneMemory),
+                    conversation_histories: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                    session_manager: None,
+                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                    security: None,
+                },
+            )),
             #[cfg(feature = "huanxing")]
             skill_market_router_slot: None,
         });
@@ -9930,8 +10365,24 @@ This is an example JSON object for profile settings."#;
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
-            #[cfg(feature = "huanxing")]
-            tenant_router: None,
+            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
+                crate::channels::context_resolver::MessageContext {
+                    agent_id: "test".to_string(),
+                    is_guardian: false,
+                    nickname: None,
+                    star_name: None,
+                    model: None,
+                    provider: None,
+                    api_key: None,
+                    temperature: None,
+                    system_prompt: String::new(),
+                    memory: Arc::new(crate::memory::NoneMemory),
+                    conversation_histories: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                    session_manager: None,
+                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                    security: None,
+                },
+            )),
             #[cfg(feature = "huanxing")]
             skill_market_router_slot: None,
         });
@@ -10056,8 +10507,24 @@ This is an example JSON object for profile settings."#;
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
-            #[cfg(feature = "huanxing")]
-            tenant_router: None,
+            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
+                crate::channels::context_resolver::MessageContext {
+                    agent_id: "test".to_string(),
+                    is_guardian: false,
+                    nickname: None,
+                    star_name: None,
+                    model: None,
+                    provider: None,
+                    api_key: None,
+                    temperature: None,
+                    system_prompt: String::new(),
+                    memory: Arc::new(crate::memory::NoneMemory),
+                    conversation_histories: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                    session_manager: None,
+                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                    security: None,
+                },
+            )),
             #[cfg(feature = "huanxing")]
             skill_market_router_slot: None,
         });
@@ -10319,8 +10786,24 @@ This is an example JSON object for profile settings."#;
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
-            #[cfg(feature = "huanxing")]
-            tenant_router: None,
+            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
+                crate::channels::context_resolver::MessageContext {
+                    agent_id: "test".to_string(),
+                    is_guardian: false,
+                    nickname: None,
+                    star_name: None,
+                    model: None,
+                    provider: None,
+                    api_key: None,
+                    temperature: None,
+                    system_prompt: String::new(),
+                    memory: Arc::new(crate::memory::NoneMemory),
+                    conversation_histories: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                    session_manager: None,
+                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                    security: None,
+                },
+            )),
             #[cfg(feature = "huanxing")]
             skill_market_router_slot: None,
         });

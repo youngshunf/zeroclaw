@@ -1,0 +1,122 @@
+//! Message context resolver abstraction.
+//!
+//! Provides a trait ([`MessageContextResolver`]) that decouples message
+//! processing from context discovery.  The default implementation
+//! ([`DefaultContextResolver`]) returns the global configuration, while
+//! the `huanxing` feature supplies a multi-tenant implementation that
+//! routes each sender to an isolated tenant context.
+
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use async_trait::async_trait;
+
+use crate::channels::session_backend::SessionBackend;
+use crate::memory::Memory;
+use crate::providers::ChatMessage;
+use crate::security::policy::SecurityPolicy;
+
+// Re-export the conversation history map type used by channels/mod.rs.
+pub type ConversationHistoryMap =
+    Arc<std::sync::Mutex<std::collections::HashMap<String, Vec<ChatMessage>>>>;
+
+/// Runtime context for processing a single message.
+///
+/// Produced by [`MessageContextResolver::resolve`].  Contains all
+/// per-tenant (or global) resources needed during a channel message
+/// processing cycle.
+#[derive(Clone)]
+pub struct MessageContext {
+    // ── Identity ────────────────────────────────────────
+    /// Agent identifier (e.g. `"001-18611348367-finance"` or `"guardian"`).
+    pub agent_id: String,
+
+    /// Whether this context represents the guardian (unregistered users).
+    pub is_guardian: bool,
+
+    /// User display name.
+    pub nickname: Option<String>,
+
+    /// AI character name.
+    pub star_name: Option<String>,
+
+    // ── Model / Provider ────────────────────────────────
+    /// LLM model name override.
+    pub model: Option<String>,
+
+    /// LLM provider name override.
+    pub provider: Option<String>,
+
+    /// Per-tenant API key.
+    pub api_key: Option<String>,
+
+    /// Temperature override.
+    pub temperature: Option<f64>,
+
+    // ── Prompts ─────────────────────────────────────────
+    /// Fully-built system prompt.
+    pub system_prompt: String,
+
+    // ── Storage (isolated per tenant) ───────────────────
+    /// Vector memory backend.
+    pub memory: Arc<dyn Memory>,
+
+    /// Conversation history map (per-sender keyed).
+    pub conversation_histories: ConversationHistoryMap,
+
+    /// Session persistence backend (JSONL / SQLite).
+    pub session_manager: Option<Arc<dyn SessionBackend>>,
+
+    /// Workspace directory.
+    pub workspace_dir: PathBuf,
+
+    // ── Security ────────────────────────────────────────
+    /// Per-tenant security policy for shell / file tools.
+    pub security: Option<Arc<SecurityPolicy>>,
+}
+
+/// Resolves the runtime [`MessageContext`] for an incoming message.
+///
+/// Implementations must be cheaply cloneable (wrapped in `Arc`).
+#[async_trait]
+pub trait MessageContextResolver: Send + Sync {
+    /// Resolve context for the given channel + sender.
+    ///
+    /// Called once per inbound message at the start of the processing
+    /// pipeline.  The returned [`MessageContext`] contains all resources
+    /// (model, memory, history, session backend, etc.) needed for the
+    /// rest of the pipeline.
+    async fn resolve(&self, channel: &str, sender_id: &str) -> MessageContext;
+
+    /// Invalidate cached context for a specific sender.
+    ///
+    /// Called after registration, config changes, or agent deletion so
+    /// the next `resolve()` rebuilds the context from source.
+    fn invalidate(&self, _channel: &str, _sender_id: &str) {}
+
+    /// Whether the resolver operates in multi-tenant mode.
+    fn is_multi_tenant(&self) -> bool {
+        false
+    }
+}
+
+/// Default resolver — returns a fixed global context for every sender.
+///
+/// Used when no multi-tenant feature is active.
+pub struct DefaultContextResolver {
+    ctx: MessageContext,
+}
+
+impl DefaultContextResolver {
+    /// Create a new default resolver wrapping the given global context.
+    pub fn new(ctx: MessageContext) -> Self {
+        Self { ctx }
+    }
+}
+
+#[async_trait]
+impl MessageContextResolver for DefaultContextResolver {
+    async fn resolve(&self, _channel: &str, _sender_id: &str) -> MessageContext {
+        self.ctx.clone()
+    }
+}

@@ -38,6 +38,9 @@ struct WorkspaceOverrides {
     /// [autonomy] 节覆盖全局安全策略（allowed_commands / forbidden_paths 等）
     #[serde(default)]
     autonomy: Option<crate::config::AutonomyConfig>,
+    /// [skills] 节覆盖技能注入模式等配置
+    #[serde(default)]
+    skills: Option<crate::config::SkillsConfig>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -223,13 +226,30 @@ impl TenantContext {
 
         let tool_descs: Vec<(&str, &str)> = Vec::new();
 
-        let system_prompt = crate::channels::build_system_prompt(
+        // Resolve skills prompt injection mode: workspace [skills] > global [skills]
+        let skills_prompt_mode = overrides
+            .skills
+            .as_ref()
+            .map(|s| s.prompt_injection_mode)
+            .unwrap_or(global_config.skills.prompt_injection_mode);
+
+        // Resolve autonomy level: workspace [autonomy] > global [autonomy]
+        let autonomy_level = overrides
+            .autonomy
+            .as_ref()
+            .map(|a| a.level.clone())
+            .unwrap_or_else(|| global_config.autonomy.level.clone());
+
+        let system_prompt = crate::channels::build_system_prompt_with_mode(
             &workspace_dir,
             model_name,
             &tool_descs,
             &skills,
             Some(&global_config.identity),
             None,
+            false,
+            skills_prompt_mode,
+            autonomy_level,
         );
 
         let has_skills_section = system_prompt.contains("<available_skills>");
@@ -354,15 +374,31 @@ impl TenantContext {
 
         let tool_descs: Vec<(&str, &str)> = Vec::new();
 
+        // Resolve skills prompt injection mode: workspace [skills] > global [skills]
+        let guardian_skills_mode = overrides
+            .skills
+            .as_ref()
+            .map(|s| s.prompt_injection_mode)
+            .unwrap_or(global_config.skills.prompt_injection_mode);
+
+        let guardian_autonomy_level = overrides
+            .autonomy
+            .as_ref()
+            .map(|a| a.level.clone())
+            .unwrap_or_else(|| global_config.autonomy.level.clone());
+
         // Build full system prompt from guardian workspace files
         let system_prompt = if workspace_dir.join("SOUL.md").exists() {
-            crate::channels::build_system_prompt(
+            crate::channels::build_system_prompt_with_mode(
                 &workspace_dir,
                 model_name,
                 &tool_descs,
                 &skills,
                 Some(&global_config.identity),
                 None,
+                false,
+                guardian_skills_mode,
+                guardian_autonomy_level,
             )
         } else {
             default_guardian_prompt()

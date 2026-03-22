@@ -35,6 +35,7 @@ pub mod db;
 pub mod doc_tools;
 pub mod hasn_tools;
 pub mod hub_sync;
+pub mod multi_tenant_resolver;
 pub mod permissions;
 pub mod registry;
 pub mod router;
@@ -52,6 +53,7 @@ pub mod ws_observer;
 pub use api_client::ApiClient;
 pub use config::HuanXingConfig;
 pub use db::TenantDb;
+pub use multi_tenant_resolver::MultiTenantResolver;
 pub use router::TenantRouter;
 #[allow(unused_imports)] // 公共 API 导出，供外部模块使用
 pub use tenant::TenantContext;
