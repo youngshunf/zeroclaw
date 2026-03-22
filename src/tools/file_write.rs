@@ -48,12 +48,11 @@ impl Tool for FileWriteTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing 'path' parameter"))?;
 
-        // 多租户：优先使用注入的 per-tenant security policy。
-        #[cfg(feature = "huanxing")]
-        let security = crate::huanxing::skill_market_tools::tenant_security()
+        // Per-request security override (injected by channel message
+        // processing via `with_active_security`).  Falls back to the
+        // global policy baked into this tool instance.
+        let security = crate::tools::get_active_security()
             .unwrap_or_else(|| self.security.clone());
-        #[cfg(not(feature = "huanxing"))]
-        let security = self.security.clone();
 
         let content = args
             .get("content")

@@ -2630,20 +2630,27 @@ async fn process_channel_message(
         };
     }
 
-    // Run the LLM tool loop, optionally scoped to tenant workspace + security
-    #[cfg(feature = "huanxing")]
-    let llm_result = if let Some(ws) = tenant_workspace_for_scope {
-        if let Some(sec) = tenant_security_for_scope {
+    // Run the LLM tool loop, optionally scoped to tenant workspace + security.
+    //
+    // When multi-tenant is active we inject the per-tenant security policy
+    // into the generic `ACTIVE_SECURITY` task-local (used by shell/file_*
+    // tools via `get_active_security()`), and also inject the tenant
+    // workspace via the huanxing-specific `CURRENT_TENANT_WORKSPACE`
+    // task-local (used by skill_market_tools).
+    let llm_result = match (tenant_workspace_for_scope, tenant_security_for_scope) {
+        #[cfg(feature = "huanxing")]
+        (Some(ws), Some(sec)) => {
             // Both workspace and security override
             tokio::select! {
                 () = cancellation_token.cancelled() => LlmExecutionResult::Cancelled,
-                result = crate::huanxing::skill_market_tools::with_tenant_context(
+                result = crate::huanxing::skill_market_tools::with_tenant_workspace(
                     ws,
-                    sec,
-                    run_tool_loop_future!(),
+                    crate::tools::with_active_security(sec, run_tool_loop_future!()),
                 ) => LlmExecutionResult::Completed(result),
             }
-        } else {
+        }
+        #[cfg(feature = "huanxing")]
+        (Some(ws), None) => {
             // Workspace only, no security override
             tokio::select! {
                 () = cancellation_token.cancelled() => LlmExecutionResult::Cancelled,
@@ -2653,16 +2660,20 @@ async fn process_channel_message(
                 ) => LlmExecutionResult::Completed(result),
             }
         }
-    } else {
-        tokio::select! {
-            () = cancellation_token.cancelled() => LlmExecutionResult::Cancelled,
-            result = run_tool_loop_future!() => LlmExecutionResult::Completed(result),
+        (None, Some(sec)) => {
+            // Security only (unlikely but correct)
+            tokio::select! {
+                () = cancellation_token.cancelled() => LlmExecutionResult::Cancelled,
+                result = crate::tools::with_active_security(sec, run_tool_loop_future!()) => LlmExecutionResult::Completed(result),
+            }
         }
-    };
-    #[cfg(not(feature = "huanxing"))]
-    let llm_result = tokio::select! {
-        () = cancellation_token.cancelled() => LlmExecutionResult::Cancelled,
-        result = run_tool_loop_future!() => LlmExecutionResult::Completed(result),
+        _ => {
+            // No tenant overrides — global context only
+            tokio::select! {
+                () = cancellation_token.cancelled() => LlmExecutionResult::Cancelled,
+                result = run_tool_loop_future!() => LlmExecutionResult::Completed(result),
+            }
+        }
     };
 
     if let Some(handle) = draft_updater {
