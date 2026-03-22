@@ -158,10 +158,10 @@ export async function updateProfile(token: string, profile: {
 
 /** LLM proxy 基地址 */
 export function getLlmProxyUrl(): string {
-  return `${baseUrl()}/api/v1/llm/proxy`;
+  return HUANXING_CONFIG.llmGatewayUrl;
 }
 
 /** LLM proxy v1 地址（OpenAI 兼容） */
 export function getLlmProxyV1Url(): string {
-  return `${baseUrl()}/api/v1/llm/proxy/v1`;
+  return HUANXING_CONFIG.llmGatewayV1;
 }

@@ -6,23 +6,23 @@
  */
 
 export const HUANXING_CONFIG = {
-  /** 唤星后端服务基地址（本地开发） */
-  backendBaseUrl: 'http://127.0.0.1:8020',
+  /** 唤星后端服务基地址 */
+  backendBaseUrl: 'https://api.huanxing.dcfuture.cn',
 
   /** 唤星云服务基地址（线上） */
   cloudBaseUrl: 'https://api.huanxing.dcfuture.cn',
 
-  /** LLM 网关基地址（从 backendBaseUrl 派生） */
-  get llmGatewayUrl() { return `${this.backendBaseUrl}/api/v1/llm/proxy`; },
+  /** LLM 网关基地址 */
+  llmGatewayUrl: 'https://llm.dcfuture.cn',
 
   /** LLM 网关 v1 路径（用于 ZeroClaw openai_compat provider） */
-  get llmGatewayV1() { return `${this.backendBaseUrl}/api/v1/llm/proxy/v1`; },
+  llmGatewayV1: 'https://llm.dcfuture.cn/v1',
 
   /** 默认 LLM 模型 */
   defaultModel: 'claude-sonnet-4-6',
 
-  /** 默认 LLM provider 名称（从 backendBaseUrl 派生） */
-  get defaultProvider() { return `custom:${this.backendBaseUrl}/api/v1/llm/proxy`; },
+  /** 默认 LLM provider 名称 */
+  defaultProvider: 'custom:https://llm.dcfuture.cn',
 
   /** 默认温度 */
   defaultTemperature: 0.7,
@@ -34,7 +34,7 @@ export const HUANXING_CONFIG = {
   productName: '唤星',
 
   /** Agent 默认名称 */
-  defaultAgentName: '小星',
+  defaultAgentName: '唤星AI助手',
 } as const;
 
 /** 登录成功后后端返回的完整数据 */

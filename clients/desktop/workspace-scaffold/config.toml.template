@@ -13,9 +13,6 @@ default_model = "claude-sonnet-4-6"
 title_model = "claude-haiku-4-5"   # 会话标题自动生成用的轻量模型
 default_temperature = 0.7
 
-[model_providers]
-openai_compat = { api_key = "{{llm_token}}", base_url = "{{llm_gateway}}" }
-
 # ── Agent 核心设置 ────────────────────────────────────────────
 [agent]
 compact_context = false          # 用大模型，不需要压缩模式
@@ -26,7 +23,7 @@ max_history_messages = 100       # 100条后才触发压缩
 backend = "sqlite"               # 持久化！重启不丢失
 strategy = "per-sender"          # 每用户独立会话
 ttl_seconds = 604800             # 7天 — 用户一周内回来不断层
-max_messages = 200               # 每会话保留200条消息
+max_messages = 100               # 每会话保留100条消息
 
 # ── 记忆 ──────────────────────────────────────────────────────
 [memory]
@@ -86,16 +83,7 @@ auto_approve = [
     "hx_doc_list", "hx_doc_get", "hx_doc_create", "hx_doc_update",
 ]
 # 排除危险工具，保留实用工具
-non_cli_excluded_tools = [
-    # 原始 HTTP — 防 SSRF
-    "http_request",
-    # 系统配置 — 不应让用户修改
-    "proxy_config", "web_search_config", "web_access_config",
-    "model_routing_config", "channel_ack_config", "quota_tools",
-    # 高级功能 — 暂不开放
-    "composio", "delegate",
-    "screenshot", "image_info",
-]
+non_cli_excluded_tools = []
 
 # ── 安全 ──────────────────────────────────────────────────────
 [security]

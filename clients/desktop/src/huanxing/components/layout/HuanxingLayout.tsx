@@ -1,3 +1,4 @@
+import React from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useState, useEffect, Suspense } from 'react';
 import NavRail, { type TabKey } from './NavRail';
@@ -50,6 +51,12 @@ export default function HuanxingLayout() {
 
   return (
     <div className="hx-app">
+      {/* 全局拖拽条 — 覆盖顶部 32px，z-index 最高 */}
+      <div
+        className="fixed left-0 right-0 top-0 h-8 z-[9999] cursor-move select-none"
+        style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
+        data-tauri-drag-region
+      />
       <NavRail
         activeTab={activeTab}
         onTabChange={handleTabChange}

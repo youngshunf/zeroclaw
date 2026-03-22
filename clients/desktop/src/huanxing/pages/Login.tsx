@@ -7,6 +7,7 @@
  * - 中央发光八角星芒（品牌 Logo）
  * - 渐变登录卡片
  */
+import React from "react";
 import { useState, useEffect, useCallback, useRef } from "react";
 import starSvg from "../assets/huanxing-star.svg";
 import { saveHuanxingSession, type HuanxingLoginData } from "../config";
@@ -23,15 +24,26 @@ interface Star {
   alpha: number;
   twinkleSpeed: number;
   twinklePhase: number;
+  // 部分亮星有闪烁幅度放大效果
+  twinkleAmp: number;
   vx: number;
   vy: number;
 }
 
+interface Meteor {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  len: number;   // 尾迹长度（px）
+  alpha: number;
+  life: number;
+  maxLife: number;
+}
+
 function StarfieldCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const starsRef = useRef<Star[]>([]);
   const animRef = useRef<number>(0);
-  const CONNECTION_DIST = 120;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -46,33 +58,61 @@ function StarfieldCanvas() {
     resize();
     window.addEventListener("resize", resize);
 
-    // 初始化星星
-    const count = Math.floor((canvas.width * canvas.height) / 6000);
+    // ── 初始化星星 ──────────────────────────────────
+    const count = Math.floor((canvas.width * canvas.height) / 5500);
     const stars: Star[] = [];
     for (let i = 0; i < count; i++) {
-      const baseAlpha = 0.15 + Math.random() * 0.6;
+      const baseAlpha = 0.2 + Math.random() * 0.65;
+      // 约 15% 的星星是"亮星"，闪烁幅度更大
+      const isBright = Math.random() < 0.15;
       stars.push({
         x: Math.random() * canvas.width,
         y: Math.random() * canvas.height,
-        r: 0.4 + Math.random() * 1.6,
-        baseAlpha,
+        r: isBright ? 1.2 + Math.random() * 1.0 : 0.4 + Math.random() * 1.2,
+        baseAlpha: isBright ? 0.5 + Math.random() * 0.5 : baseAlpha,
         alpha: baseAlpha,
-        twinkleSpeed: 0.003 + Math.random() * 0.008,
+        twinkleSpeed: isBright
+          ? 0.015 + Math.random() * 0.025   // 亮星闪烁快
+          : 0.003 + Math.random() * 0.008,
         twinklePhase: Math.random() * Math.PI * 2,
-        vx: (Math.random() - 0.5) * 0.08,
-        vy: (Math.random() - 0.5) * 0.08,
+        twinkleAmp: isBright ? 0.85 : 0.45,
+        vx: (Math.random() - 0.5) * 0.06,
+        vy: (Math.random() - 0.5) * 0.06,
       });
     }
-    starsRef.current = stars;
 
+    // ── 流星管理 ───────────────────────────────────
+    const meteors: Meteor[] = [];
+    let nextMeteorIn = 80 + Math.random() * 120; // 帧数间隔
+
+    function spawnMeteor(w: number, h: number) {
+      // 从顶部 / 右上侧随机位置出发，向左下划过
+      const angle = (Math.PI / 6) + Math.random() * (Math.PI / 8); // 约 30°-52.5°
+      const speed = 8 + Math.random() * 10;
+      const len = 120 + Math.random() * 180;
+      const maxLife = Math.floor(len / speed * 2.5);
+      meteors.push({
+        x: Math.random() * w * 0.9 + w * 0.1,
+        y: -20,
+        vx: -Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        len,
+        alpha: 0.9 + Math.random() * 0.1,
+        life: 0,
+        maxLife,
+      });
+    }
+
+    const CONNECTION_DIST = 120;
     let time = 0;
+
     const draw = () => {
       time++;
       const w = canvas.width;
       const h = canvas.height;
       ctx.clearRect(0, 0, w, h);
 
-      // 更新 & 绘制星星
+      // ── 更新 & 绘制星星 ──────────────────────────
       for (const s of stars) {
         s.x += s.vx;
         s.y += s.vy;
@@ -81,18 +121,31 @@ function StarfieldCanvas() {
         if (s.y < -10) s.y = h + 10;
         if (s.y > h + 10) s.y = -10;
 
-        // 闪烁
-        s.alpha =
-          s.baseAlpha *
-          (0.5 + 0.5 * Math.sin(time * s.twinkleSpeed + s.twinklePhase));
+        // 闪烁：正弦波 + 偶发"脉冲"（用 abs(sin) 模拟快速点亮）
+        const phase = time * s.twinkleSpeed + s.twinklePhase;
+        const flicker = 1 - s.twinkleAmp + s.twinkleAmp * Math.abs(Math.sin(phase));
+        s.alpha = s.baseAlpha * flicker;
 
         ctx.beginPath();
         ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(200,210,255,${s.alpha})`;
+        // 亮星用偏暖白色，普通星偏蓝紫
+        const c = s.r > 1.5 ? `rgba(230,230,255,${s.alpha})` : `rgba(180,195,255,${s.alpha})`;
+        ctx.fillStyle = c;
         ctx.fill();
+
+        // 亮星额外发出微光晕
+        if (s.r > 1.5 && s.alpha > 0.6) {
+          const grd = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, s.r * 4);
+          grd.addColorStop(0, `rgba(200,180,255,${s.alpha * 0.4})`);
+          grd.addColorStop(1, "rgba(0,0,0,0)");
+          ctx.beginPath();
+          ctx.arc(s.x, s.y, s.r * 4, 0, Math.PI * 2);
+          ctx.fillStyle = grd;
+          ctx.fill();
+        }
       }
 
-      // 绘制连线
+      // ── 绘制连线 ────────────────────────────────
       for (let i = 0; i < stars.length; i++) {
         for (let j = i + 1; j < stars.length; j++) {
           const dx = stars[i].x - stars[j].x;
@@ -101,7 +154,7 @@ function StarfieldCanvas() {
           if (dist < CONNECTION_DIST) {
             const lineAlpha =
               (1 - dist / CONNECTION_DIST) *
-              0.15 *
+              0.12 *
               Math.min(stars[i].alpha, stars[j].alpha) *
               (0.6 + 0.4 * Math.sin(time * 0.01 + i));
             ctx.beginPath();
@@ -112,6 +165,66 @@ function StarfieldCanvas() {
             ctx.stroke();
           }
         }
+      }
+
+      // ── 生成新流星 ──────────────────────────────
+      nextMeteorIn--;
+      if (nextMeteorIn <= 0) {
+        // 每批同时生成 3 颗，间距随机错开，制造群星效果
+        for (let m = 0; m < 3; m++) {
+          spawnMeteor(w, h);
+        }
+        nextMeteorIn = 90 + Math.random() * 150; // 1.5s ~ 4s @60fps
+      }
+
+      // ── 更新 & 绘制流星 ─────────────────────────
+      for (let i = meteors.length - 1; i >= 0; i--) {
+        const m = meteors[i];
+        m.life++;
+        m.x += m.vx;
+        m.y += m.vy;
+
+        // 生命周期淡出（后半段）
+        const progress = m.life / m.maxLife;
+        const fadeAlpha = progress < 0.5
+          ? m.alpha
+          : m.alpha * (1 - (progress - 0.5) * 2);
+
+        if (fadeAlpha <= 0 || m.life >= m.maxLife || m.y > h + 50) {
+          meteors.splice(i, 1);
+          continue;
+        }
+
+        // 尾迹方向（反速度方向）
+        const speed = Math.sqrt(m.vx * m.vx + m.vy * m.vy);
+        const nx = -m.vx / speed;
+        const ny = -m.vy / speed;
+        const tailLen = m.len * Math.min(1, progress * 3); // 先短后长
+
+        const grd = ctx.createLinearGradient(
+          m.x, m.y,
+          m.x + nx * tailLen, m.y + ny * tailLen
+        );
+        grd.addColorStop(0, `rgba(255,255,255,${fadeAlpha})`);
+        grd.addColorStop(0.15, `rgba(180,160,255,${fadeAlpha * 0.7})`);
+        grd.addColorStop(1, "rgba(100,80,200,0)");
+
+        ctx.beginPath();
+        ctx.moveTo(m.x, m.y);
+        ctx.lineTo(m.x + nx * tailLen, m.y + ny * tailLen);
+        ctx.strokeStyle = grd;
+        ctx.lineWidth = 1.5;
+        ctx.lineCap = "round";
+        ctx.stroke();
+
+        // 流星头部亮点
+        const headGrd = ctx.createRadialGradient(m.x, m.y, 0, m.x, m.y, 4);
+        headGrd.addColorStop(0, `rgba(255,255,255,${fadeAlpha})`);
+        headGrd.addColorStop(1, "rgba(255,255,255,0)");
+        ctx.beginPath();
+        ctx.arc(m.x, m.y, 4, 0, Math.PI * 2);
+        ctx.fillStyle = headGrd;
+        ctx.fill();
       }
 
       animRef.current = requestAnimationFrame(draw);
@@ -133,42 +246,366 @@ function StarfieldCanvas() {
   );
 }
 
+// ─── 超新星爆炸音效（Web Audio API 合成）────────────────────────────
+function playSupernova() {
+  try {
+    const ctx = new AudioContext();
+    const now = ctx.currentTime;
+
+    // 低频冲击 boom：瞬间爆发，缓慢衰减
+    const boom = ctx.createOscillator();
+    const boomGain = ctx.createGain();
+    boom.type = "sine";
+    boom.frequency.setValueAtTime(80, now);
+    boom.frequency.exponentialRampToValueAtTime(20, now + 2.5);
+    boomGain.gain.setValueAtTime(0, now);
+    boomGain.gain.linearRampToValueAtTime(1.0, now + 0.04);
+    boomGain.gain.exponentialRampToValueAtTime(0.001, now + 2.5);
+    boom.connect(boomGain);
+    boomGain.connect(ctx.destination);
+    boom.start(now);
+    boom.stop(now + 2.5);
+
+    // 低频噪声体：给 boom 加厚度
+    const bufSize = ctx.sampleRate * 3;
+    const noiseBuf = ctx.createBuffer(1, bufSize, ctx.sampleRate);
+    const nd = noiseBuf.getChannelData(0);
+    for (let i = 0; i < bufSize; i++) nd[i] = Math.random() * 2 - 1;
+    const noiseBody = ctx.createBufferSource();
+    noiseBody.buffer = noiseBuf;
+    const bodyFilter = ctx.createBiquadFilter();
+    bodyFilter.type = "lowpass";
+    bodyFilter.frequency.setValueAtTime(200, now);
+    bodyFilter.frequency.exponentialRampToValueAtTime(40, now + 2.5);
+    const bodyGain = ctx.createGain();
+    bodyGain.gain.setValueAtTime(0, now);
+    bodyGain.gain.linearRampToValueAtTime(0.6, now + 0.05);
+    bodyGain.gain.exponentialRampToValueAtTime(0.001, now + 2.5);
+    noiseBody.connect(bodyFilter);
+    bodyFilter.connect(bodyGain);
+    bodyGain.connect(ctx.destination);
+    noiseBody.start(now);
+
+    // 持续余震 rumble：贯穿整个 5s，模拟持续震动
+    const rumbleBufSize = ctx.sampleRate * 5.5;
+    const rumbleBuf = ctx.createBuffer(1, rumbleBufSize, ctx.sampleRate);
+    const rd = rumbleBuf.getChannelData(0);
+    for (let i = 0; i < rumbleBufSize; i++) rd[i] = Math.random() * 2 - 1;
+    const rumbleNoise = ctx.createBufferSource();
+    rumbleNoise.buffer = rumbleBuf;
+    const rumbleFilter = ctx.createBiquadFilter();
+    rumbleFilter.type = "lowpass";
+    rumbleFilter.frequency.setValueAtTime(120, now);
+    rumbleFilter.frequency.exponentialRampToValueAtTime(30, now + 5.0);
+    const rumbleGain = ctx.createGain();
+    rumbleGain.gain.setValueAtTime(0, now);
+    rumbleGain.gain.linearRampToValueAtTime(0.4, now + 0.3);   // 快速建立
+    rumbleGain.gain.setValueAtTime(0.35, now + 2.0);           // 中段保持
+    rumbleGain.gain.linearRampToValueAtTime(0.2, now + 3.5);   // 缓慢减弱
+    rumbleGain.gain.exponentialRampToValueAtTime(0.001, now + 5.0); // 结尾消失
+    rumbleNoise.connect(rumbleFilter);
+    rumbleFilter.connect(rumbleGain);
+    rumbleGain.connect(ctx.destination);
+    rumbleNoise.start(now);
+
+    // 周期性脉冲：模拟持续爆炸的节奏感（每 0.8s 一次小 boom）
+    for (let i = 1; i <= 4; i++) {
+      const pulseTime = now + i * 0.9;
+      const pulse = ctx.createOscillator();
+      const pulseGain = ctx.createGain();
+      pulse.type = "sine";
+      pulse.frequency.setValueAtTime(55 - i * 5, pulseTime);
+      pulse.frequency.exponentialRampToValueAtTime(15, pulseTime + 0.6);
+      pulseGain.gain.setValueAtTime(0, pulseTime);
+      pulseGain.gain.linearRampToValueAtTime(0.35 - i * 0.05, pulseTime + 0.03);
+      pulseGain.gain.exponentialRampToValueAtTime(0.001, pulseTime + 0.6);
+      pulse.connect(pulseGain);
+      pulseGain.connect(ctx.destination);
+      pulse.start(pulseTime);
+      pulse.stop(pulseTime + 0.6);
+    }
+
+    setTimeout(() => ctx.close(), 6000);
+  } catch {
+    // 静默失败
+  }
+}
+
+// ─── 超新星爆炸 Canvas ───────────────────────────────────────────────
+interface SupernovaProps {
+  onDone: () => void;
+}
+
+function SupernovaCanvas({ onDone }: SupernovaProps) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const animRef = useRef<number>(0);
+  const onDoneRef = useRef(onDone);
+  onDoneRef.current = onDone;
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    const cx = canvas.width / 2;
+    const cy = canvas.height / 2;
+
+    playSupernova();
+
+    const DURATION = 5000; // 5 秒
+    const STOP_EMIT = 4000; // 4s 后停止喷射，留 1s 让最后一批粒子淡出
+
+    const COLORS = [
+      "#ffffff", "#ffe066", "#ffd700",
+      "#c084fc", "#818cf8", "#67e8f9",
+      "#f472b6", "#fb923c", "#a5f3fc",
+    ];
+
+    // ── 粒子：持续喷射，每个粒子有自己的生命周期 ──
+    interface Particle {
+      x: number; y: number;
+      vx: number; vy: number;
+      r: number;
+      alpha: number;
+      color: string;
+      spawnTime: number; // 出生时刻 ms
+      lifespan: number;  // 寿命 ms（飞行 + 停留 + 淡出）
+      travelMs: number;  // 飞行时间 ms，之后停在原地
+    }
+
+    const maxDim = Math.max(canvas.width, canvas.height);
+    const particles: Particle[] = [];
+
+    // 预生成初始一批（爆炸瞬间）
+    function spawnBurst(spawnTime: number, count: number) {
+      for (let i = 0; i < count; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const dist = maxDim * (0.25 + Math.random() * 0.7); // 目标距离
+        const travelMs = 400 + Math.random() * 800;          // 0.4~1.2s 飞到位
+        const speed = dist / (travelMs / 16.67);             // px/帧
+        particles.push({
+          x: cx, y: cy,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed,
+          r: 0.8 + Math.random() * 2.8,
+          alpha: 1.0,
+          color: COLORS[Math.floor(Math.random() * COLORS.length)],
+          spawnTime,
+          lifespan: travelMs + 800 + Math.random() * 600, // 飞行 + 停留~1s + 淡出
+          travelMs,
+        });
+      }
+    }
+
+    spawnBurst(0, 180); // 初始爆炸一大批
+
+    // ── 冲击波环：循环扩散 ──
+    interface Ring { r: number; speed: number; maxR: number; alpha: number; width: number; color: string; interval: number; lastSpawn: number; }
+    const ringDefs: Ring[] = [
+      { r: -1, speed: 4.5, maxR: maxDim * 0.85, alpha: 0, width: 3, color: "180,140,255", interval: 900,  lastSpawn: -999 },
+      { r: -1, speed: 3.5, maxR: maxDim * 0.7,  alpha: 0, width: 2, color: "103,232,249", interval: 1200, lastSpawn: -400 },
+      { r: -1, speed: 2.5, maxR: maxDim * 0.55, alpha: 0, width: 1, color: "255,224,102", interval: 1500, lastSpawn: -800 },
+    ];
+    // 每种环维护一个活跃实例列表
+    interface RingInstance { r: number; alpha: number; defIdx: number; }
+    const ringInstances: RingInstance[] = [];
+
+    let startTime: number | null = null;
+    let lastEmit = 0;
+    let fadeOutStart: number | null = null; // onDone 触发时记录，用于同步淡出光环
+
+    const draw = (ts: number) => {
+      if (!startTime) startTime = ts;
+      const elapsed = ts - startTime;
+      const t = Math.min(elapsed / DURATION, 1);
+
+      // fade 系数：onDone 触发后 700ms 内从 1 降到 0
+      const fadeAlpha = fadeOutStart !== null
+        ? Math.max(0, 1 - (ts - fadeOutStart) / 700)
+        : 1;
+
+      // ── 持续喷射：每 150ms 喷一批（慢一些）──
+      if (elapsed < STOP_EMIT && elapsed - lastEmit > 150) {
+        spawnBurst(elapsed, 30 + Math.floor(Math.random() * 9));
+        lastEmit = elapsed;
+      }
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // ── 核心闪光（前 0.5s）──
+      if (elapsed < 500) {
+        const ft = elapsed / 500;
+        const flashAlpha = ft < 0.15 ? ft / 0.15 : 1 - (ft - 0.15) / 0.85;
+        const flashR = 10 + ft * 200;
+        const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, flashR);
+        grad.addColorStop(0, `rgba(255,255,255,${flashAlpha * 0.98})`);
+        grad.addColorStop(0.3, `rgba(220,200,255,${flashAlpha * 0.6})`);
+        grad.addColorStop(1, `rgba(124,58,237,0)`);
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(cx, cy, flashR, 0, Math.PI * 2);
+        ctx.fill();
+        if (elapsed < 80) {
+          ctx.fillStyle = `rgba(255,255,255,${(1 - elapsed / 80) * 0.85})`;
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+      }
+
+      // ── 冲击波环循环 ──
+      for (let i = 0; i < ringDefs.length; i++) {
+        const def = ringDefs[i];
+        // 按 interval 生成新实例（停止喷射后不再生成）
+        if (elapsed < STOP_EMIT && elapsed - def.lastSpawn > def.interval) {
+          ringInstances.push({ r: 2, alpha: 1.0, defIdx: i });
+          def.lastSpawn = elapsed;
+        }
+      }
+      // 更新并绘制所有活跃实例
+      for (let i = ringInstances.length - 1; i >= 0; i--) {
+        const inst = ringInstances[i];
+        const def = ringDefs[inst.defIdx];
+        inst.r += def.speed;
+        inst.alpha = Math.max(0, 1 - inst.r / def.maxR);
+        if (inst.r >= def.maxR || inst.alpha < 0.01) {
+          ringInstances.splice(i, 1);
+          continue;
+        }
+        ctx.beginPath();
+        ctx.arc(cx, cy, inst.r, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(${def.color},${inst.alpha * 0.35 * fadeAlpha})`;
+        ctx.lineWidth = def.width * (0.3 + inst.alpha * 0.7);
+        ctx.stroke();
+      }
+
+      // ── 粒子 ──
+      for (const p of particles) {
+        const age = elapsed - p.spawnTime;
+        if (age < 0) continue;
+        if (age > p.lifespan) continue;
+
+        // 飞行阶段
+        if (age < p.travelMs) {
+          p.x += p.vx;
+          p.y += p.vy;
+        }
+        // alpha：飞行+停留期间保持1，最后 600ms 淡出
+        const fadeStart = p.lifespan - 600;
+        if (age < fadeStart) {
+          p.alpha = 1.0;
+        } else {
+          p.alpha = Math.max(0, 1 - (age - fadeStart) / 600);
+        }
+        if (p.alpha <= 0) continue;
+
+        // 停留时轻微闪烁
+        const twinkle = age >= p.travelMs
+          ? 0.65 + 0.35 * Math.sin(elapsed * 0.004 + p.spawnTime * 0.01)
+          : 1.0;
+
+        const hex = p.color;
+        const r = parseInt(hex.slice(1, 3), 16);
+        const g = parseInt(hex.slice(3, 5), 16);
+        const b = parseInt(hex.slice(5, 7), 16);
+
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(${r},${g},${b},${p.alpha * twinkle})`;
+        ctx.shadowBlur = 6;
+        ctx.shadowColor = `rgba(${r},${g},${b},${p.alpha * 0.6})`;
+        ctx.fill();
+        ctx.shadowBlur = 0;
+      }
+
+      // ── 中心余辉 ──
+      const glowAlpha = Math.max(0, 0.35 * (1 - t * 1.2));
+      if (glowAlpha > 0.01) {
+        const glowR = 50 + t * 60;
+        const glow = ctx.createRadialGradient(cx, cy, 0, cx, cy, glowR);
+        glow.addColorStop(0, `rgba(200,160,255,${glowAlpha})`);
+        glow.addColorStop(1, `rgba(124,58,237,0)`);
+        ctx.fillStyle = glow;
+        ctx.beginPath();
+        ctx.arc(cx, cy, glowR, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      if (t < 1) {
+        animRef.current = requestAnimationFrame(draw);
+      } else {
+        // 5s 到了：通知父组件（登录页开始淡入），同时记录 fadeOutStart 继续跑动画
+        if (fadeOutStart === null) {
+          fadeOutStart = ts;
+          onDoneRef.current();
+        }
+        // 继续跑 700ms 让光环同步淡出
+        if (ts - fadeOutStart < 700) {
+          animRef.current = requestAnimationFrame(draw);
+        }
+      }
+    };
+
+    animRef.current = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(animRef.current);
+  }, []); // 空依赖，只运行一次
+
+  return (
+    <canvas
+      ref={canvasRef}
+      className="fixed inset-0 pointer-events-none"
+      style={{ zIndex: 100 }}
+    />
+  );
+}
+
 // ─── 发光星芒组件 ────────────────────────────────────────────────────
 function GlowingStar() {
   return (
-    <div className="relative mx-auto mb-6 flex h-32 w-32 items-center justify-center md:h-40 md:w-40">
-      {/* 最外层脉冲光晕 */}
+    <div className="relative mx-auto mb-6 flex h-52 w-52 items-center justify-center md:h-64 md:w-64">
+      {/* 最外层超大脉冲光晕 */}
+      <div
+        className="absolute rounded-full animate-pulse-slow"
+        style={{
+          width: "200%",
+          height: "200%",
+          background:
+            "radial-gradient(circle, rgba(124,58,237,0.18) 0%, rgba(79,70,229,0.08) 40%, transparent 70%)",
+        }}
+      />
+      {/* 最外层光晕 */}
       <div
         className="absolute h-full w-full rounded-full animate-pulse-slow"
         style={{
           background:
-            "radial-gradient(circle, rgba(124,58,237,0.25) 0%, rgba(79,70,229,0.1) 40%, transparent 70%)",
+            "radial-gradient(circle, rgba(124,58,237,0.35) 0%, rgba(79,70,229,0.15) 45%, transparent 72%)",
         }}
       />
       {/* 中层暖光圈 */}
       <div
-        className="absolute h-24 w-24 rounded-full animate-pulse-medium md:h-32 md:w-32"
+        className="absolute h-4/5 w-4/5 rounded-full animate-pulse-medium"
         style={{
           background:
-            "radial-gradient(circle, rgba(255,217,61,0.15) 0%, rgba(124,58,237,0.15) 50%, transparent 70%)",
+            "radial-gradient(circle, rgba(255,217,61,0.2) 0%, rgba(124,58,237,0.2) 50%, transparent 70%)",
         }}
       />
       {/* SVG 星芒 Logo */}
       <img
         src={starSvg}
         alt="唤星"
-        className="relative h-20 w-20 drop-shadow-[0_0_30px_rgba(124,58,237,0.6)] md:h-24 md:w-24"
+        className="relative h-32 w-32 md:h-40 md:w-40"
         style={{
           filter:
-            "drop-shadow(0 0 20px rgba(124,58,237,0.5)) drop-shadow(0 0 60px rgba(79,70,229,0.3))",
+            "drop-shadow(0 0 30px rgba(124,58,237,0.8)) drop-shadow(0 0 80px rgba(79,70,229,0.5)) drop-shadow(0 0 120px rgba(124,58,237,0.3))",
         }}
       />
       {/* 中心白点 */}
       <div
-        className="absolute h-3 w-3 rounded-full bg-white animate-pulse-fast"
+        className="absolute h-4 w-4 rounded-full bg-white animate-pulse-fast"
         style={{
           boxShadow:
-            "0 0 12px rgba(255,255,255,0.8), 0 0 40px rgba(124,58,237,0.6), 0 0 80px rgba(79,70,229,0.3)",
+            "0 0 16px rgba(255,255,255,0.9), 0 0 60px rgba(124,58,237,0.7), 0 0 120px rgba(79,70,229,0.4)",
         }}
       />
     </div>
@@ -308,6 +745,8 @@ interface LoginProps {
 }
 
 export default function Login({ onLoginSuccess }: LoginProps) {
+  const [supernovaDone, setSupernovaDone] = useState(false);
+  const [contentVisible, setContentVisible] = useState(false);
   const [step, setStep] = useState<"phone" | "code" | "onboard">("phone");
   const [phone, setPhone] = useState("");
   const [code, setCode] = useState("");
@@ -466,6 +905,26 @@ export default function Login({ onLoginSuccess }: LoginProps) {
       {/* 星空 Canvas */}
       <StarfieldCanvas />
 
+      {/* 超新星爆炸入场 */}
+      {!supernovaDone && (
+        <SupernovaCanvas onDone={() => {
+          setContentVisible(true);   // 提前淡入内容
+          setTimeout(() => setSupernovaDone(true), 800); // 800ms 后移除 canvas
+        }} />
+      )}
+
+      {/* 透明拖拽栏 */}
+      <div
+        className="fixed left-0 right-0 top-0 h-8 z-[9999] cursor-move select-none"
+        style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
+        data-tauri-drag-region
+      />
+
+      {/* 主内容：爆炸结束后淡入 */}
+      <div
+        className="transition-opacity duration-700"
+        style={{ opacity: contentVisible ? 1 : 0 }}
+      >
       {/* 径向背景光 */}
       <div
         className="pointer-events-none fixed inset-0"
@@ -477,16 +936,13 @@ export default function Login({ onLoginSuccess }: LoginProps) {
       />
 
       {/* 主内容 */}
-      <div className="relative flex min-h-screen flex-col items-center justify-center px-4" style={{ zIndex: 2 }}>
+      <div className="relative flex min-h-screen flex-col items-center justify-center px-4 pt-7" style={{ zIndex: 2 }}>
         {/* 发光星芒 */}
         <GlowingStar />
 
         {/* 品牌名 */}
         <h1 className="mb-2 text-center text-2xl font-bold tracking-wider text-white md:text-3xl">
-          唤星
-          <span className="ml-2 text-lg font-light tracking-widest text-[#A5B4FC] opacity-70 md:text-xl">
-            HUANXING
-          </span>
+          唤星AI
         </h1>
         <p className="mb-8 text-center text-sm text-[#8b9fd8]">
           唤醒星辰的力量，AI与你共生
@@ -622,7 +1078,11 @@ export default function Login({ onLoginSuccess }: LoginProps) {
         <p className="mt-8 text-center text-xs text-[#3a4a6f]">
           © 2026 唤星AI · HASN Protocol
         </p>
+        <p className="mt-1 text-center text-[10px] text-[#2a3450]">
+          OpenClaw 生态产品
+        </p>
       </div>
+      </div>{/* 主内容包裹结束 */}
     </div>
   );
 }
