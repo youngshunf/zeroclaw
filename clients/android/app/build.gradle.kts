@@ -1,6 +1,7 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.serialization")
 }
 
 android {
@@ -78,20 +79,8 @@ android {
         }
     }
 
-    // Task to build native library before APK
-    tasks.register("buildRustLibrary") {
-        doLast {
-            exec {
-                workingDir = rootProject.projectDir.parentFile.parentFile // zeroclaw root
-                commandLine("cargo", "ndk",
-                    "-t", "arm64-v8a",
-                    "-t", "armeabi-v7a",
-                    "-t", "x86_64",
-                    "-o", "clients/android/app/src/main/jniLibs",
-                    "build", "--release", "-p", "zeroclaw-android-bridge")
-            }
-        }
-    }
+    // 子进程方案：zeroclaw binary 放在 assets/ 中，由 BinaryExtractor 解压
+    // 构建脚本见 INTEGRATION.md 第六节
 }
 
 dependencies {
@@ -121,11 +110,17 @@ dependencies {
     // Security (Keystore)
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
 
+    // Lifecycle (Compose integration)
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.7.0")
+
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 
-    // NOTE: Serialization removed - not used yet, saves ~300KB
-    // Add back when needed: implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.2")
+    // WebSocket 客户端（OkHttp）
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // JSON 序列化（WS 消息解析）
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.2")
 
     // Testing
     testImplementation("junit:junit:4.13.2")

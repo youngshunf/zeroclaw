@@ -3,12 +3,14 @@ package ai.zeroclaw.android.bridge
 /**
  * JNI bridge to ZeroClaw Rust library.
  *
- * This class will be replaced by UniFFI-generated bindings.
- * For now, it provides stub implementations.
- *
- * Native library: libzeroclaw.so
- * Build command: cargo ndk -t arm64-v8a -o app/src/main/jniLibs build --release
+ * @deprecated JNI 方案已废弃，使用子进程方案替代：
+ * - [ai.zeroclaw.android.process.ZeroClawProcessManager] — 进程管理
+ * - [ai.zeroclaw.android.ws.ZeroClawWsClient] — WS 通信
  */
+@Deprecated(
+    message = "JNI 方案已废弃，使用 ZeroClawProcessManager + ZeroClawWsClient 替代",
+    level = DeprecationLevel.WARNING
+)
 object ZeroClawBridge {
 
     private var initialized = false

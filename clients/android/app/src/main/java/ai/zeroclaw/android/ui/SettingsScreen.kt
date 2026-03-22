@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.repeatOnLifecycle
 import ai.zeroclaw.android.data.ZeroClawSettings
 import ai.zeroclaw.android.util.BatteryUtils
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -25,9 +26,15 @@ fun SettingsScreen(
     settings: ZeroClawSettings,
     onSettingsChange: (ZeroClawSettings) -> Unit,
     onSave: () -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    llmBaseUrl: String = "",
+    llmTokenPrefix: String = "",
+    userNickname: String = "",
+    onRefreshLlmConfig: (suspend () -> Result<Unit>)? = null,
+    onLogout: (() -> Unit)? = null
 ) {
     var showApiKey by remember { mutableStateOf(false) }
+    var showToken by remember { mutableStateOf(false) }
     var localSettings by remember(settings) { mutableStateOf(settings) }
 
     Scaffold(
@@ -58,6 +65,133 @@ fun SettingsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(24.dp)
         ) {
+            // Agent 连接
+            SettingsSection(title = "Agent 连接") {
+                OutlinedTextField(
+                    value = localSettings.agentName,
+                    onValueChange = { localSettings = localSettings.copy(agentName = it) },
+                    label = { Text("Agent Name") },
+                    placeholder = { Text("star") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                OutlinedTextField(
+                    value = localSettings.token,
+                    onValueChange = { localSettings = localSettings.copy(token = it) },
+                    label = { Text("Token") },
+                    placeholder = { Text("zeroclaw 认证令牌") },
+                    visualTransformation = if (showToken) VisualTransformation.None else PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    trailingIcon = {
+                        TextButton(onClick = { showToken = !showToken }) {
+                            Text(if (showToken) "隐藏" else "显示",
+                                style = MaterialTheme.typography.labelSmall)
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+
+                Text(
+                    text = "用于连接本地 ZeroClaw 的认证令牌，安全存储于 Android Keystore",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
+
+            // LLM 配置状态
+            if (llmBaseUrl.isNotBlank()) {
+                val scope = rememberCoroutineScope()
+                var refreshing by remember { mutableStateOf(false) }
+                var refreshResult by remember { mutableStateOf<String?>(null) }
+
+                SettingsSection(title = "LLM 配置") {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("网关地址")
+                        Text(
+                            llmBaseUrl,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("Token")
+                        Text(
+                            if (llmTokenPrefix.isNotBlank()) "${llmTokenPrefix}..." else "未配置",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    if (userNickname.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text("用户")
+                            Text(
+                                userNickname,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    onRefreshLlmConfig?.let { refreshFn ->
+                        Button(
+                            onClick = {
+                                refreshing = true
+                                refreshResult = null
+                                scope.launch {
+                                    val result = refreshFn()
+                                    refreshing = false
+                                    refreshResult = result.fold(
+                                        onSuccess = { "LLM 配置已更新" },
+                                        onFailure = { e -> "更新失败: ${e.message}" }
+                                    )
+                                }
+                            },
+                            enabled = !refreshing,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            if (refreshing) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                            }
+                            Text("刷新 LLM 配置")
+                        }
+                    }
+
+                    refreshResult?.let {
+                        Text(
+                            text = it,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (it.startsWith("更新失败"))
+                                MaterialTheme.colorScheme.error
+                            else
+                                MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                    }
+                }
+            }
+
             // Provider Section
             SettingsSection(title = "AI Provider") {
                 // Provider dropdown
@@ -155,11 +289,9 @@ fun SettingsScreen(
                     visualTransformation = if (showApiKey) VisualTransformation.None else PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                     trailingIcon = {
-                        IconButton(onClick = { showApiKey = !showApiKey }) {
-                            Icon(
-                                if (showApiKey) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                contentDescription = if (showApiKey) "Hide" else "Show"
-                            )
+                        TextButton(onClick = { showApiKey = !showApiKey }) {
+                            Text(if (showApiKey) "隐藏" else "显示",
+                                style = MaterialTheme.typography.labelSmall)
                         }
                     },
                     modifier = Modifier.fillMaxWidth(),
@@ -207,7 +339,7 @@ fun SettingsScreen(
 
             // Battery Optimization Section
             val context = LocalContext.current
-            val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+            val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
             var isOptimized by remember { mutableStateOf(BatteryUtils.isIgnoringBatteryOptimizations(context)) }
 
             // Refresh battery optimization state when screen resumes
@@ -266,6 +398,20 @@ fun SettingsScreen(
                 ) {
                     Text("ZeroClaw Core")
                     Text("0.x.x", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+
+            // 退出登录
+            onLogout?.let { logout ->
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = logout,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error
+                    )
+                ) {
+                    Text("退出登录")
                 }
             }
         }

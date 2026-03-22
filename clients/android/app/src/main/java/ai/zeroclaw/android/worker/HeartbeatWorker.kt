@@ -1,20 +1,21 @@
 package ai.zeroclaw.android.worker
 
 import android.content.Context
+import android.content.Intent
+import android.os.Build
+import android.util.Log
 import androidx.work.*
+import ai.zeroclaw.android.process.ZeroClawProcessManager
+import ai.zeroclaw.android.service.ZeroClawService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
 
 /**
- * WorkManager worker that runs periodic heartbeat checks.
+ * WorkManager worker：周期性健康检查 + 自动重启。
  *
- * This handles:
- * - Cron job execution
- * - Health checks
- * - Scheduled agent tasks
- *
- * Respects Android's Doze mode and battery optimization.
+ * zeroclaw 意外退出时，通过 startForegroundService 重启 ZeroClawService。
+ * WorkManager 最小间隔 15 分钟（Android 限制）。
  */
 class HeartbeatWorker(
     context: Context,
@@ -23,7 +24,6 @@ class HeartbeatWorker(
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         try {
-            // Get task type from input data
             val taskType = inputData.getString(KEY_TASK_TYPE) ?: TASK_HEARTBEAT
 
             when (taskType) {
@@ -35,6 +35,7 @@ class HeartbeatWorker(
 
             Result.success()
         } catch (e: Exception) {
+            Log.w(TAG, "Worker 执行失败: ${e.message}")
             if (runAttemptCount < 3) {
                 Result.retry()
             } else {
@@ -44,29 +45,42 @@ class HeartbeatWorker(
     }
 
     private suspend fun runHeartbeat() {
-        // TODO: Connect to ZeroClaw bridge
-        // val bridge = ZeroClawBridge
-        // bridge.sendHeartbeat()
+        val manager = ZeroClawProcessManager(applicationContext)
+        val healthy = manager.isHealthy()
+        Log.d(TAG, "Heartbeat: ${if (healthy) "OK" else "FAIL"}")
 
-        // For now, just log
-        android.util.Log.d(TAG, "Heartbeat executed")
+        if (!healthy) {
+            Log.w(TAG, "zeroclaw 不健康，请求重启 Service")
+            restartService()
+        }
     }
 
     private suspend fun runCronJob() {
         val jobId = inputData.getString(KEY_JOB_ID)
         val prompt = inputData.getString(KEY_PROMPT)
-
-        // TODO: Execute cron job via bridge
-        // ZeroClawBridge.executeCronJob(jobId, prompt)
-
-        android.util.Log.d(TAG, "Cron job executed: $jobId")
+        // TODO: Phase 2 实现 cron 任务执行
+        Log.d(TAG, "Cron job: $jobId (未实现)")
     }
 
     private suspend fun runHealthCheck() {
-        // TODO: Check agent status
-        // val status = ZeroClawBridge.getStatus()
+        val manager = ZeroClawProcessManager(applicationContext)
+        val healthy = manager.isHealthy()
+        Log.d(TAG, "Health check: ${if (healthy) "OK" else "FAIL"}")
 
-        android.util.Log.d(TAG, "Health check executed")
+        if (!healthy) {
+            restartService()
+            throw RuntimeException("健康检查失败，已请求重启")
+        }
+    }
+
+    private fun restartService() {
+        val intent = Intent(applicationContext, ZeroClawService::class.java)
+            .setAction(ZeroClawService.ACTION_START)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            applicationContext.startForegroundService(intent)
+        } else {
+            applicationContext.startService(intent)
+        }
     }
 
     companion object {
@@ -83,11 +97,8 @@ class HeartbeatWorker(
 
         const val WORK_NAME_HEARTBEAT = "zeroclaw_heartbeat"
 
-        /**
-         * Schedule periodic heartbeat (every 15 minutes minimum for WorkManager)
-         */
+        /** 调度周期性心跳（最小 15 分钟） */
         fun scheduleHeartbeat(context: Context, intervalMinutes: Long = 15) {
-            // WorkManager enforces 15-minute minimum for periodic work
             val effectiveInterval = maxOf(intervalMinutes, 15L)
 
             val constraints = Constraints.Builder()
@@ -102,7 +113,6 @@ class HeartbeatWorker(
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 1, TimeUnit.MINUTES)
                 .build()
 
-            // Use UPDATE policy to apply new interval settings immediately
             WorkManager.getInstance(context).enqueueUniquePeriodicWork(
                 WORK_NAME_HEARTBEAT,
                 ExistingPeriodicWorkPolicy.UPDATE,
@@ -110,9 +120,7 @@ class HeartbeatWorker(
             )
         }
 
-        /**
-         * Schedule a one-time cron job
-         */
+        /** 调度一次性 cron 任务 */
         fun scheduleCronJob(
             context: Context,
             jobId: String,
@@ -131,9 +139,7 @@ class HeartbeatWorker(
             WorkManager.getInstance(context).enqueue(request)
         }
 
-        /**
-         * Cancel heartbeat
-         */
+        /** 取消心跳 */
         fun cancelHeartbeat(context: Context) {
             WorkManager.getInstance(context).cancelUniqueWork(WORK_NAME_HEARTBEAT)
         }

@@ -31,6 +31,7 @@ class SettingsRepository(private val context: Context) {
         val SYSTEM_PROMPT = stringPreferencesKey("system_prompt")
         val HEARTBEAT_INTERVAL = intPreferencesKey("heartbeat_interval")
         val FIRST_RUN = booleanPreferencesKey("first_run")
+        val AGENT_NAME = stringPreferencesKey("agent_name")
     }
 
     // Encrypted storage for API key
@@ -66,7 +67,9 @@ class SettingsRepository(private val context: Context) {
             autoStart = prefs[Keys.AUTO_START] ?: false,
             notificationsEnabled = prefs[Keys.NOTIFICATIONS_ENABLED] ?: true,
             systemPrompt = prefs[Keys.SYSTEM_PROMPT] ?: "",
-            heartbeatIntervalMinutes = prefs[Keys.HEARTBEAT_INTERVAL] ?: 15
+            heartbeatIntervalMinutes = prefs[Keys.HEARTBEAT_INTERVAL] ?: 15,
+            agentName = prefs[Keys.AGENT_NAME] ?: "star",
+            token = getToken()
         )
     }
 
@@ -84,8 +87,9 @@ class SettingsRepository(private val context: Context) {
         }
 
     suspend fun updateSettings(settings: ZeroClawSettings) {
-        // Save API key to encrypted storage
+        // Save API key and token to encrypted storage
         saveApiKey(settings.apiKey)
+        saveToken(settings.token)
 
         // Save other settings to DataStore
         context.dataStore.edit { prefs ->
@@ -95,6 +99,7 @@ class SettingsRepository(private val context: Context) {
             prefs[Keys.NOTIFICATIONS_ENABLED] = settings.notificationsEnabled
             prefs[Keys.SYSTEM_PROMPT] = settings.systemPrompt
             prefs[Keys.HEARTBEAT_INTERVAL] = settings.heartbeatIntervalMinutes
+            prefs[Keys.AGENT_NAME] = settings.agentName
         }
     }
 
@@ -131,6 +136,15 @@ class SettingsRepository(private val context: Context) {
         return encryptedPrefs.getString("api_key", "") ?: ""
     }
 
+    // Encrypted token storage（WS 认证令牌，与 apiKey 同级安全）
+    private fun saveToken(token: String) {
+        encryptedPrefs.edit().putString("token", token).apply()
+    }
+
+    private fun getToken(): String {
+        return encryptedPrefs.getString("token", "") ?: ""
+    }
+
     fun hasApiKey(): Boolean {
         return getApiKey().isNotBlank()
     }
@@ -150,7 +164,10 @@ data class ZeroClawSettings(
     val autoStart: Boolean = false,
     val notificationsEnabled: Boolean = true,
     val systemPrompt: String = "",
-    val heartbeatIntervalMinutes: Int = 15
+    val heartbeatIntervalMinutes: Int = 15,
+    val agentName: String = "star",
+    val token: String = ""
 ) {
-    fun isConfigured(): Boolean = apiKey.isNotBlank()
+    /** 是否已配置（登录后 token 自动填充，或手动配置） */
+    fun isConfigured(): Boolean = token.isNotBlank()
 }
