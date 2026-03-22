@@ -970,10 +970,6 @@ fn default_openai_tts_speed() -> f64 {
     1.0
 }
 
-fn default_openai_tts_base_url() -> String {
-    "https://api.openai.com".into()
-}
-
 fn default_elevenlabs_model_id() -> String {
     "eleven_monolingual_v1".into()
 }
@@ -1024,6 +1020,11 @@ pub struct TtsConfig {
     /// Edge TTS provider configuration (`[tts.edge]`).
     #[serde(default)]
     pub edge: Option<EdgeTtsConfig>,
+    /// DashScope (百炼) TTS provider configuration (`[tts.dashscope]`).
+    /// Only available with the `huanxing` feature.
+    #[cfg(feature = "huanxing")]
+    #[serde(default)]
+    pub dashscope: Option<crate::huanxing::tts_dashscope::DashScopeTtsConfig>,
 }
 
 impl Default for TtsConfig {
@@ -1038,6 +1039,8 @@ impl Default for TtsConfig {
             elevenlabs: None,
             google: None,
             edge: None,
+            #[cfg(feature = "huanxing")]
+            dashscope: None,
         }
     }
 }
@@ -1054,11 +1057,6 @@ pub struct OpenAiTtsConfig {
     /// Playback speed multiplier (default `1.0`).
     #[serde(default = "default_openai_tts_speed")]
     pub speed: f64,
-    /// Base URL for OpenAI-compatible TTS API.
-    /// Default: `"https://api.openai.com"`.
-    /// For DashScope CosyVoice: `"https://dashscope.aliyuncs.com/compatible-mode"`.
-    #[serde(default = "default_openai_tts_base_url")]
-    pub base_url: String,
 }
 
 /// ElevenLabs TTS provider configuration.

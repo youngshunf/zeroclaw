@@ -45,6 +45,8 @@ pub mod templates;
 pub mod tenant;
 pub mod tenant_heartbeat;
 pub mod tools;
+pub mod tts_dashscope;
+pub mod voice;
 pub mod ws_observer;
 
 pub use api_client::ApiClient;

@@ -45,11 +45,11 @@ min_relevance_score = 0.4
 [autonomy]
 level = "full"
 workspace_only = false
-allowed_commands = []
+allowed_commands = ["*"]
 forbidden_paths = []
 max_actions_per_hour = 1000
 max_cost_per_day_cents = 10000
-block_high_risk_commands = false
+block_high_risk_commands = true
 auto_approve = [
     "file_read", "file_write", "file_create",
     "memory_recall", "memory_store",

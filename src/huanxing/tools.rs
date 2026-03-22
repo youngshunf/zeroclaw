@@ -1544,9 +1544,7 @@ impl Tool for HxTts {
     fn description(&self) -> &str {
         "将文字转换为语音消息。生成的音频会自动发送到当前会话。\n\
          用途：主动语音播报、语音提醒、语音回复等。\n\
-         支持的音色：longanyang(温暖男声), longjing(温柔女声), longmiao(甜美女声), \
-         longxiaobai(阳光男声), longwan(知性女声), longyue(大气女声), \
-         longshuo(播音男声), longtong(童声) 等。"
+         支持的音色：Chelsie(温柔女声,默认), Ethan(阳光男声)。"
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -1567,6 +1565,8 @@ impl Tool for HxTts {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        tracing::info!("hx_tts: execute called with args: {args}");
+
         let text = args
             .get("text")
             .and_then(|v| v.as_str())
@@ -1574,6 +1574,7 @@ impl Tool for HxTts {
             .trim();
 
         if text.is_empty() {
+            tracing::warn!("hx_tts: text is empty, returning error");
             return Ok(ToolResult {
                 success: false,
                 output: String::new(),
@@ -1594,19 +1595,8 @@ impl Tool for HxTts {
             .and_then(|v| v.as_str())
             .unwrap_or(&self.tts_config.default_voice);
 
-        // Synthesize audio using TTS manager
-        let tts_manager = match crate::channels::tts::TtsManager::new(&self.tts_config) {
-            Ok(m) => m,
-            Err(e) => {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(format!("TTS 初始化失败: {e}")),
-                });
-            }
-        };
-
-        match tts_manager.synthesize_with_voice(text, voice).await {
+        // Synthesize audio using huanxing voice module
+        match super::voice::synthesize_with_voice(&self.tts_config, text, voice).await {
             Ok(audio_bytes) => {
                 // Write to temp file and return path marker for channel layer to pick up
                 let tmp_dir = std::env::temp_dir().join("zeroclaw-tts");
@@ -1636,11 +1626,14 @@ impl Tool for HxTts {
                     error: None,
                 })
             }
-            Err(e) => Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!("语音合成失败: {e}")),
-            }),
+            Err(e) => {
+                tracing::error!("hx_tts: 语音合成失败: {e:?}");
+                Ok(ToolResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some(format!("语音合成失败: {e}")),
+                })
+            }
         }
     }
 }

@@ -70,13 +70,10 @@ fn compose_onebot_content(content: &str, reply_message_id: Option<&str>) -> Stri
             parts.push(format!("[CQ:image,file={marker}]"));
             continue;
         }
-        if let Some(marker) = trimmed
-            .strip_prefix("[VOICE:")
-            .and_then(|v| v.strip_suffix(']'))
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-        {
-            parts.push(format!("[CQ:record,file={marker}]"));
+        // HuanXing voice support: convert [VOICE:marker] to [CQ:record]
+        #[cfg(feature = "huanxing")]
+        if let Some(cq) = crate::huanxing::voice::compose_napcat_voice_segment(trimmed) {
+            parts.push(cq);
             continue;
         }
         parts.push(line.to_string());
@@ -130,22 +127,13 @@ fn parse_message_segments(message: &Value) -> String {
                     parts.push(format!("[IMAGE:{file}]"));
                 }
             }
+            // HuanXing voice support: parse "record" segments to [VOICE:url]
+            #[cfg(feature = "huanxing")]
             "record" => {
-                // Voice message: {"type":"record","data":{"file":"xxx.silk","url":"http://..."}}
-                if let Some(url) = data
-                    .and_then(|d| d.get("url"))
-                    .and_then(Value::as_str)
-                    .map(str::trim)
-                    .filter(|v| !v.is_empty())
+                if let Some(voice_marker) =
+                    crate::huanxing::voice::parse_napcat_voice_segment(data)
                 {
-                    parts.push(format!("[VOICE:{url}]"));
-                } else if let Some(file) = data
-                    .and_then(|d| d.get("file"))
-                    .and_then(Value::as_str)
-                    .map(str::trim)
-                    .filter(|v| !v.is_empty())
-                {
-                    parts.push(format!("[VOICE:{file}]"));
+                    parts.push(voice_marker);
                 }
             }
             _ => {}
@@ -291,132 +279,6 @@ impl NapcatChannel {
         Ok(request)
     }
 
-    /// Scan message content for `[VOICE:url]` markers and attempt ASR transcription
-    /// using DashScope qwen2.5-omni-7b (audio understanding via chat completions).
-    async fn transcribe_voice_markers(&self, content: String) -> String {
-        // Find [VOICE:...] markers
-        let Some(start) = content.find("[VOICE:") else {
-            return content;
-        };
-        let Some(end) = content[start..].find(']') else {
-            return content;
-        };
-        let voice_url = &content[start + 7..start + end];
-        if voice_url.is_empty() {
-            return content;
-        }
-
-        tracing::info!("NapCat ASR: attempting to transcribe voice from {voice_url}");
-
-        // Try to download the audio and transcribe via DashScope omni model
-        match self.asr_via_dashscope(voice_url).await {
-            Ok(text) if !text.is_empty() => {
-                tracing::info!("NapCat ASR: transcribed text: {text}");
-                // Replace [VOICE:url] with transcribed text
-                let before = &content[..start];
-                let after = &content[start + end + 1..];
-                format!("{before}🎤 {text}{after}").trim().to_string()
-            }
-            Ok(_) => {
-                tracing::warn!("NapCat ASR: empty transcription result");
-                content
-            }
-            Err(e) => {
-                tracing::warn!("NapCat ASR: transcription failed: {e}");
-                content
-            }
-        }
-    }
-
-    /// Use DashScope qwen2.5-omni-7b chat API to transcribe audio from a URL.
-    /// This model supports audio input via the OpenAI-compatible chat completions endpoint.
-    async fn asr_via_dashscope(&self, audio_url: &str) -> anyhow::Result<String> {
-        let api_key = std::env::var("DASHSCOPE_API_KEY")
-            .ok()
-            .filter(|v| !v.trim().is_empty())
-            .context("DASHSCOPE_API_KEY not set for NapCat ASR")?;
-
-        // First download the audio file
-        let audio_bytes = self
-            .http_client()
-            .get(audio_url)
-            .timeout(std::time::Duration::from_secs(30))
-            .send()
-            .await
-            .context("Failed to download voice audio")?
-            .bytes()
-            .await
-            .context("Failed to read voice audio bytes")?;
-
-        if audio_bytes.is_empty() {
-            anyhow::bail!("Downloaded audio is empty");
-        }
-
-        tracing::info!("NapCat ASR: downloaded {} bytes of audio", audio_bytes.len());
-
-        // Encode as base64 for the API
-        use base64::Engine;
-        let audio_b64 = base64::engine::general_purpose::STANDARD.encode(&audio_bytes);
-
-        // Determine format from URL or default to mp3
-        let format = if audio_url.contains(".silk") || audio_url.contains(".slk") {
-            "silk"
-        } else if audio_url.contains(".amr") {
-            "amr"
-        } else {
-            "mp3"
-        };
-
-        let body = serde_json::json!({
-            "model": "qwen2.5-omni-7b",
-            "messages": [{
-                "role": "user",
-                "content": [
-                    {
-                        "type": "input_audio",
-                        "input_audio": {
-                            "data": format!("data:audio/{format};base64,{audio_b64}"),
-                            "format": format
-                        }
-                    },
-                    {
-                        "type": "text",
-                        "text": "请将这段音频转录为文字，只输出转录的文字内容，不要添加任何解释或标点说明。"
-                    }
-                ]
-            }],
-            "stream": false
-        });
-
-        let resp = self
-            .http_client()
-            .post("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions")
-            .header("Authorization", format!("Bearer {api_key}"))
-            .json(&body)
-            .timeout(std::time::Duration::from_secs(30))
-            .send()
-            .await
-            .context("DashScope omni ASR request failed")?;
-
-        let status = resp.status();
-        let resp_body: serde_json::Value = resp.json().await.context("Failed to parse ASR response")?;
-
-        if !status.is_success() {
-            anyhow::bail!(
-                "DashScope ASR returned {status}: {}",
-                resp_body
-            );
-        }
-
-        let text = resp_body["choices"][0]["message"]["content"]
-            .as_str()
-            .unwrap_or("")
-            .trim()
-            .to_string();
-
-        Ok(text)
-    }
-
     async fn parse_message_event(&self, event: &Value) -> Option<ChannelMessage> {
         if event.get("post_type").and_then(Value::as_str) != Some("message") {
             return None;
@@ -463,12 +325,13 @@ impl NapcatChannel {
             }
         };
 
+        // HuanXing voice ASR: transcribe [VOICE:url] markers to text
+        #[cfg(feature = "huanxing")]
+        let content = crate::huanxing::voice::transcribe_voice_markers(content).await;
+
         if content.trim().is_empty() {
             return None;
         }
-
-        // ── Voice ASR: transcribe [VOICE:url] markers ──
-        let content = self.transcribe_voice_markers(content).await;
 
         let reply_target = if message_type == "group" {
             let group_id = event

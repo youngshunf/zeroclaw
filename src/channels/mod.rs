@@ -2650,9 +2650,7 @@ async fn process_channel_message(
                     Some(cancellation_token.clone()),
                     delta_tx,
                     ctx.hooks.as_deref(),
-                    if msg.channel == "cli"
-                        || ctx.autonomy_level == AutonomyLevel::Full
-                    {
+                    if msg.channel == "cli" {
                         &[]
                     } else {
                         ctx.non_cli_excluded_tools.as_ref()
@@ -4673,10 +4671,8 @@ pub async fn start_channels(config: Config) -> Result<()> {
 
     // Filter out tools excluded for non-CLI channels so the system prompt
     // does not advertise them for channel-driven runs.
-    // Skip this filter when autonomy is `Full` — full-autonomy agents keep
-    // all tools available regardless of channel.
     let excluded = &config.autonomy.non_cli_excluded_tools;
-    if !excluded.is_empty() && config.autonomy.level != AutonomyLevel::Full {
+    if !excluded.is_empty() {
         tool_descs.retain(|(name, _)| !excluded.iter().any(|ex| ex == name));
     }
 

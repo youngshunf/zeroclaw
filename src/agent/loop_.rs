@@ -4247,8 +4247,7 @@ pub async fn process_message(
     }
 
     // Filter out tools excluded for non-CLI channels (gateway counts as non-CLI).
-    // Skip when autonomy is `Full` — full-autonomy agents keep all tools.
-    if config.autonomy.level != AutonomyLevel::Full {
+    {
         let excluded = &config.autonomy.non_cli_excluded_tools;
         if !excluded.is_empty() {
             tool_descs.retain(|(name, _)| !excluded.iter().any(|ex| ex == name));
