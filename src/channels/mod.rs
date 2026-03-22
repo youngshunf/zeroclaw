@@ -2229,7 +2229,11 @@ async fn process_channel_message(
     };
 
     // ── Effective per-request resources from resolved context ─────────
-    let effective_memory: Arc<dyn Memory> = Arc::clone(&msg_ctx.memory);
+    let effective_memory: Arc<dyn Memory> = if is_multi_tenant {
+        Arc::clone(&msg_ctx.memory)
+    } else {
+        Arc::clone(&ctx.memory)
+    };
     let effective_histories: &ConversationHistoryMap = if is_multi_tenant {
         &msg_ctx.conversation_histories
     } else {
@@ -2572,7 +2576,10 @@ async fn process_channel_message(
     }
 
     let timeout_budget_secs =
-        channel_message_timeout_budget_secs(ctx.message_timeout_secs, ctx.max_tool_iterations);
+        channel_message_timeout_budget_secs(
+            msg_ctx.message_timeout_secs.unwrap_or(ctx.message_timeout_secs),
+            ctx.max_tool_iterations,
+        );
     let llm_call_start = Instant::now();
     #[allow(clippy::cast_possible_truncation)]
     let elapsed_before_llm_ms = started_at.elapsed().as_millis() as u64;
@@ -2595,6 +2602,18 @@ async fn process_channel_message(
 
     let default_pacing: crate::config::PacingConfig = Default::default();
 
+    // Effective multimodal config: tenant override or global
+    let effective_multimodal = msg_ctx.multimodal.as_ref().unwrap_or(&ctx.multimodal);
+
+    // Effective non_cli_excluded_tools: tenant override or global
+    let tenant_excluded_tools: Vec<String>;
+    let effective_excluded_tools: &[String] = if let Some(ref tools) = msg_ctx.non_cli_excluded_tools {
+        tenant_excluded_tools = tools.clone();
+        &tenant_excluded_tools
+    } else {
+        ctx.non_cli_excluded_tools.as_ref()
+    };
+
     macro_rules! run_tool_loop_future {
         () => {
             tokio::time::timeout(
@@ -2611,7 +2630,7 @@ async fn process_channel_message(
                     Some(&*ctx.approval_manager),
                     msg.channel.as_str(),
                     Some(msg.reply_target.as_str()),
-                    &ctx.multimodal,
+                    effective_multimodal,
                     ctx.max_tool_iterations,
                     Some(cancellation_token.clone()),
                     delta_tx,
@@ -2619,7 +2638,7 @@ async fn process_channel_message(
                     if msg.channel == "cli" {
                         &[]
                     } else {
-                        ctx.non_cli_excluded_tools.as_ref()
+                        effective_excluded_tools
                     },
                     ctx.tool_call_dedup_exempt.as_ref(),
                     ctx.activated_tools.as_ref(),
@@ -4927,6 +4946,9 @@ pub async fn start_channels(config: Config) -> Result<()> {
                                     session_manager: None,
                                     workspace_dir: config.workspace_dir.clone(),
                                     security: None,
+                                    non_cli_excluded_tools: None,
+                                    message_timeout_secs: None,
+                                    multimodal: None,
                                 },
                             )) as Arc<dyn crate::channels::context_resolver::MessageContextResolver>
                         }
@@ -4949,6 +4971,9 @@ pub async fn start_channels(config: Config) -> Result<()> {
                             session_manager: None,
                             workspace_dir: config.workspace_dir.clone(),
                             security: None,
+                            non_cli_excluded_tools: None,
+                            message_timeout_secs: None,
+                            multimodal: None,
                         },
                     )) as Arc<dyn crate::channels::context_resolver::MessageContextResolver>
                 }
@@ -4971,6 +4996,9 @@ pub async fn start_channels(config: Config) -> Result<()> {
                         session_manager: None,
                         workspace_dir: config.workspace_dir.clone(),
                         security: None,
+                        non_cli_excluded_tools: None,
+                        message_timeout_secs: None,
+                        multimodal: None,
                     },
                 )) as Arc<dyn crate::channels::context_resolver::MessageContextResolver>
             }
@@ -5298,6 +5326,9 @@ mod tests {
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
+                    non_cli_excluded_tools: None,
+                    message_timeout_secs: None,
+                    multimodal: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -5433,6 +5464,9 @@ mod tests {
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
+                    non_cli_excluded_tools: None,
+                    message_timeout_secs: None,
+                    multimodal: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -5524,6 +5558,9 @@ mod tests {
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
+                    non_cli_excluded_tools: None,
+                    message_timeout_secs: None,
+                    multimodal: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -5634,6 +5671,9 @@ mod tests {
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
+                    non_cli_excluded_tools: None,
+                    message_timeout_secs: None,
+                    multimodal: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -6194,6 +6234,9 @@ BTC is currently around $65,000 based on latest tool output."#
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
+                    non_cli_excluded_tools: None,
+                    message_timeout_secs: None,
+                    multimodal: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -6294,6 +6337,9 @@ BTC is currently around $65,000 based on latest tool output."#
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
+                    non_cli_excluded_tools: None,
+                    message_timeout_secs: None,
+                    multimodal: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -6408,6 +6454,9 @@ BTC is currently around $65,000 based on latest tool output."#
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
+                    non_cli_excluded_tools: None,
+                    message_timeout_secs: None,
+                    multimodal: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -6507,6 +6556,9 @@ BTC is currently around $65,000 based on latest tool output."#
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
+                    non_cli_excluded_tools: None,
+                    message_timeout_secs: None,
+                    multimodal: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -6616,6 +6668,9 @@ BTC is currently around $65,000 based on latest tool output."#
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
+                    non_cli_excluded_tools: None,
+                    message_timeout_secs: None,
+                    multimodal: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -6746,6 +6801,9 @@ BTC is currently around $65,000 based on latest tool output."#
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
+                    non_cli_excluded_tools: None,
+                    message_timeout_secs: None,
+                    multimodal: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -6857,6 +6915,9 @@ BTC is currently around $65,000 based on latest tool output."#
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
+                    non_cli_excluded_tools: None,
+                    message_timeout_secs: None,
+                    multimodal: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -6983,6 +7044,9 @@ BTC is currently around $65,000 based on latest tool output."#
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
+                    non_cli_excluded_tools: None,
+                    message_timeout_secs: None,
+                    multimodal: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -7094,6 +7158,9 @@ BTC is currently around $65,000 based on latest tool output."#
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
+                    non_cli_excluded_tools: None,
+                    message_timeout_secs: None,
+                    multimodal: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -7195,6 +7262,9 @@ BTC is currently around $65,000 based on latest tool output."#
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
+                    non_cli_excluded_tools: None,
+                    message_timeout_secs: None,
+                    multimodal: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -7247,6 +7317,8 @@ BTC is currently around $65,000 based on latest tool output."#
             _query: &str,
             _limit: usize,
             _session_id: Option<&str>,
+            _since: Option<&str>,
+            _until: Option<&str>,
         ) -> anyhow::Result<Vec<crate::memory::MemoryEntry>> {
             Ok(Vec::new())
         }
@@ -7299,6 +7371,8 @@ BTC is currently around $65,000 based on latest tool output."#
             _query: &str,
             _limit: usize,
             _session_id: Option<&str>,
+            _since: Option<&str>,
+            _until: Option<&str>,
         ) -> anyhow::Result<Vec<crate::memory::MemoryEntry>> {
             Ok(vec![crate::memory::MemoryEntry {
                 id: "entry-1".to_string(),
@@ -7308,6 +7382,9 @@ BTC is currently around $65,000 based on latest tool output."#
                 timestamp: "2026-02-20T00:00:00Z".to_string(),
                 session_id: None,
                 score: Some(0.9),
+                namespace: "default".to_string(),
+                importance: None,
+                superseded_by: None,
             }])
         }
 
@@ -7407,6 +7484,9 @@ BTC is currently around $65,000 based on latest tool output."#
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
+                    non_cli_excluded_tools: None,
+                    message_timeout_secs: None,
+                    multimodal: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -7528,6 +7608,9 @@ BTC is currently around $65,000 based on latest tool output."#
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
+                    non_cli_excluded_tools: None,
+                    message_timeout_secs: None,
+                    multimodal: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -7664,6 +7747,9 @@ BTC is currently around $65,000 based on latest tool output."#
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
+                    non_cli_excluded_tools: None,
+                    message_timeout_secs: None,
+                    multimodal: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -7797,6 +7883,9 @@ BTC is currently around $65,000 based on latest tool output."#
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
+                    non_cli_excluded_tools: None,
+                    message_timeout_secs: None,
+                    multimodal: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -7912,6 +8001,9 @@ BTC is currently around $65,000 based on latest tool output."#
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
+                    non_cli_excluded_tools: None,
+                    message_timeout_secs: None,
+                    multimodal: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -8011,6 +8103,9 @@ BTC is currently around $65,000 based on latest tool output."#
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
+                    non_cli_excluded_tools: None,
+                    message_timeout_secs: None,
+                    multimodal: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -8407,6 +8502,8 @@ BTC is currently around $65,000 based on latest tool output."#
             Some(&config),
             false,
             crate::config::SkillsPromptInjectionMode::Full,
+            false,
+            0,
         );
 
         assert!(
@@ -8436,6 +8533,8 @@ BTC is currently around $65,000 based on latest tool output."#
             Some(&config),
             false,
             crate::config::SkillsPromptInjectionMode::Full,
+            false,
+            0,
         );
 
         assert!(
@@ -8796,6 +8895,9 @@ BTC is currently around $65,000 based on latest tool output."#
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
+                    non_cli_excluded_tools: None,
+                    message_timeout_secs: None,
+                    multimodal: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -8946,6 +9048,9 @@ BTC is currently around $65,000 based on latest tool output."#
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
+                    non_cli_excluded_tools: None,
+                    message_timeout_secs: None,
+                    multimodal: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -9136,6 +9241,9 @@ BTC is currently around $65,000 based on latest tool output."#
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
+                    non_cli_excluded_tools: None,
+                    message_timeout_secs: None,
+                    multimodal: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -9263,6 +9371,9 @@ BTC is currently around $65,000 based on latest tool output."#
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
+                    non_cli_excluded_tools: None,
+                    message_timeout_secs: None,
+                    multimodal: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -9584,6 +9695,7 @@ This is an example JSON object for profile settings."#;
             thread_replies: Some(true),
             mention_only: Some(false),
             interrupt_on_new_message: false,
+            proxy_url: None,
         });
 
         let channels = collect_configured_channels(&config, "test");
@@ -9853,6 +9965,9 @@ This is an example JSON object for profile settings."#;
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
+                    non_cli_excluded_tools: None,
+                    message_timeout_secs: None,
+                    multimodal: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -9959,6 +10074,9 @@ This is an example JSON object for profile settings."#;
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
+                    non_cli_excluded_tools: None,
+                    message_timeout_secs: None,
+                    multimodal: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -10140,6 +10258,9 @@ This is an example JSON object for profile settings."#;
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
+                    non_cli_excluded_tools: None,
+                    message_timeout_secs: None,
+                    multimodal: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -10270,6 +10391,9 @@ This is an example JSON object for profile settings."#;
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
+                    non_cli_excluded_tools: None,
+                    message_timeout_secs: None,
+                    multimodal: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -10392,6 +10516,9 @@ This is an example JSON object for profile settings."#;
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
+                    non_cli_excluded_tools: None,
+                    message_timeout_secs: None,
+                    multimodal: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -10534,6 +10661,9 @@ This is an example JSON object for profile settings."#;
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
+                    non_cli_excluded_tools: None,
+                    message_timeout_secs: None,
+                    multimodal: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -10596,6 +10726,7 @@ This is an example JSON object for profile settings."#;
             interrupt_on_new_message: false,
             mention_only: false,
             ack_reactions: None,
+            proxy_url: None,
         });
         match build_channel_by_id(&config, "telegram") {
             Ok(channel) => assert_eq!(channel.name(), "telegram"),
@@ -10813,6 +10944,9 @@ This is an example JSON object for profile settings."#;
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
+                    non_cli_excluded_tools: None,
+                    message_timeout_secs: None,
+                    multimodal: None,
                 },
             )),
             #[cfg(feature = "huanxing")]

@@ -73,6 +73,16 @@ pub struct MessageContext {
     // ── Security ────────────────────────────────────────
     /// Per-tenant security policy for shell / file tools.
     pub security: Option<Arc<SecurityPolicy>>,
+
+    // ── Per-tenant runtime overrides ────────────────────
+    /// Tools excluded from non-CLI channels for this tenant.
+    pub non_cli_excluded_tools: Option<Vec<String>>,
+
+    /// Message timeout (seconds) for this tenant.
+    pub message_timeout_secs: Option<u64>,
+
+    /// Multimodal config override for this tenant.
+    pub multimodal: Option<crate::config::MultimodalConfig>,
 }
 
 /// Resolves the runtime [`MessageContext`] for an incoming message.
