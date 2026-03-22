@@ -183,7 +183,7 @@ impl SemanticGuard {
             }
         };
 
-        let entries = match memory.recall(prompt, 1, None).await {
+        let entries = match memory.recall(prompt, 1, None, None, None).await {
             Ok(entries) => entries,
             Err(error) => {
                 tracing::debug!("semantic guard recall failed; continuing without block: {error}");

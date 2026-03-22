@@ -1,8 +1,9 @@
+use crate::cli_input::Input;
 #[cfg(feature = "channel-nostr")]
 use crate::config::schema::{default_nostr_relays, NostrConfig};
 use crate::config::schema::{
     DingTalkConfig, IrcConfig, LarkReceiveMode, LinqConfig, NextcloudTalkConfig, QQConfig,
-    SignalConfig, StreamMode, WhatsAppConfig,
+    SignalConfig, StreamMode, WhatsAppChatPolicy, WhatsAppConfig, WhatsAppWebMode,
 };
 use crate::config::{
     AutonomyConfig, BrowserConfig, ChannelsConfig, ComposioConfig, Config, DiscordConfig,
@@ -20,7 +21,7 @@ use crate::providers::{
 };
 use anyhow::{bail, Context, Result};
 use console::style;
-use dialoguer::{Confirm, Input, Select};
+use dialoguer::{Confirm, Select};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -153,6 +154,7 @@ pub async fn run_wizard(force: bool) -> Result<Config> {
         reliability: crate::config::ReliabilityConfig::default(),
         scheduler: crate::config::schema::SchedulerConfig::default(),
         agent: crate::config::schema::AgentConfig::default(),
+        pacing: crate::config::PacingConfig::default(),
         skills: crate::config::SkillsConfig::default(),
         model_routes: Vec::new(),
         embedding_routes: Vec::new(),
@@ -195,11 +197,13 @@ pub async fn run_wizard(force: bool) -> Result<Config> {
         node_transport: crate::config::NodeTransportConfig::default(),
         knowledge: crate::config::KnowledgeConfig::default(),
         linkedin: crate::config::LinkedInConfig::default(),
+        image_gen: crate::config::ImageGenConfig::default(),
         plugins: crate::config::PluginsConfig::default(),
         locale: None,
         #[cfg(feature = "huanxing")]
         huanxing: Default::default(),
         verifiable_intent: crate::config::VerifiableIntentConfig::default(),
+        claude_code: crate::config::ClaudeCodeConfig::default(),
     };
 
     println!(
@@ -418,9 +422,17 @@ fn memory_config_defaults_for_backend(backend: &str) -> MemoryConfig {
         snapshot_enabled: false,
         snapshot_on_hygiene: false,
         auto_hydrate: true,
+        retrieval_stages: vec!["cache".into(), "fts".into(), "vector".into()],
+        rerank_enabled: false,
+        rerank_threshold: 5,
+        fts_early_return_score: 0.85,
+        default_namespace: "default".into(),
+        conflict_threshold: 0.85,
+        audit_enabled: false,
+        audit_retention_days: 30,
+        policy: crate::config::MemoryPolicyConfig::default(),
         sqlite_open_timeout_secs: None,
         qdrant: crate::config::QdrantConfig::default(),
-        mem0: crate::config::schema::Mem0Config::default(),
     }
 }
 
@@ -576,6 +588,7 @@ async fn run_quick_setup_with_home(
         reliability: crate::config::ReliabilityConfig::default(),
         scheduler: crate::config::schema::SchedulerConfig::default(),
         agent: crate::config::schema::AgentConfig::default(),
+        pacing: crate::config::PacingConfig::default(),
         skills: crate::config::SkillsConfig::default(),
         model_routes: Vec::new(),
         embedding_routes: Vec::new(),
@@ -618,11 +631,13 @@ async fn run_quick_setup_with_home(
         node_transport: crate::config::NodeTransportConfig::default(),
         knowledge: crate::config::KnowledgeConfig::default(),
         linkedin: crate::config::LinkedInConfig::default(),
+        image_gen: crate::config::ImageGenConfig::default(),
         plugins: crate::config::PluginsConfig::default(),
         locale: None,
         #[cfg(feature = "huanxing")]
         huanxing: Default::default(),
         verifiable_intent: crate::config::VerifiableIntentConfig::default(),
+        claude_code: crate::config::ClaudeCodeConfig::default(),
     };
 
     config.save().await?;
@@ -2395,7 +2410,7 @@ async fn setup_provider(workspace_dir: &Path) -> Result<(String, String, String,
 
         let model: String = Input::new()
             .with_prompt("  Model name (e.g. llama3, gpt-4o, mistral)")
-            .default("default".into())
+            .default("default")
             .interact_text()?;
 
         let provider_name = format!("custom:{base_url}");
@@ -2431,7 +2446,7 @@ async fn setup_provider(workspace_dir: &Path) -> Result<(String, String, String,
         if use_remote_ollama {
             let raw_url: String = Input::new()
                 .with_prompt("  Remote Ollama endpoint URL")
-                .default("https://ollama.com".into())
+                .default("https://ollama.com")
                 .interact_text()?;
 
             let normalized_url = normalize_ollama_endpoint_url(&raw_url);
@@ -2478,7 +2493,7 @@ async fn setup_provider(workspace_dir: &Path) -> Result<(String, String, String,
     } else if matches!(provider_name, "llamacpp" | "llama.cpp") {
         let raw_url: String = Input::new()
             .with_prompt("  llama.cpp server endpoint URL")
-            .default("http://localhost:8080/v1".into())
+            .default("http://localhost:8080/v1")
             .interact_text()?;
 
         let normalized_url = raw_url.trim().trim_end_matches('/').to_string();
@@ -2509,7 +2524,7 @@ async fn setup_provider(workspace_dir: &Path) -> Result<(String, String, String,
     } else if provider_name == "sglang" {
         let raw_url: String = Input::new()
             .with_prompt("  SGLang server endpoint URL")
-            .default("http://localhost:30000/v1".into())
+            .default("http://localhost:30000/v1")
             .interact_text()?;
 
         let normalized_url = raw_url.trim().trim_end_matches('/').to_string();
@@ -2540,7 +2555,7 @@ async fn setup_provider(workspace_dir: &Path) -> Result<(String, String, String,
     } else if provider_name == "vllm" {
         let raw_url: String = Input::new()
             .with_prompt("  vLLM server endpoint URL")
-            .default("http://localhost:8000/v1".into())
+            .default("http://localhost:8000/v1")
             .interact_text()?;
 
         let normalized_url = raw_url.trim().trim_end_matches('/').to_string();
@@ -2571,7 +2586,7 @@ async fn setup_provider(workspace_dir: &Path) -> Result<(String, String, String,
     } else if provider_name == "osaurus" {
         let raw_url: String = Input::new()
             .with_prompt("  Osaurus server endpoint URL")
-            .default("http://localhost:1337/v1".into())
+            .default("http://localhost:1337/v1")
             .interact_text()?;
 
         let normalized_url = raw_url.trim().trim_end_matches('/').to_string();
@@ -3259,7 +3274,7 @@ fn setup_hardware() -> Result<HardwareConfig> {
             // User chose serial but no device discovered — ask for manual path
             let manual_port: String = Input::new()
                 .with_prompt("  Serial port path (e.g. /dev/ttyUSB0)")
-                .default("/dev/ttyUSB0".into())
+                .default("/dev/ttyUSB0")
                 .interact_text()?;
             hw_config.serial_port = Some(manual_port);
         }
@@ -3285,7 +3300,7 @@ fn setup_hardware() -> Result<HardwareConfig> {
             4 => {
                 let custom: String = Input::new()
                     .with_prompt("  Custom baud rate")
-                    .default("115200".into())
+                    .default("115200")
                     .interact_text()?;
                 custom.parse::<u32>().unwrap_or(115_200)
             }
@@ -3299,7 +3314,7 @@ fn setup_hardware() -> Result<HardwareConfig> {
     {
         let target: String = Input::new()
             .with_prompt("  Target MCU chip (e.g. STM32F411CEUx, nRF52840_xxAA)")
-            .default("STM32F411CEUx".into())
+            .default("STM32F411CEUx")
             .interact_text()?;
         hw_config.probe_target = Some(target);
     }
@@ -3359,7 +3374,7 @@ fn setup_project_context() -> Result<ProjectContext> {
 
     let user_name: String = Input::new()
         .with_prompt("  Your name")
-        .default("User".into())
+        .default("User")
         .interact_text()?;
 
     let tz_options = vec![
@@ -3383,7 +3398,7 @@ fn setup_project_context() -> Result<ProjectContext> {
     let timezone = if tz_idx == tz_options.len() - 1 {
         Input::new()
             .with_prompt("  Enter timezone (e.g. America/New_York)")
-            .default("UTC".into())
+            .default("UTC")
             .interact_text()?
     } else {
         // Extract the short label before the parenthetical
@@ -3397,7 +3412,7 @@ fn setup_project_context() -> Result<ProjectContext> {
 
     let agent_name: String = Input::new()
         .with_prompt("  Agent name")
-        .default("ZeroClaw".into())
+        .default("ZeroClaw")
         .interact_text()?;
 
     let style_options = vec![
@@ -3426,7 +3441,7 @@ fn setup_project_context() -> Result<ProjectContext> {
         _ => Input::new()
             .with_prompt("  Custom communication style")
             .default(
-                "Be warm, natural, and clear. Use occasional relevant emojis (1-2 max) and avoid robotic phrasing.".into(),
+                "Be warm, natural, and clear. Use occasional relevant emojis (1-2 max) and avoid robotic phrasing.",
             )
             .interact_text()?,
     };
@@ -3793,6 +3808,7 @@ fn setup_channels() -> Result<ChannelsConfig> {
                     interrupt_on_new_message: false,
                     mention_only: false,
                     ack_reactions: None,
+                    proxy_url: None,
                 });
             }
             ChannelMenuChoice::Discord => {
@@ -3893,6 +3909,7 @@ fn setup_channels() -> Result<ChannelsConfig> {
                     listen_to_bots: false,
                     interrupt_on_new_message: false,
                     mention_only: false,
+                    proxy_url: None,
                 });
             }
             ChannelMenuChoice::Slack => {
@@ -4023,6 +4040,7 @@ fn setup_channels() -> Result<ChannelsConfig> {
                     interrupt_on_new_message: false,
                     thread_replies: None,
                     mention_only: false,
+                    proxy_url: None,
                 });
             }
             ChannelMenuChoice::IMessage => {
@@ -4050,7 +4068,7 @@ fn setup_channels() -> Result<ChannelsConfig> {
 
                 let contacts_str: String = Input::new()
                     .with_prompt("  Allowed contacts (comma-separated phone/email, or * for all)")
-                    .default("*".into())
+                    .default("*")
                     .interact_text()?;
 
                 let allowed_contacts = if contacts_str.trim() == "*" {
@@ -4163,7 +4181,7 @@ fn setup_channels() -> Result<ChannelsConfig> {
 
                 let users_str: String = Input::new()
                     .with_prompt("  Allowed users (comma-separated @user:server, or * for all)")
-                    .default("*".into())
+                    .default("*")
                     .interact_text()?;
 
                 let allowed_users = if users_str.trim() == "*" {
@@ -4197,7 +4215,7 @@ fn setup_channels() -> Result<ChannelsConfig> {
 
                 let http_url: String = Input::new()
                     .with_prompt("  signal-cli HTTP URL")
-                    .default("http://127.0.0.1:8686".into())
+                    .default("http://127.0.0.1:8686")
                     .interact_text()?;
 
                 if http_url.trim().is_empty() {
@@ -4244,7 +4262,7 @@ fn setup_channels() -> Result<ChannelsConfig> {
                     .with_prompt(
                         "  Allowed sender numbers (comma-separated +1234567890, or * for all)",
                     )
-                    .default("*".into())
+                    .default("*")
                     .interact_text()?;
 
                 let allowed_from = if allowed_from_raw.trim() == "*" {
@@ -4274,6 +4292,7 @@ fn setup_channels() -> Result<ChannelsConfig> {
                     allowed_from,
                     ignore_attachments,
                     ignore_stories,
+                    proxy_url: None,
                 });
 
                 println!("  {} Signal configured", style("✅").green().bold());
@@ -4321,7 +4340,7 @@ fn setup_channels() -> Result<ChannelsConfig> {
 
                     let session_path: String = Input::new()
                         .with_prompt("  Session database path")
-                        .default("~/.zeroclaw/state/whatsapp-web/session.db".into())
+                        .default("~/.zeroclaw/state/whatsapp-web/session.db")
                         .interact_text()?;
 
                     if session_path.trim().is_empty() {
@@ -4351,7 +4370,7 @@ fn setup_channels() -> Result<ChannelsConfig> {
                         .with_prompt(
                             "  Allowed phone numbers (comma-separated +1234567890, or * for all)",
                         )
-                        .default("*".into())
+                        .default("*")
                         .interact_text()?;
 
                     let allowed_numbers = if users_str.trim() == "*" {
@@ -4371,6 +4390,11 @@ fn setup_channels() -> Result<ChannelsConfig> {
                         pair_code: (!pair_code.trim().is_empty())
                             .then(|| pair_code.trim().to_string()),
                         allowed_numbers,
+                        mode: WhatsAppWebMode::default(),
+                        dm_policy: WhatsAppChatPolicy::default(),
+                        group_policy: WhatsAppChatPolicy::default(),
+                        self_chat_mode: false,
+                        proxy_url: None,
                     });
 
                     println!(
@@ -4411,7 +4435,7 @@ fn setup_channels() -> Result<ChannelsConfig> {
 
                 let verify_token: String = Input::new()
                     .with_prompt("  Webhook verify token (create your own)")
-                    .default("zeroclaw-whatsapp-verify".into())
+                    .default("zeroclaw-whatsapp-verify")
                     .interact_text()?;
 
                 // Test connection (run entirely in separate thread — Response must be used/dropped there)
@@ -4454,7 +4478,7 @@ fn setup_channels() -> Result<ChannelsConfig> {
                     .with_prompt(
                         "  Allowed phone numbers (comma-separated +1234567890, or * for all)",
                     )
-                    .default("*".into())
+                    .default("*")
                     .interact_text()?;
 
                 let allowed_numbers = if users_str.trim() == "*" {
@@ -4472,6 +4496,11 @@ fn setup_channels() -> Result<ChannelsConfig> {
                     pair_phone: None,
                     pair_code: None,
                     allowed_numbers,
+                    mode: WhatsAppWebMode::default(),
+                    dm_policy: WhatsAppChatPolicy::default(),
+                    group_policy: WhatsAppChatPolicy::default(),
+                    self_chat_mode: false,
+                    proxy_url: None,
                 });
             }
             ChannelMenuChoice::Linq => {
@@ -4541,7 +4570,7 @@ fn setup_channels() -> Result<ChannelsConfig> {
                     .with_prompt(
                         "  Allowed sender numbers (comma-separated +1234567890, or * for all)",
                     )
-                    .default("*".into())
+                    .default("*")
                     .interact_text()?;
 
                 let allowed_senders = if users_str.trim() == "*" {
@@ -4589,7 +4618,7 @@ fn setup_channels() -> Result<ChannelsConfig> {
 
                 let port_str: String = Input::new()
                     .with_prompt("  Port")
-                    .default("6697".into())
+                    .default("6697")
                     .interact_text()?;
 
                 let port: u16 = match port_str.trim().parse() {
@@ -4716,7 +4745,7 @@ fn setup_channels() -> Result<ChannelsConfig> {
 
                 let port: String = Input::new()
                     .with_prompt("  Port")
-                    .default("8080".into())
+                    .default("8080")
                     .interact_text()?;
 
                 let secret: String = Input::new()
@@ -4783,7 +4812,7 @@ fn setup_channels() -> Result<ChannelsConfig> {
 
                 let allowed_users_raw: String = Input::new()
                     .with_prompt("  Allowed Nextcloud actor IDs (comma-separated, or * for all)")
-                    .default("*".into())
+                    .default("*")
                     .interact_text()?;
 
                 let allowed_users = if allowed_users_raw.trim() == "*" {
@@ -4805,6 +4834,7 @@ fn setup_channels() -> Result<ChannelsConfig> {
                         Some(webhook_secret.trim().to_string())
                     },
                     allowed_users,
+                    proxy_url: None,
                 });
 
                 println!("  {} Nextcloud Talk configured", style("✅").green().bold());
@@ -4877,6 +4907,7 @@ fn setup_channels() -> Result<ChannelsConfig> {
                     client_id,
                     client_secret,
                     allowed_users,
+                    proxy_url: None,
                 });
             }
             ChannelMenuChoice::QqOfficial => {
@@ -4953,6 +4984,7 @@ fn setup_channels() -> Result<ChannelsConfig> {
                     app_id,
                     app_secret,
                     allowed_users,
+                    proxy_url: None,
                 });
             }
             ChannelMenuChoice::Lark | ChannelMenuChoice::Feishu => {
@@ -5107,7 +5139,7 @@ fn setup_channels() -> Result<ChannelsConfig> {
                 let port = if receive_mode == LarkReceiveMode::Webhook {
                     let p: String = Input::new()
                         .with_prompt("  Webhook Port")
-                        .default("8080".into())
+                        .default("8080")
                         .interact_text()?;
                     Some(p.parse().unwrap_or(8080))
                 } else {
@@ -5142,6 +5174,7 @@ fn setup_channels() -> Result<ChannelsConfig> {
                     use_feishu: is_feishu,
                     receive_mode,
                     port,
+                    proxy_url: None,
                 });
             }
             #[cfg(feature = "channel-nostr")]
@@ -7506,6 +7539,7 @@ mod tests {
             allowed_from: vec!["*".into()],
             ignore_attachments: false,
             ignore_stories: true,
+            proxy_url: None,
         });
         assert!(has_launchable_channels(&channels));
 
@@ -7518,6 +7552,7 @@ mod tests {
             thread_replies: Some(true),
             mention_only: Some(false),
             interrupt_on_new_message: false,
+            proxy_url: None,
         });
         assert!(has_launchable_channels(&channels));
 
@@ -7526,6 +7561,7 @@ mod tests {
             app_id: "app-id".into(),
             app_secret: "app-secret".into(),
             allowed_users: vec!["*".into()],
+            proxy_url: None,
         });
         assert!(has_launchable_channels(&channels));
 
@@ -7535,6 +7571,7 @@ mod tests {
             app_token: "token".into(),
             webhook_secret: Some("secret".into()),
             allowed_users: vec!["*".into()],
+            proxy_url: None,
         });
         assert!(has_launchable_channels(&channels));
 
@@ -7547,6 +7584,7 @@ mod tests {
             allowed_users: vec!["*".into()],
             receive_mode: crate::config::schema::LarkReceiveMode::Websocket,
             port: None,
+            proxy_url: None,
         });
         assert!(has_launchable_channels(&channels));
     }

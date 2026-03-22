@@ -58,3 +58,11 @@ server-config/guardian/memory
 server-config/guardian/sessions
 server-config/guardian/state
 server-config/huanxing-skills/
+
+# Android build artifacts
+clients/android/.gradle/
+clients/android/app/build/
+clients/android/build/
+*.apk
+*.aab
+

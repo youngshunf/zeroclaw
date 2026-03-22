@@ -11,14 +11,15 @@ pub mod api;
 pub mod api_pairing;
 #[cfg(feature = "plugins-wasm")]
 pub mod api_plugins;
+pub mod canvas;
 pub mod nodes;
 pub mod sse;
 pub mod static_files;
 pub mod ws;
 
 use crate::channels::{
-    session_backend::SessionBackend, session_sqlite::SqliteSessionBackend, Channel, LinqChannel,
-    NextcloudTalkChannel, SendMessage, WatiChannel, WhatsAppChannel,
+    session_backend::SessionBackend, session_sqlite::SqliteSessionBackend, Channel,
+    GmailPushChannel, LinqChannel, NextcloudTalkChannel, SendMessage, WatiChannel, WhatsAppChannel,
 };
 use crate::config::Config;
 use crate::cost::CostTracker;
@@ -28,6 +29,7 @@ use crate::runtime;
 use crate::security::pairing::{constant_time_eq, is_public_bind, PairingGuard};
 use crate::security::SecurityPolicy;
 use crate::tools;
+use crate::tools::canvas::CanvasStore;
 use crate::tools::traits::ToolSpec;
 use crate::util::truncate_with_ellipsis;
 use anyhow::{Context, Result};
@@ -336,6 +338,8 @@ pub struct AppState {
     /// Nextcloud Talk webhook secret for signature verification
     pub nextcloud_talk_webhook_secret: Option<Arc<str>>,
     pub wati: Option<Arc<WatiChannel>>,
+    /// Gmail Pub/Sub push notification channel
+    pub gmail_push: Option<Arc<GmailPushChannel>>,
     /// Observability backend for metrics scraping
     pub observer: Arc<dyn crate::observability::Observer>,
     /// Registered tool specs (for web dashboard tools page)
@@ -348,12 +352,16 @@ pub struct AppState {
     pub shutdown_tx: tokio::sync::watch::Sender<bool>,
     /// Registry of dynamically connected nodes
     pub node_registry: Arc<nodes::NodeRegistry>,
+    /// Path prefix for reverse-proxy deployments (empty string = no prefix)
+    pub path_prefix: String,
     /// Session backend for persisting gateway WS chat sessions
     pub session_backend: Option<Arc<dyn SessionBackend>>,
     /// Device registry for paired device management
     pub device_registry: Option<Arc<api_pairing::DeviceRegistry>>,
     /// Pending pairing request store
     pub pending_pairings: Option<Arc<api_pairing::PairingStore>>,
+    /// Shared canvas store for Live Canvas (A2UI) system
+    pub canvas_store: CanvasStore,
 }
 
 /// Run the HTTP gateway using axum with proper HTTP/1.1 compliance.
@@ -365,7 +373,10 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         anyhow::bail!(
             "🛑 Refusing to bind to {host} — gateway would be exposed to the internet.\n\
              Fix: use --host 127.0.0.1 (default), configure a tunnel, or set\n\
-             [gateway] allow_public_bind = true in config.toml (NOT recommended)."
+             [gateway] allow_public_bind = true in config.toml (NOT recommended).\n\n\
+             Docker: if you need to reach the gateway from a Docker container, set\n\
+             [gateway] host = \"0.0.0.0\" and allow_public_bind = true in config.toml,\n\
+             then connect from the container via ws://host.docker.internal:{port}."
         );
     }
     let config_state = Arc::new(Mutex::new(config.clone()));
@@ -428,36 +439,87 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         (None, None)
     };
 
-    let (tools_registry_raw, _delegate_handle_gw) = tools::all_tools_with_runtime(
-        Arc::new(config.clone()),
-        &security,
-        runtime,
-        Arc::clone(&mem),
-        composio_key,
-        composio_entity_id,
-        &config.browser,
-        &config.http_request,
-        &config.web_fetch,
-        &config.workspace_dir,
-        &config.agents,
-        config.api_key.as_deref(),
-        &config,
-    );
+    let canvas_store = tools::CanvasStore::new();
+
+    let (mut tools_registry_raw, delegate_handle_gw, _reaction_handle_gw) =
+        tools::all_tools_with_runtime(
+            Arc::new(config.clone()),
+            &security,
+            runtime,
+            Arc::clone(&mem),
+            composio_key,
+            composio_entity_id,
+            &config.browser,
+            &config.http_request,
+            &config.web_fetch,
+            &config.workspace_dir,
+            &config.agents,
+            config.api_key.as_deref(),
+            &config,
+            Some(canvas_store.clone()),
+        );
+
+    // ── Wire MCP tools into the gateway tool registry (non-fatal) ───
+    // Without this, the `/api/tools` endpoint misses MCP tools.
+    if config.mcp.enabled && !config.mcp.servers.is_empty() {
+        tracing::info!(
+            "Gateway: initializing MCP client — {} server(s) configured",
+            config.mcp.servers.len()
+        );
+        match tools::McpRegistry::connect_all(&config.mcp.servers).await {
+            Ok(registry) => {
+                let registry = std::sync::Arc::new(registry);
+                if config.mcp.deferred_loading {
+                    let deferred_set =
+                        tools::DeferredMcpToolSet::from_registry(std::sync::Arc::clone(&registry))
+                            .await;
+                    tracing::info!(
+                        "Gateway MCP deferred: {} tool stub(s) from {} server(s)",
+                        deferred_set.len(),
+                        registry.server_count()
+                    );
+                    let activated =
+                        std::sync::Arc::new(std::sync::Mutex::new(tools::ActivatedToolSet::new()));
+                    tools_registry_raw.push(Box::new(tools::ToolSearchTool::new(
+                        deferred_set,
+                        activated,
+                    )));
+                } else {
+                    let names = registry.tool_names();
+                    let mut registered = 0usize;
+                    for name in names {
+                        if let Some(def) = registry.get_tool_def(&name).await {
+                            let wrapper: std::sync::Arc<dyn tools::Tool> =
+                                std::sync::Arc::new(tools::McpToolWrapper::new(
+                                    name,
+                                    def,
+                                    std::sync::Arc::clone(&registry),
+                                ));
+                            if let Some(ref handle) = delegate_handle_gw {
+                                handle.write().push(std::sync::Arc::clone(&wrapper));
+                            }
+                            tools_registry_raw.push(Box::new(tools::ArcToolRef(wrapper)));
+                            registered += 1;
+                        }
+                    }
+                    tracing::info!(
+                        "Gateway MCP: {} tool(s) registered from {} server(s)",
+                        registered,
+                        registry.server_count()
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::error!("Gateway MCP registry failed to initialize: {e:#}");
+            }
+        }
+    }
+
     let tools_registry: Arc<Vec<ToolSpec>> =
         Arc::new(tools_registry_raw.iter().map(|t| t.spec()).collect());
 
-    // Cost tracker (optional)
-    let cost_tracker = if config.cost.enabled {
-        match CostTracker::new(config.cost.clone(), &config.workspace_dir) {
-            Ok(ct) => Some(Arc::new(ct)),
-            Err(e) => {
-                tracing::warn!("Failed to initialize cost tracker: {e}");
-                None
-            }
-        }
-    } else {
-        None
-    };
+    // Cost tracker — process-global singleton so channels share the same instance
+    let cost_tracker = CostTracker::get_or_init_global(config.cost.clone(), &config.workspace_dir);
 
     // SSE broadcast channel for real-time events
     let (event_tx, _event_rx) = tokio::sync::broadcast::channel::<serde_json::Value>(256);
@@ -578,6 +640,14 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
             })
             .map(Arc::from);
 
+    // Gmail Push channel (if configured and enabled)
+    let gmail_push_channel: Option<Arc<GmailPushChannel>> = config
+        .channels_config
+        .gmail_push
+        .as_ref()
+        .filter(|gp| gp.enabled)
+        .map(|gp| Arc::new(GmailPushChannel::new(gp.clone())));
+
     // ── Session persistence for WS chat ─────────────────────
     let session_backend: Option<Arc<dyn SessionBackend>> = if config.gateway.session_persistence {
         match SqliteSessionBackend::new(&config.workspace_dir) {
@@ -624,6 +694,13 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         idempotency_max_keys,
     ));
 
+    // Resolve optional path prefix for reverse-proxy deployments.
+    let path_prefix: Option<&str> = config
+        .gateway
+        .path_prefix
+        .as_deref()
+        .filter(|p| !p.is_empty());
+
     // ── Tunnel ────────────────────────────────────────────────
     let tunnel = crate::tunnel::create_tunnel(&config.tunnel)?;
     let mut tunnel_url: Option<String> = None;
@@ -642,18 +719,19 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         }
     }
 
-    println!("🦀 ZeroClaw Gateway listening on http://{display_addr}");
+    let pfx = path_prefix.unwrap_or("");
+    println!("🦀 ZeroClaw Gateway listening on http://{display_addr}{pfx}");
     if let Some(ref url) = tunnel_url {
         println!("  🌐 Public URL: {url}");
     }
-    println!("  🌐 Web Dashboard: http://{display_addr}/");
+    println!("  🌐 Web Dashboard: http://{display_addr}{pfx}/");
     if let Some(code) = pairing.pairing_code() {
         println!();
         println!("  🔐 PAIRING REQUIRED — use this one-time code:");
         println!("     ┌──────────────┐");
         println!("     │  {code}  │");
         println!("     └──────────────┘");
-        println!();
+        println!("     Send: POST {pfx}/pair with header X-Pairing-Code: {code}");
     } else if pairing.require_pairing() {
         println!("  🔒 Pairing: ACTIVE (bearer token required)");
         println!("     To pair a new device: zeroclaw gateway get-paircode --new");
@@ -662,29 +740,29 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         println!("  ⚠️  Pairing: DISABLED (all requests accepted)");
         println!();
     }
-    println!("  POST /pair      — pair a new client (X-Pairing-Code header)");
-    println!("  POST /webhook   — {{\"message\": \"your prompt\"}}");
+    println!("  POST {pfx}/pair      — pair a new client (X-Pairing-Code header)");
+    println!("  POST {pfx}/webhook   — {{\"message\": \"your prompt\"}}");
     if whatsapp_channel.is_some() {
-        println!("  GET  /whatsapp  — Meta webhook verification");
-        println!("  POST /whatsapp  — WhatsApp message webhook");
+        println!("  GET  {pfx}/whatsapp  — Meta webhook verification");
+        println!("  POST {pfx}/whatsapp  — WhatsApp message webhook");
     }
     if linq_channel.is_some() {
-        println!("  POST /linq      — Linq message webhook (iMessage/RCS/SMS)");
+        println!("  POST {pfx}/linq      — Linq message webhook (iMessage/RCS/SMS)");
     }
     if wati_channel.is_some() {
-        println!("  GET  /wati      — WATI webhook verification");
-        println!("  POST /wati      — WATI message webhook");
+        println!("  GET  {pfx}/wati      — WATI webhook verification");
+        println!("  POST {pfx}/wati      — WATI message webhook");
     }
     if nextcloud_talk_channel.is_some() {
-        println!("  POST /nextcloud-talk — Nextcloud Talk bot webhook");
+        println!("  POST {pfx}/nextcloud-talk — Nextcloud Talk bot webhook");
     }
-    println!("  GET  /api/*     — REST API (bearer token required)");
-    println!("  GET  /ws/chat   — WebSocket agent chat");
+    println!("  GET  {pfx}/api/*     — REST API (bearer token required)");
+    println!("  GET  {pfx}/ws/chat   — WebSocket agent chat");
     if config.nodes.enabled {
-        println!("  GET  /ws/nodes  — WebSocket node discovery");
+        println!("  GET  {pfx}/ws/nodes  — WebSocket node discovery");
     }
-    println!("  GET  /health    — health check");
-    println!("  GET  /metrics   — Prometheus metrics");
+    println!("  GET  {pfx}/health    — health check");
+    println!("  GET  {pfx}/metrics   — Prometheus metrics");
     println!("  Press Ctrl+C to stop.\n");
 
     crate::health::mark_component_ok("gateway");
@@ -741,6 +819,7 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         nextcloud_talk: nextcloud_talk_channel,
         nextcloud_talk_webhook_secret,
         wati: wati_channel,
+        gmail_push: gmail_push_channel,
         observer: broadcast_observer,
         tools_registry,
         cost_tracker,
@@ -750,6 +829,8 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         session_backend,
         device_registry,
         pending_pairings,
+        path_prefix: path_prefix.unwrap_or("").to_string(),
+        canvas_store,
     };
 
     // Config PUT needs larger body limit (1MB)
@@ -758,7 +839,7 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         .layer(RequestBodyLimitLayer::new(1_048_576));
 
     // Build router with middleware
-    let app = Router::new()
+    let inner = Router::new()
         // ── Admin routes (for CLI management) ──
         .route("/admin/shutdown", post(handle_admin_shutdown))
         .route("/admin/paircode", get(handle_admin_paircode))
@@ -774,6 +855,7 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         .route("/wati", get(handle_wati_verify))
         .route("/wati", post(handle_wati_webhook))
         .route("/nextcloud-talk", post(handle_nextcloud_talk_webhook))
+        .route("/webhook/gmail", post(handle_gmail_push_webhook))
         // ── Web Dashboard API routes ──
         .route("/api/status", get(api::handle_api_status))
         .route("/api/config", get(api::handle_api_config_get))
@@ -784,7 +866,10 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
             "/api/cron/settings",
             get(api::handle_api_cron_settings_get).patch(api::handle_api_cron_settings_patch),
         )
-        .route("/api/cron/{id}", delete(api::handle_api_cron_delete))
+        .route(
+            "/api/cron/{id}",
+            delete(api::handle_api_cron_delete).patch(api::handle_api_cron_patch),
+        )
         .route("/api/cron/{id}/runs", get(api::handle_api_cron_runs))
         .route("/api/integrations", get(api::handle_api_integrations))
         .route(
@@ -809,52 +894,77 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         .route(
             "/api/devices/{id}/token/rotate",
             post(api_pairing::rotate_token),
+        )
+        // ── Live Canvas (A2UI) routes ──
+        .route("/api/canvas", get(canvas::handle_canvas_list))
+        .route(
+            "/api/canvas/{id}",
+            get(canvas::handle_canvas_get)
+                .post(canvas::handle_canvas_post)
+                .delete(canvas::handle_canvas_clear),
+        )
+        .route(
+            "/api/canvas/{id}/history",
+            get(canvas::handle_canvas_history),
         );
 
     // ── Plugin management API (requires plugins-wasm feature) ──
     #[cfg(feature = "plugins-wasm")]
-    let app = app.route(
+    let inner = inner.route(
         "/api/plugins",
         get(api_plugins::plugin_routes::list_plugins),
     );
 
     // ── HuanXing Agent 管理 API（桌面端，requires huanxing feature）──
     #[cfg(feature = "huanxing")]
-    let app = app.merge(crate::huanxing::api_agents::agent_routes());
+    let inner = inner.merge(crate::huanxing::api_agents::agent_routes());
 
     // ── HuanXing Session REST API（桌面端，requires huanxing feature）──
-    // huanxing 版本完整接管 /api/sessions 路由（含原上游的 GET + DELETE），
-    // 非 huanxing 构建则在此处注册上游实现。
     #[cfg(feature = "huanxing")]
-    let app = app.merge(crate::huanxing::api_sessions::session_routes());
+    let inner = inner.merge(crate::huanxing::api_sessions::session_routes());
     #[cfg(not(feature = "huanxing"))]
-    let app = app
+    let inner = inner
         .route("/api/sessions", get(api::handle_api_sessions_list))
         .route("/api/sessions/{id}", delete(api::handle_api_session_delete));
 
     // ── HuanXing Hub 同步 API（requires huanxing feature）──
     #[cfg(feature = "huanxing")]
-    let app = app.merge(crate::huanxing::hub_sync::hub_routes());
+    let inner = inner.merge(crate::huanxing::hub_sync::hub_routes());
 
-    let app = app
+    let inner = inner
         // ── SSE event stream ──
         .route("/api/events", get(sse::handle_sse_events))
         // ── WebSocket agent chat ──
         .route("/ws/chat", get(ws::handle_ws_chat))
+        // ── WebSocket canvas updates ──
+        .route("/ws/canvas/{id}", get(canvas::handle_ws_canvas))
         // ── WebSocket node discovery ──
         .route("/ws/nodes", get(nodes::handle_ws_nodes))
         // ── Static assets (web dashboard) ──
         .route("/_app/{*path}", get(static_files::handle_static))
         // ── Config PUT with larger body limit ──
         .merge(config_put_router)
+        // ── SPA fallback: non-API GET requests serve index.html ──
+        .fallback(get(static_files::handle_spa_fallback))
         .with_state(state)
         .layer(RequestBodyLimitLayer::new(MAX_BODY_SIZE))
         .layer(TimeoutLayer::with_status_code(
             StatusCode::REQUEST_TIMEOUT,
             Duration::from_secs(gateway_request_timeout_secs()),
-        ))
-        // ── SPA fallback: non-API GET requests serve index.html ──
-        .fallback(get(static_files::handle_spa_fallback));
+        ));
+
+    // Nest under path prefix when configured (axum strips prefix before routing).
+    // nest() at "/prefix" handles both "/prefix" and "/prefix/*" but not "/prefix/"
+    // with a trailing slash, so we add a fallback redirect for that case.
+    let app = if let Some(prefix) = path_prefix {
+        let redirect_target = prefix.to_string();
+        Router::new().nest(prefix, inner).route(
+            &format!("{prefix}/"),
+            get(|| async move { axum::response::Redirect::permanent(&redirect_target) }),
+        )
+    } else {
+        inner
+    };
 
     // Run the server with graceful shutdown
     axum::serve(
@@ -1752,6 +1862,74 @@ async fn handle_nextcloud_talk_webhook(
     (StatusCode::OK, Json(serde_json::json!({"status": "ok"})))
 }
 
+/// Maximum request body size for the Gmail webhook endpoint (1 MB).
+/// Google Pub/Sub messages are typically under 10 KB.
+const GMAIL_WEBHOOK_MAX_BODY: usize = 1024 * 1024;
+
+/// POST /webhook/gmail — incoming Gmail Pub/Sub push notification
+async fn handle_gmail_push_webhook(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> impl IntoResponse {
+    let Some(ref gmail_push) = state.gmail_push else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Gmail push not configured"})),
+        );
+    };
+
+    // Enforce body size limit.
+    if body.len() > GMAIL_WEBHOOK_MAX_BODY {
+        return (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            Json(serde_json::json!({"error": "Request body too large"})),
+        );
+    }
+
+    // Authenticate the webhook request using a shared secret.
+    let secret = gmail_push.resolve_webhook_secret();
+    if !secret.is_empty() {
+        let provided = headers
+            .get(axum::http::header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|auth| auth.strip_prefix("Bearer "))
+            .unwrap_or("");
+
+        if provided != secret {
+            tracing::warn!("Gmail push webhook: unauthorized request");
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({"error": "Unauthorized"})),
+            );
+        }
+    }
+
+    let body_str = String::from_utf8_lossy(&body);
+    let envelope: crate::channels::gmail_push::PubSubEnvelope =
+        match serde_json::from_str(&body_str) {
+            Ok(e) => e,
+            Err(e) => {
+                tracing::warn!("Gmail push webhook: invalid payload: {e}");
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({"error": "Invalid Pub/Sub envelope"})),
+                );
+            }
+        };
+
+    // Process the notification asynchronously (non-blocking for the webhook response)
+    let channel = Arc::clone(gmail_push);
+    tokio::spawn(async move {
+        if let Err(e) = channel.handle_notification(&envelope).await {
+            tracing::error!("Gmail push notification processing failed: {e:#}");
+        }
+    });
+
+    // Acknowledge immediately — Google Pub/Sub requires a 2xx within ~10s
+    (StatusCode::OK, Json(serde_json::json!({"status": "ok"})))
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // ADMIN HANDLERS (for CLI management)
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1940,15 +2118,18 @@ mod tests {
             nextcloud_talk: None,
             nextcloud_talk_webhook_secret: None,
             wati: None,
+            gmail_push: None,
             observer: Arc::new(crate::observability::NoopObserver),
             tools_registry: Arc::new(Vec::new()),
             cost_tracker: None,
             event_tx: tokio::sync::broadcast::channel(16).0,
             shutdown_tx: tokio::sync::watch::channel(false).0,
             node_registry: Arc::new(nodes::NodeRegistry::new(16)),
+            path_prefix: String::new(),
             session_backend: None,
             device_registry: None,
             pending_pairings: None,
+            canvas_store: CanvasStore::new(),
         };
 
         let response = handle_metrics(State(state)).await.into_response();
@@ -1995,15 +2176,18 @@ mod tests {
             nextcloud_talk: None,
             nextcloud_talk_webhook_secret: None,
             wati: None,
+            gmail_push: None,
             observer,
             tools_registry: Arc::new(Vec::new()),
             cost_tracker: None,
             event_tx: tokio::sync::broadcast::channel(16).0,
             shutdown_tx: tokio::sync::watch::channel(false).0,
             node_registry: Arc::new(nodes::NodeRegistry::new(16)),
+            path_prefix: String::new(),
             session_backend: None,
             device_registry: None,
             pending_pairings: None,
+            canvas_store: CanvasStore::new(),
         };
 
         let response = handle_metrics(State(state)).await.into_response();
@@ -2241,6 +2425,8 @@ mod tests {
             _query: &str,
             _limit: usize,
             _session_id: Option<&str>,
+            _since: Option<&str>,
+            _until: Option<&str>,
         ) -> anyhow::Result<Vec<MemoryEntry>> {
             Ok(Vec::new())
         }
@@ -2316,6 +2502,8 @@ mod tests {
             _query: &str,
             _limit: usize,
             _session_id: Option<&str>,
+            _since: Option<&str>,
+            _until: Option<&str>,
         ) -> anyhow::Result<Vec<MemoryEntry>> {
             Ok(Vec::new())
         }
@@ -2375,15 +2563,18 @@ mod tests {
             nextcloud_talk: None,
             nextcloud_talk_webhook_secret: None,
             wati: None,
+            gmail_push: None,
             observer: Arc::new(crate::observability::NoopObserver),
             tools_registry: Arc::new(Vec::new()),
             cost_tracker: None,
             event_tx: tokio::sync::broadcast::channel(16).0,
             shutdown_tx: tokio::sync::watch::channel(false).0,
             node_registry: Arc::new(nodes::NodeRegistry::new(16)),
+            path_prefix: String::new(),
             session_backend: None,
             device_registry: None,
             pending_pairings: None,
+            canvas_store: CanvasStore::new(),
         };
 
         let mut headers = HeaderMap::new();
@@ -2444,15 +2635,18 @@ mod tests {
             nextcloud_talk: None,
             nextcloud_talk_webhook_secret: None,
             wati: None,
+            gmail_push: None,
             observer: Arc::new(crate::observability::NoopObserver),
             tools_registry: Arc::new(Vec::new()),
             cost_tracker: None,
             event_tx: tokio::sync::broadcast::channel(16).0,
             shutdown_tx: tokio::sync::watch::channel(false).0,
             node_registry: Arc::new(nodes::NodeRegistry::new(16)),
+            path_prefix: String::new(),
             session_backend: None,
             device_registry: None,
             pending_pairings: None,
+            canvas_store: CanvasStore::new(),
         };
 
         let headers = HeaderMap::new();
@@ -2525,15 +2719,18 @@ mod tests {
             nextcloud_talk: None,
             nextcloud_talk_webhook_secret: None,
             wati: None,
+            gmail_push: None,
             observer: Arc::new(crate::observability::NoopObserver),
             tools_registry: Arc::new(Vec::new()),
             cost_tracker: None,
             event_tx: tokio::sync::broadcast::channel(16).0,
             shutdown_tx: tokio::sync::watch::channel(false).0,
             node_registry: Arc::new(nodes::NodeRegistry::new(16)),
+            path_prefix: String::new(),
             session_backend: None,
             device_registry: None,
             pending_pairings: None,
+            canvas_store: CanvasStore::new(),
         };
 
         let response = handle_webhook(
@@ -2578,15 +2775,18 @@ mod tests {
             nextcloud_talk: None,
             nextcloud_talk_webhook_secret: None,
             wati: None,
+            gmail_push: None,
             observer: Arc::new(crate::observability::NoopObserver),
             tools_registry: Arc::new(Vec::new()),
             cost_tracker: None,
             event_tx: tokio::sync::broadcast::channel(16).0,
             shutdown_tx: tokio::sync::watch::channel(false).0,
             node_registry: Arc::new(nodes::NodeRegistry::new(16)),
+            path_prefix: String::new(),
             session_backend: None,
             device_registry: None,
             pending_pairings: None,
+            canvas_store: CanvasStore::new(),
         };
 
         let mut headers = HeaderMap::new();
@@ -2636,15 +2836,18 @@ mod tests {
             nextcloud_talk: None,
             nextcloud_talk_webhook_secret: None,
             wati: None,
+            gmail_push: None,
             observer: Arc::new(crate::observability::NoopObserver),
             tools_registry: Arc::new(Vec::new()),
             cost_tracker: None,
             event_tx: tokio::sync::broadcast::channel(16).0,
             shutdown_tx: tokio::sync::watch::channel(false).0,
             node_registry: Arc::new(nodes::NodeRegistry::new(16)),
+            path_prefix: String::new(),
             session_backend: None,
             device_registry: None,
             pending_pairings: None,
+            canvas_store: CanvasStore::new(),
         };
 
         let mut headers = HeaderMap::new();
@@ -2699,15 +2902,18 @@ mod tests {
             nextcloud_talk: None,
             nextcloud_talk_webhook_secret: None,
             wati: None,
+            gmail_push: None,
             observer: Arc::new(crate::observability::NoopObserver),
             tools_registry: Arc::new(Vec::new()),
             cost_tracker: None,
             event_tx: tokio::sync::broadcast::channel(16).0,
             shutdown_tx: tokio::sync::watch::channel(false).0,
             node_registry: Arc::new(nodes::NodeRegistry::new(16)),
+            path_prefix: String::new(),
             session_backend: None,
             device_registry: None,
             pending_pairings: None,
+            canvas_store: CanvasStore::new(),
         };
 
         let response = Box::pin(handle_nextcloud_talk_webhook(
@@ -2758,15 +2964,18 @@ mod tests {
             nextcloud_talk: Some(channel),
             nextcloud_talk_webhook_secret: Some(Arc::from(secret)),
             wati: None,
+            gmail_push: None,
             observer: Arc::new(crate::observability::NoopObserver),
             tools_registry: Arc::new(Vec::new()),
             cost_tracker: None,
             event_tx: tokio::sync::broadcast::channel(16).0,
             shutdown_tx: tokio::sync::watch::channel(false).0,
             node_registry: Arc::new(nodes::NodeRegistry::new(16)),
+            path_prefix: String::new(),
             session_backend: None,
             device_registry: None,
             pending_pairings: None,
+            canvas_store: CanvasStore::new(),
         };
 
         let mut headers = HeaderMap::new();

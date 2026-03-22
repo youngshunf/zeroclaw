@@ -20,6 +20,7 @@ pub mod cli;
 pub mod dingtalk;
 pub mod discord;
 pub mod email_channel;
+pub mod gmail_push;
 pub mod imessage;
 pub mod irc;
 #[cfg(feature = "channel-lark")]
@@ -62,6 +63,7 @@ pub use cli::CliChannel;
 pub use dingtalk::DingTalkChannel;
 pub use discord::DiscordChannel;
 pub use email_channel::EmailChannel;
+pub use gmail_push::GmailPushChannel;
 pub use imessage::IMessageChannel;
 pub use irc::IrcChannel;
 #[cfg(feature = "channel-lark")]
@@ -1546,7 +1548,7 @@ async fn build_memory_context(
 ) -> String {
     let mut context = String::new();
 
-    if let Ok(entries) = mem.recall(user_msg, 5, session_id).await {
+    if let Ok(entries) = mem.recall(user_msg, 5, session_id, None, None).await {
         let mut included = 0usize;
         let mut used_chars = 0usize;
 
@@ -2629,6 +2631,8 @@ async fn process_channel_message(
         .as_ref()
         .and_then(|t| t.security.clone());
 
+    let default_pacing: crate::config::PacingConfig = Default::default();
+
     macro_rules! run_tool_loop_future {
         () => {
             tokio::time::timeout(
@@ -2658,6 +2662,7 @@ async fn process_channel_message(
                     ctx.tool_call_dedup_exempt.as_ref(),
                     ctx.activated_tools.as_ref(),
                     None,
+                    &default_pacing,
                 ),
             )
         };
@@ -3382,6 +3387,8 @@ pub fn build_system_prompt_with_mode(
         Some(&autonomy_cfg),
         native_tools,
         skills_prompt_mode,
+        false,
+        200_000,
     )
 }
 
@@ -3395,6 +3402,8 @@ pub fn build_system_prompt_with_mode_and_autonomy(
     autonomy_config: Option<&crate::config::AutonomyConfig>,
     native_tools: bool,
     skills_prompt_mode: crate::config::SkillsPromptInjectionMode,
+    _compact_context: bool,
+    _max_system_prompt_chars: usize,
 ) -> String {
     use std::fmt::Write;
     let mut prompt = String::with_capacity(8192);
@@ -4506,7 +4515,11 @@ pub async fn start_channels(config: Config) -> Result<()> {
     };
     // Build system prompt from workspace identity files + skills
     let workspace = config.workspace_dir.clone();
-    let (mut built_tools, delegate_handle_ch): (Vec<Box<dyn Tool>>, _) =
+    let (mut built_tools, delegate_handle_ch, _reaction_handle): (
+        Vec<Box<dyn Tool>>,
+        Option<tools::DelegateParentToolsHandle>,
+        Option<tools::ChannelMapHandle>,
+    ) =
         tools::all_tools_with_runtime(
             Arc::new(config.clone()),
             &security,
@@ -4521,6 +4534,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
             &config.agents,
             config.api_key.as_deref(),
             &config,
+            None,
         );
 
     // Wire MCP tools into the registry before freezing — non-fatal.
@@ -4692,6 +4706,8 @@ pub async fn start_channels(config: Config) -> Result<()> {
         Some(&config.autonomy),
         native_tools,
         config.skills.prompt_injection_mode,
+        false,
+        200_000,
     );
     if !native_tools {
         system_prompt.push_str(&build_tool_instructions(
@@ -8333,7 +8349,7 @@ BTC is currently around $65,000 based on latest tool output."#
 
         assert_eq!(mem.count().await.unwrap(), 2);
 
-        let recalled = mem.recall("45", 5, None).await.unwrap();
+        let recalled = mem.recall("45", 5, None, None, None).await.unwrap();
         assert!(recalled.iter().any(|entry| entry.content.contains("45")));
     }
 

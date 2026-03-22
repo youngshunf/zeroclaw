@@ -1720,11 +1720,36 @@ impl Provider for OpenAiCompatibleProvider {
             output_tokens: u.completion_tokens,
             cached_input_tokens: None,
         });
-        let message = native_response
-            .choices
-            .into_iter()
-            .next()
-            .map(|choice| choice.message)
+        // Some gateways (e.g. new-api) split Anthropic responses into
+        // multiple choices: one with content and another with tool_calls.
+        // Merge all choices into a single message so nothing is lost.
+        let mut merged_message: Option<ResponseMessage> = None;
+        for choice in native_response.choices {
+            match merged_message.as_mut() {
+                None => merged_message = Some(choice.message),
+                Some(existing) => {
+                    // Merge content
+                    if existing.content.is_none() {
+                        existing.content = choice.message.content;
+                    }
+                    // Merge tool_calls
+                    match (&mut existing.tool_calls, choice.message.tool_calls) {
+                        (Some(ref mut existing_tc), Some(new_tc)) => {
+                            existing_tc.extend(new_tc);
+                        }
+                        (None, Some(new_tc)) => {
+                            existing.tool_calls = Some(new_tc);
+                        }
+                        _ => {}
+                    }
+                    // Merge reasoning_content
+                    if existing.reasoning_content.is_none() {
+                        existing.reasoning_content = choice.message.reasoning_content;
+                    }
+                }
+            }
+        }
+        let message = merged_message
             .ok_or_else(|| anyhow::anyhow!("No response from {}", self.name))?;
 
         let mut result = Self::parse_native_response(message);

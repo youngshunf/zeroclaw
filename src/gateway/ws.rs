@@ -215,7 +215,7 @@ async fn handle_socket(socket: WebSocket, state: AppState, default_session_id: O
 
                 // 获取或初始化该 session 的 Agent
                 if !sessions.contains_key(&sid) {
-                    match init_agent_session(&state, &sid, agent_name.as_deref()) {
+                    match init_agent_session(&state, &sid, agent_name.as_deref()).await {
                         Ok(s) => {
                             // 通知前端 session 状态（已恢复或新建）
                             let resumed = !s.agent.history().is_empty();
@@ -335,7 +335,7 @@ async fn handle_socket(socket: WebSocket, state: AppState, default_session_id: O
 ///
 /// HUANXING：当 `agent_name` 对应的工作区存在时，使用该工作区的 config 创建 Agent，
 /// 使 system_prompt（SOUL.md 等）、memory（brain.db）、skills 完全独立隔离。
-fn init_agent_session(
+async fn init_agent_session(
     state: &AppState,
     session_id: &str,
     _agent_name: Option<&str>,
@@ -379,13 +379,13 @@ fn init_agent_session(
         if let Some(ref workspace) = agent_workspace {
             let mut agent_config = config.clone();
             agent_config.workspace_dir = workspace.clone();
-            crate::agent::Agent::from_config(&agent_config)?
+            crate::agent::Agent::from_config(&agent_config).await?
         } else {
-            crate::agent::Agent::from_config(&config)?
+            crate::agent::Agent::from_config(&config).await?
         }
     };
     #[cfg(not(feature = "huanxing"))]
-    let mut agent = crate::agent::Agent::from_config(&config)?;
+    let mut agent = crate::agent::Agent::from_config(&config).await?;
     agent.set_memory_session_id(Some(session_id.to_string()));
 
     let session_key = format!("{GW_SESSION_PREFIX}{session_id}");
