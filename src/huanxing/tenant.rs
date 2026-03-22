@@ -21,7 +21,7 @@ use crate::security::SecurityPolicy;
 // ── Workspace config.toml partial overlay ────────────────────
 //
 // Agent workspaces may contain a `config.toml` written at registration time.
-// We only parse the fields that are meaningful for per-tenant override;
+// We parse all fields that are meaningful for per-tenant override;
 // everything else is inherited from the global daemon config.
 
 #[derive(Debug, Default, Deserialize)]
@@ -33,27 +33,66 @@ struct WorkspaceOverrides {
     default_temperature: Option<f64>,
     #[serde(default)]
     agent: AgentOverrides,
+    /// [memory] 节覆盖全局记忆配置（embedding_provider / vector_weight 等）
     #[serde(default)]
-    memory: Option<MemoryOverrides>,
-    /// [autonomy] 节覆盖全局安全策略（allowed_commands / forbidden_paths 等）
+    memory: Option<crate::config::MemoryConfig>,
+    /// [autonomy] 节覆盖全局安全策略（allowed_commands / forbidden_paths / non_cli_excluded_tools 等）
     #[serde(default)]
     autonomy: Option<crate::config::AutonomyConfig>,
     /// [skills] 节覆盖技能注入模式等配置
     #[serde(default)]
     skills: Option<crate::config::SkillsConfig>,
+    /// [security] 节覆盖安全配置（canary_tokens / outbound_leak_guard 等）
+    #[serde(default)]
+    security: Option<crate::config::SecurityConfig>,
+    /// [channels_config] 节覆盖渠道配置
+    #[serde(default)]
+    channels_config: Option<ChannelsOverrides>,
+    /// [heartbeat] 节覆盖心跳配置
+    #[serde(default)]
+    heartbeat: Option<crate::config::HeartbeatConfig>,
+    /// [cron] 节覆盖定时任务配置
+    #[serde(default)]
+    cron: Option<crate::config::CronConfig>,
+    /// [multimodal] 节覆盖多模态配置
+    #[serde(default)]
+    multimodal: Option<crate::config::MultimodalConfig>,
+    /// [web_search] 节覆盖搜索配置
+    #[serde(default)]
+    web_search: Option<crate::config::WebSearchConfig>,
+    /// [web_fetch] 节覆盖网页抓取配置
+    #[serde(default)]
+    web_fetch: Option<crate::config::WebFetchConfig>,
+    /// [browser] 节覆盖浏览器配置
+    #[serde(default)]
+    browser: Option<crate::config::BrowserConfig>,
+    /// [http_request] 节覆盖 HTTP 请求配置
+    #[serde(default)]
+    http_request: Option<crate::config::HttpRequestConfig>,
+    /// Catch-all for unknown sections in config.toml (e.g. [proxy], [composio], [mcp]).
+    /// Prevents serde from failing on unrecognized fields.
+    #[serde(flatten)]
+    _extra: std::collections::HashMap<String, toml::Value>,
 }
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct AgentOverrides {
     session: Option<serde_json::Value>,
+    /// Catch-all for unknown fields (e.g. compact_context, max_tool_iterations).
+    #[serde(flatten)]
+    _extra: std::collections::HashMap<String, toml::Value>,
 }
 
+/// Lightweight overlay for [channels_config] — only per-tenant relevant fields.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
-struct MemoryOverrides {
-    auto_save: Option<bool>,
-    backend: Option<String>,
+struct ChannelsOverrides {
+    cli: Option<bool>,
+    message_timeout_secs: Option<u64>,
+    /// Catch-all for unknown fields (e.g. telegram, discord, slack configs).
+    #[serde(flatten)]
+    _extra: std::collections::HashMap<String, toml::Value>,
 }
 
 /// Type alias matching channels/mod.rs ConversationHistoryMap.
@@ -116,6 +155,22 @@ pub struct TenantContext {
     /// Overrides the global SecurityPolicy for this tenant's shell/file tool calls.
     /// None means no workspace-level override — tools fall back to global policy.
     pub security: Option<Arc<SecurityPolicy>>,
+
+    /// Per-tenant non_cli_excluded_tools (from [autonomy] override).
+    /// Tools listed here are hidden from non-CLI channels (QQ/飞书 etc).
+    pub non_cli_excluded_tools: Vec<String>,
+
+    /// Per-tenant heartbeat config (from [heartbeat] override or global).
+    pub heartbeat: crate::config::HeartbeatConfig,
+
+    /// Per-tenant cron config (from [cron] override or global).
+    pub cron: crate::config::CronConfig,
+
+    /// Per-tenant multimodal config (from [multimodal] override or global).
+    pub multimodal: crate::config::MultimodalConfig,
+
+    /// Per-tenant message timeout (from [channels_config] override or global).
+    pub message_timeout_secs: u64,
 }
 
 // Manual Debug impl because Arc<dyn Memory> doesn't impl Debug.
@@ -136,6 +191,8 @@ impl std::fmt::Debug for TenantContext {
             .field("is_guardian", &self.is_guardian)
             .field("has_memory", &true)
             .field("has_session_manager", &self.session_manager.is_some())
+            .field("non_cli_excluded_tools_count", &self.non_cli_excluded_tools.len())
+            .field("message_timeout_secs", &self.message_timeout_secs)
             .finish()
     }
 }
@@ -258,22 +315,17 @@ impl TenantContext {
             prompt_len = system_prompt.len(),
             skills_count = skills.len(),
             has_skills_section,
+            ?skills_prompt_mode,
+            has_workspace_skills_override = overrides.skills.is_some(),
+            global_skills_mode = ?global_config.skills.prompt_injection_mode,
             "【技能调试】系统提示词构建完成"
         );
 
         // ── B. Create per-tenant memory ──────────────────────────────
-        let effective_memory_config = {
-            let mut cfg = global_config.memory.clone();
-            if let Some(ref mem_ov) = overrides.memory {
-                if let Some(auto_save) = mem_ov.auto_save {
-                    cfg.auto_save = auto_save;
-                }
-                if let Some(ref backend) = mem_ov.backend {
-                    cfg.backend = backend.clone();
-                }
-            }
-            cfg
-        };
+        let effective_memory_config = overrides
+            .memory
+            .clone()
+            .unwrap_or_else(|| global_config.memory.clone());
         let tenant_memory: Arc<dyn Memory> = Arc::from(memory::create_memory(
             &effective_memory_config,
             &workspace_dir,
@@ -290,29 +342,35 @@ impl TenantContext {
         // ── E. Per-tenant security policy from [autonomy] in workspace config.toml ──
         // 以全局 autonomy 为基础，用 workspace config.toml 中的 [autonomy] 节覆盖。
         // 若 workspace 没有 [autonomy] 节，则 tenant_security = None（工具回落到全局策略）。
+        let effective_autonomy = merge_autonomy(&global_config.autonomy, overrides.autonomy.as_ref());
         let tenant_security: Option<Arc<SecurityPolicy>> =
-            overrides.autonomy.as_ref().map(|autonomy_override| {
-                let mut merged = global_config.autonomy.clone();
-                if !autonomy_override.allowed_commands.is_empty() {
-                    merged.allowed_commands = autonomy_override.allowed_commands.clone();
-                }
-                if !autonomy_override.forbidden_paths.is_empty() {
-                    merged.forbidden_paths = autonomy_override.forbidden_paths.clone();
-                }
-                if !autonomy_override.allowed_roots.is_empty() {
-                    merged.allowed_roots = autonomy_override.allowed_roots.clone();
-                }
-                merged.level = autonomy_override.level.clone();
-                merged.workspace_only = autonomy_override.workspace_only;
-                merged.block_high_risk_commands = autonomy_override.block_high_risk_commands;
-                if autonomy_override.max_actions_per_hour > 0 {
-                    merged.max_actions_per_hour = autonomy_override.max_actions_per_hour;
-                }
-                if autonomy_override.max_cost_per_day_cents > 0 {
-                    merged.max_cost_per_day_cents = autonomy_override.max_cost_per_day_cents;
-                }
-                Arc::new(SecurityPolicy::from_config(&merged, &workspace_dir))
+            overrides.autonomy.as_ref().map(|_| {
+                Arc::new(SecurityPolicy::from_config(&effective_autonomy, &workspace_dir))
             });
+
+        // ── F. Resolve remaining per-tenant config overrides ─────────
+        let effective_non_cli_excluded = effective_autonomy.non_cli_excluded_tools.clone();
+
+        let effective_heartbeat = overrides
+            .heartbeat
+            .clone()
+            .unwrap_or_else(|| global_config.heartbeat.clone());
+
+        let effective_cron = overrides
+            .cron
+            .clone()
+            .unwrap_or_else(|| global_config.cron.clone());
+
+        let effective_multimodal = overrides
+            .multimodal
+            .clone()
+            .unwrap_or_else(|| global_config.multimodal.clone());
+
+        let effective_message_timeout = overrides
+            .channels_config
+            .as_ref()
+            .and_then(|c| c.message_timeout_secs)
+            .unwrap_or(global_config.channels_config.message_timeout_secs);
 
         Ok(Self {
             agent_id: agent_id.to_string(),
@@ -332,6 +390,11 @@ impl TenantContext {
             session_manager: tenant_session_manager,
             conversation_histories,
             security: tenant_security,
+            non_cli_excluded_tools: effective_non_cli_excluded,
+            heartbeat: effective_heartbeat,
+            cron: effective_cron,
+            multimodal: effective_multimodal,
+            message_timeout_secs: effective_message_timeout,
         })
     }
 
@@ -405,18 +468,10 @@ impl TenantContext {
         };
 
         // Per-tenant memory for guardian
-        let effective_memory_config = {
-            let mut cfg = global_config.memory.clone();
-            if let Some(ref mem_ov) = overrides.memory {
-                if let Some(auto_save) = mem_ov.auto_save {
-                    cfg.auto_save = auto_save;
-                }
-                if let Some(ref backend) = mem_ov.backend {
-                    cfg.backend = backend.clone();
-                }
-            }
-            cfg
-        };
+        let effective_memory_config = overrides
+            .memory
+            .clone()
+            .unwrap_or_else(|| global_config.memory.clone());
         let guardian_memory: Arc<dyn Memory> = Arc::from(memory::create_memory(
             &effective_memory_config,
             &workspace_dir,
@@ -429,29 +484,34 @@ impl TenantContext {
 
         let conversation_histories: ConversationHistoryMap = Arc::new(Mutex::new(HashMap::new()));
 
+        let effective_autonomy = merge_autonomy(&global_config.autonomy, overrides.autonomy.as_ref());
         let guardian_security: Option<Arc<SecurityPolicy>> =
-            overrides.autonomy.as_ref().map(|autonomy_override| {
-                let mut merged = global_config.autonomy.clone();
-                if !autonomy_override.allowed_commands.is_empty() {
-                    merged.allowed_commands = autonomy_override.allowed_commands.clone();
-                }
-                if !autonomy_override.forbidden_paths.is_empty() {
-                    merged.forbidden_paths = autonomy_override.forbidden_paths.clone();
-                }
-                if !autonomy_override.allowed_roots.is_empty() {
-                    merged.allowed_roots = autonomy_override.allowed_roots.clone();
-                }
-                merged.level = autonomy_override.level.clone();
-                merged.workspace_only = autonomy_override.workspace_only;
-                merged.block_high_risk_commands = autonomy_override.block_high_risk_commands;
-                if autonomy_override.max_actions_per_hour > 0 {
-                    merged.max_actions_per_hour = autonomy_override.max_actions_per_hour;
-                }
-                if autonomy_override.max_cost_per_day_cents > 0 {
-                    merged.max_cost_per_day_cents = autonomy_override.max_cost_per_day_cents;
-                }
-                Arc::new(SecurityPolicy::from_config(&merged, &workspace_dir))
+            overrides.autonomy.as_ref().map(|_| {
+                Arc::new(SecurityPolicy::from_config(&effective_autonomy, &workspace_dir))
             });
+
+        let effective_non_cli_excluded = effective_autonomy.non_cli_excluded_tools.clone();
+
+        let effective_heartbeat = overrides
+            .heartbeat
+            .clone()
+            .unwrap_or_else(|| global_config.heartbeat.clone());
+
+        let effective_cron = overrides
+            .cron
+            .clone()
+            .unwrap_or_else(|| global_config.cron.clone());
+
+        let effective_multimodal = overrides
+            .multimodal
+            .clone()
+            .unwrap_or_else(|| global_config.multimodal.clone());
+
+        let effective_message_timeout = overrides
+            .channels_config
+            .as_ref()
+            .and_then(|c| c.message_timeout_secs)
+            .unwrap_or(global_config.channels_config.message_timeout_secs);
 
         Ok(Self {
             agent_id: "guardian".to_string(),
@@ -471,6 +531,11 @@ impl TenantContext {
             session_manager: guardian_session_manager,
             conversation_histories,
             security: guardian_security,
+            non_cli_excluded_tools: effective_non_cli_excluded,
+            heartbeat: effective_heartbeat,
+            cron: effective_cron,
+            multimodal: effective_multimodal,
+            message_timeout_secs: effective_message_timeout,
         })
     }
 
@@ -514,6 +579,40 @@ impl TenantContext {
 
 // ── Helpers ──────────────────────────────────────────────────
 
+/// Merge per-tenant [autonomy] override into the global autonomy config.
+/// Non-empty Vec fields replace the global value; scalar fields always override.
+fn merge_autonomy(
+    global: &crate::config::AutonomyConfig,
+    tenant: Option<&crate::config::AutonomyConfig>,
+) -> crate::config::AutonomyConfig {
+    let Some(ov) = tenant else {
+        return global.clone();
+    };
+    let mut merged = global.clone();
+    if !ov.allowed_commands.is_empty() {
+        merged.allowed_commands = ov.allowed_commands.clone();
+    }
+    if !ov.forbidden_paths.is_empty() {
+        merged.forbidden_paths = ov.forbidden_paths.clone();
+    }
+    if !ov.allowed_roots.is_empty() {
+        merged.allowed_roots = ov.allowed_roots.clone();
+    }
+    if !ov.non_cli_excluded_tools.is_empty() {
+        merged.non_cli_excluded_tools = ov.non_cli_excluded_tools.clone();
+    }
+    merged.level = ov.level;
+    merged.workspace_only = ov.workspace_only;
+    merged.block_high_risk_commands = ov.block_high_risk_commands;
+    if ov.max_actions_per_hour > 0 {
+        merged.max_actions_per_hour = ov.max_actions_per_hour;
+    }
+    if ov.max_cost_per_day_cents > 0 {
+        merged.max_cost_per_day_cents = ov.max_cost_per_day_cents;
+    }
+    merged
+}
+
 /// Load workspace config.toml overrides. Returns defaults on any error.
 async fn load_workspace_overrides(workspace_dir: &std::path::Path) -> WorkspaceOverrides {
     let config_path = workspace_dir.join("config.toml");
@@ -523,12 +622,16 @@ async fn load_workspace_overrides(workspace_dir: &std::path::Path) -> WorkspaceO
     match tokio::fs::read_to_string(&config_path).await {
         Ok(content) => match toml::from_str::<WorkspaceOverrides>(&content) {
             Ok(overrides) => {
-                tracing::debug!(
+                tracing::info!(
                     workspace = %workspace_dir.display(),
                     has_api_key = overrides.api_key.is_some(),
                     has_model = overrides.default_model.is_some(),
                     has_provider = overrides.default_provider.is_some(),
                     has_session = overrides.agent.session.is_some(),
+                    has_skills = overrides.skills.is_some(),
+                    skills_mode = ?overrides.skills.as_ref().map(|s| s.prompt_injection_mode),
+                    has_autonomy = overrides.autonomy.is_some(),
+                    has_memory = overrides.memory.is_some(),
                     "Loaded workspace config.toml overrides"
                 );
                 overrides

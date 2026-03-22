@@ -127,7 +127,7 @@ allow_loopback = false
 # │                    可靠性（LLM 重试/降级）                    │
 # └─────────────────────────────────────────────────────────────┘
 [reliability]
-provider_retries = 2                          # 单个 provider 最多重试次数
+provider_retries = 5                         # 单个 provider 最多重试次数
 provider_backoff_ms = 500                     # 重试退避时间
 fallback_providers = []                       # 降级 provider 列表
 channel_initial_backoff_secs = 2              # 渠道连接初始退避
@@ -137,7 +137,7 @@ scheduler_retries = 2
 
 [reliability.model_fallbacks]
 # 模型降级映射，例如:
-# "claude-sonnet-4-6" = ["qwen3.5-plus", "gpt-4o"]
+"claude-sonnet-4-6" = ["qwen3.5-plus","claude-sonnet-4-5","gpt-5.3-codex","gpt-5.2-codex","gpt-5.2"]
 
 
 # ┌─────────────────────────────────────────────────────────────┐

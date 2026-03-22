@@ -162,4 +162,4 @@ message_timeout_secs = 300
 # ── 技能 ──────────────────────────────────────────────────────
 [skills]
 allow_scripts = true
-prompt_injection_mode = "full"
+prompt_injection_mode = "compact"
