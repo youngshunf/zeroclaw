@@ -34,6 +34,8 @@ pub mod mattermost;
 pub mod mochat;
 #[cfg(feature = "huanxing")]
 pub mod napcat;
+#[cfg(feature = "huanxing")]
+pub mod wechat_pad;
 pub mod nextcloud_talk;
 #[cfg(feature = "channel-nostr")]
 pub mod nostr;
@@ -77,6 +79,8 @@ pub use mattermost::MattermostChannel;
 pub use mochat::MochatChannel;
 #[cfg(feature = "huanxing")]
 pub use napcat::NapcatChannel;
+#[cfg(feature = "huanxing")]
+pub use wechat_pad::WechatPadChannel;
 pub use nextcloud_talk::NextcloudTalkChannel;
 #[cfg(feature = "channel-nostr")]
 pub use nostr::NostrChannel;
@@ -535,7 +539,7 @@ fn conversation_history_key(msg: &traits::ChannelMessage) -> String {
     // NapCat (QQ) sets thread_ts to the per-message ID, which is unique
     // every time — skip it so conversations persist across messages.
     match &msg.thread_ts {
-        Some(tid) if msg.channel != "napcat" => format!(
+        Some(tid) if msg.channel != "napcat" && msg.channel != "wechat_pad" => format!(
             "{}_{}_{}_{}",
             msg.channel, msg.reply_target, tid, msg.sender
         ),
@@ -715,6 +719,14 @@ fn channel_delivery_instructions(channel_name: &str) -> Option<&'static str> {
              - For media attachments use markers: [IMAGE:<path-or-url>], [DOCUMENT:<path-or-url>], \
                [VIDEO:<path-or-url>], [VOICE:<path-or-url>]\n\
              - Voice supports .wav, .mp3, .silk formats only. Other audio formats use [DOCUMENT:]\n\
+             - Keep normal text outside markers and never wrap markers in code fences.\n",
+        ),
+        "wechat_pad" => Some(
+            "When responding on WeChat:\n\
+             - Use plain text formatting (WeChat does not support Markdown rendering)\n\
+             - Be concise and direct\n\
+             - For image attachments use markers: [IMAGE:<path-or-url>]\n\
+             - Keep messages under 2000 characters to avoid truncation\n\
              - Keep normal text outside markers and never wrap markers in code fences.\n",
         ),
         _ => None,
@@ -4406,12 +4418,24 @@ fn collect_configured_channels(
         match NapcatChannel::from_config_with_workspace(
             napcat_cfg.clone(),
             Some(&config.workspace_dir),
+            Some(config.transcription.clone()),
         ) {
             Ok(channel) => channels.push(ConfiguredChannel {
                 display_name: "Napcat",
                 channel: Arc::new(channel),
             }),
             Err(err) => tracing::warn!("Napcat channel configuration invalid: {err}"),
+        }
+    }
+
+    #[cfg(feature = "huanxing")]
+    if let Some(ref wechat_pad_cfg) = config.channels_config.wechat_pad {
+        match WechatPadChannel::from_config(wechat_pad_cfg.clone()) {
+            Ok(channel) => channels.push(ConfiguredChannel {
+                display_name: "WeChatPad",
+                channel: Arc::new(channel),
+            }),
+            Err(err) => tracing::warn!("WeChatPad channel configuration invalid: {err}"),
         }
     }
 

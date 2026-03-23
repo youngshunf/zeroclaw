@@ -300,6 +300,52 @@ pub struct NapcatConfig {
     pub allowed_users: Vec<String>,
 }
 
+/// WeChatPadPro (WeChat iPad protocol) channel configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct WechatPadConfig {
+    /// WeChatPadPro REST API base URL (e.g. "http://127.0.0.1:8849")
+    pub api_base_url: String,
+    /// WeChatPadPro admin key for API authentication
+    pub admin_key: String,
+    /// Authorization token (generated from admin_key via `/admin/GanAuthKey1`)
+    #[serde(default)]
+    pub token: Option<String>,
+    /// Webhook listener bind address. ZeroClaw starts an HTTP server on this
+    /// address to receive message callbacks from WeChatPadPro.
+    #[serde(default = "default_wechat_pad_webhook_bind")]
+    pub webhook_bind: String,
+    /// Webhook secret for HMAC-SHA256 signature verification.
+    #[serde(default)]
+    pub webhook_secret: Option<String>,
+    /// Logged-in WeChat wxid (used to filter out self-sent messages).
+    #[serde(default)]
+    pub wxid: Option<String>,
+    /// Allowed user wxids. `"*"` = allow all. Empty = deny all.
+    #[serde(default)]
+    pub allowed_users: Vec<String>,
+    /// Allowed group IDs. Empty = ignore all group messages.
+    #[serde(default)]
+    pub allowed_groups: Vec<String>,
+    /// In group chats, only respond when @-mentioned. Default: `true`.
+    #[serde(default = "default_true")]
+    pub group_at_only: bool,
+    /// Max messages per minute rate limit. Default: `20`.
+    #[serde(default = "default_wechat_pad_rate_limit")]
+    pub rate_limit_per_minute: u32,
+}
+
+fn default_wechat_pad_webhook_bind() -> String {
+    "0.0.0.0:9850".to_string()
+}
+
+fn default_wechat_pad_rate_limit() -> u32 {
+    20
+}
+
+fn default_true() -> bool {
+    true
+}
+
 /// Hub Gitee 同步配置。
 ///
 /// 控制从 Gitee 拉取 huanxing-hub 仓库（模板和技能）的行为。

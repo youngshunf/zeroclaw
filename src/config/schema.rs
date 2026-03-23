@@ -1056,6 +1056,10 @@ pub struct TtsConfig {
     /// Piper TTS provider configuration (`[tts.piper]`).
     #[serde(default)]
     pub piper: Option<PiperTtsConfig>,
+    /// Generic OpenAI-compatible TTS provider (`[tts.generic_openai]`).
+    /// Works with any endpoint implementing OpenAI `/v1/audio/speech`.
+    #[serde(default)]
+    pub generic_openai: Option<GenericOpenAiTtsConfig>,
 }
 
 impl Default for TtsConfig {
@@ -1073,6 +1077,7 @@ impl Default for TtsConfig {
             #[cfg(feature = "huanxing")]
             dashscope: None,
             piper: None,
+            generic_openai: None,
         }
     }
 }
@@ -1133,6 +1138,26 @@ pub struct PiperTtsConfig {
     /// Base URL for the Piper TTS HTTP server (e.g. `"http://127.0.0.1:5000/v1/audio/speech"`).
     #[serde(default = "default_piper_tts_api_url")]
     pub api_url: String,
+}
+
+/// Generic OpenAI-compatible TTS provider configuration (`[tts.generic_openai]`).
+///
+/// Use this for any TTS endpoint that implements the OpenAI `/v1/audio/speech` API,
+/// such as SiliconFlow, MiniMax, or custom deployments.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct GenericOpenAiTtsConfig {
+    /// API endpoint URL (e.g. `"https://api.siliconflow.cn/v1/audio/speech"`).
+    pub api_url: String,
+    /// API key for authentication.
+    #[serde(default)]
+    pub api_key: Option<String>,
+    /// Model name (e.g. `"tts-1"`).
+    #[serde(default = "default_generic_openai_tts_model")]
+    pub model: String,
+}
+
+fn default_generic_openai_tts_model() -> String {
+    "tts-1".into()
 }
 
 /// Determines when a `ToolFilterGroup` is active.
@@ -5262,6 +5287,10 @@ pub struct ChannelsConfig {
     #[cfg(feature = "huanxing")]
     #[serde(default)]
     pub napcat: Option<crate::huanxing::config::NapcatConfig>,
+    /// WeChatPadPro (WeChat iPad protocol) channel configuration.
+    #[cfg(feature = "huanxing")]
+    #[serde(default)]
+    pub wechat_pad: Option<crate::huanxing::config::WechatPadConfig>,
     /// X/Twitter channel configuration.
     pub twitter: Option<TwitterConfig>,
     /// Mochat customer service channel configuration.
@@ -5457,6 +5486,8 @@ impl Default for ChannelsConfig {
             qq: None,
             #[cfg(feature = "huanxing")]
             napcat: None,
+            #[cfg(feature = "huanxing")]
+            wechat_pad: None,
             twitter: None,
             mochat: None,
             #[cfg(feature = "channel-nostr")]
