@@ -34,6 +34,7 @@ pub mod config;
 pub mod db;
 pub mod doc_tools;
 pub mod hasn_tools;
+pub mod hx_image_gen;
 pub mod hub_sync;
 pub mod multi_tenant_resolver;
 pub mod permissions;

@@ -99,6 +99,49 @@ pub struct HuanXingConfig {
     /// Multi-tenant heartbeat configuration.
     #[serde(default)]
     pub tenant_heartbeat: TenantHeartbeatConfig,
+
+    /// HuanXing custom image generation tool (`[huanxing.hx_image_gen]`).
+    #[serde(default)]
+    pub hx_image_gen: HxImageGenConfig,
+}
+
+/// Standalone image generation tool configuration for HuanXing gateway (`[huanxing.hx_image_gen]`).
+///
+/// When enabled, registers an `hx_image_gen` tool that generates images via
+/// a custom gateway (e.g. new-api) using OpenAI-compatible payload and saves them
+/// to the workspace `images/` directory.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct HxImageGenConfig {
+    /// Enable the HuanXing image generation tool. Default: false.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Array of models to try. Fallbacks to the next model if one fails.
+    #[serde(default = "default_hx_image_gen_models")]
+    pub models: Vec<String>,
+
+    /// Override API Base URL for image generation. Optional.
+    #[serde(default)]
+    pub api_url: Option<String>,
+
+    /// Override API Key for image generation. Optional.
+    #[serde(default)]
+    pub api_key: Option<String>,
+}
+
+fn default_hx_image_gen_models() -> Vec<String> {
+    vec!["dall-e-3".into()]
+}
+
+impl Default for HxImageGenConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            models: default_hx_image_gen_models(),
+            api_url: None,
+            api_key: None,
+        }
+    }
 }
 
 /// Configuration for multi-tenant heartbeat scheduling.
@@ -168,6 +211,7 @@ impl Default for HuanXingConfig {
             hub_dir: None,
             hub_sync: HubSyncConfig::default(),
             tenant_heartbeat: TenantHeartbeatConfig::default(),
+            hx_image_gen: HxImageGenConfig::default(),
         }
     }
 }

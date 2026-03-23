@@ -1,0 +1,356 @@
+use crate::security::policy::ToolOperation;
+use crate::security::SecurityPolicy;
+use crate::tools::traits::{Tool, ToolResult};
+use anyhow::Context;
+use async_trait::async_trait;
+use serde_json::json;
+use std::path::PathBuf;
+use std::sync::Arc;
+
+/// HuanXing specific image generation tool calling a custom OpenAI-compatible gateway.
+///
+/// Supports an array of models for fallback. If a model fails to generate an image,
+/// it will attempt the next one in the priority list.
+pub struct HxImageGenTool {
+    security: Arc<SecurityPolicy>,
+    workspace_dir: PathBuf,
+    models: Vec<String>,
+    api_url: String,
+    api_key: String,
+}
+
+impl HxImageGenTool {
+    pub fn new(
+        security: Arc<SecurityPolicy>,
+        workspace_dir: PathBuf,
+        models: Vec<String>,
+        api_url: String,
+        api_key: String,
+    ) -> Self {
+        Self {
+            security,
+            workspace_dir,
+            models,
+            api_url,
+            api_key,
+        }
+    }
+
+    /// Build a reusable HTTP client with reasonable timeouts.
+    fn http_client() -> reqwest::Client {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(120))
+            .build()
+            .unwrap_or_default()
+    }
+
+    /// Core generation logic: try models sequentially until success.
+    async fn generate(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        // ── Parse parameters ───────────────────────────────────────
+        let prompt = match args.get("prompt").and_then(|v| v.as_str()) {
+            Some(p) if !p.trim().is_empty() => p.trim().to_string(),
+            _ => {
+                return Ok(ToolResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some("Missing required parameter: 'prompt'".into()),
+                });
+            }
+        };
+
+        let filename = args
+            .get("filename")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or("generated_image");
+
+        // Sanitize filename — strip path components to prevent traversal.
+        let safe_name = PathBuf::from(filename).file_name().map_or_else(
+            || "generated_image".to_string(),
+            |n| n.to_string_lossy().to_string(),
+        );
+
+        let size = args
+            .get("size")
+            .and_then(|v| v.as_str())
+            .unwrap_or("1024x1024");
+
+        // Allow model override from args, else use configured models
+        let models_to_try = if let Some(model_arg) = args.get("model").and_then(|v| v.as_str()).filter(|s| !s.trim().is_empty()) {
+            vec![model_arg.to_string()]
+        } else {
+            self.models.clone()
+        };
+
+        if models_to_try.is_empty() {
+            return Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some("No models configured for hx_image_gen".into()),
+            });
+        }
+
+        let api_key = &self.api_key;
+        if api_key.is_empty() {
+            return Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some("API Key is required for hx_image_gen".into()),
+            });
+        }
+
+        let client = Self::http_client();
+        let url = &self.api_url;
+
+        let mut last_error = String::new();
+
+        // ── Loop over models for fallback ───────────────────────────
+        for model in &models_to_try {
+            tracing::info!("hx_image_gen: attempting generation with model '{}'", model);
+            
+            let body = json!({
+                "model": model,
+                "prompt": prompt,
+                "size": size,
+                "n": 1
+            });
+
+            let resp_result = client
+                .post(url)
+                .header("Authorization", format!("Bearer {}", api_key))
+                .header("Content-Type", "application/json")
+                .json(&body)
+                .send()
+                .await;
+
+            match resp_result {
+                Ok(resp) => {
+                    let status = resp.status();
+                    if !status.is_success() {
+                        let body_text = resp.text().await.unwrap_or_default();
+                        let err_msg = format!("API error ({status}) with model {model}: {body_text}");
+                        tracing::warn!("hx_image_gen failed: {}", err_msg);
+                        last_error = err_msg;
+                        continue;
+                    }
+
+                    let resp_json: serde_json::Value = match resp.json().await {
+                        Ok(json) => json,
+                        Err(e) => {
+                            let err_msg = format!("Failed to parse JSON response for model {model}: {e}");
+                            tracing::warn!("hx_image_gen failed: {}", err_msg);
+                            last_error = err_msg;
+                            continue;
+                        }
+                    };
+
+                    // Extract the image either from url or b64_json
+                    let image_url = resp_json.pointer("/data/0/url").and_then(|v| v.as_str());
+                    let b64_json = resp_json.pointer("/data/0/b64_json").and_then(|v| v.as_str());
+
+                    let bytes = if let Some(u) = image_url {
+                        // ── Download image URL ─────────────────────────────────
+                        let img_resp = match client.get(u).send().await {
+                            Ok(r) => r,
+                            Err(e) => {
+                                let err_msg = format!("Failed to download image from {} (model {}): {}", u, model, e);
+                                tracing::warn!("hx_image_gen failed: {}", err_msg);
+                                last_error = err_msg;
+                                continue;
+                            }
+                        };
+                        
+                        if !img_resp.status().is_success() {
+                            let err_msg = format!("Failed to download image from {} (status {})", u, img_resp.status());
+                            tracing::warn!("hx_image_gen failed: {}", err_msg);
+                            last_error = err_msg;
+                            continue;
+                        }
+                        
+                        match img_resp.bytes().await {
+                            Ok(b) => b,
+                            Err(e) => {
+                                let err_msg = format!("Failed to read image bytes (model {}): {}", model, e);
+                                tracing::warn!("hx_image_gen failed: {}", err_msg);
+                                last_error = err_msg;
+                                continue;
+                            }
+                        }
+                    } else if let Some(b64) = b64_json {
+                        use base64::{engine::general_purpose, Engine as _};
+                        match general_purpose::STANDARD.decode(b64) {
+                            Ok(decoded) => bytes::Bytes::from(decoded),
+                            Err(e) => {
+                                let err_msg = format!("Failed to decode base64 image (model {}): {}", model, e);
+                                tracing::warn!("hx_image_gen failed: {}", err_msg);
+                                last_error = err_msg;
+                                continue;
+                            }
+                        }
+                    } else {
+                        let err_msg = format!("No image URL or b64_json in API response for model {}", model);
+                        tracing::warn!("hx_image_gen failed: {}", err_msg);
+                        last_error = err_msg;
+                        continue;
+                    };
+
+                    // ── Save to disk ───────────────────────────────────────────
+                    let images_dir = self.workspace_dir.join("images");
+                    if let Err(e) = tokio::fs::create_dir_all(&images_dir).await {
+                        return Ok(ToolResult {
+                            success: false,
+                            output: String::new(),
+                            error: Some(format!("Failed to create images directory: {}", e)),
+                        });
+                    }
+
+                    let output_path = images_dir.join(format!("{safe_name}.png"));
+                    if let Err(e) = tokio::fs::write(&output_path, &bytes).await {
+                        return Ok(ToolResult {
+                            success: false,
+                            output: String::new(),
+                            error: Some(format!("Failed to write image file: {}", e)),
+                        });
+                    }
+
+                    let size_kb = bytes.len() / 1024;
+
+                    return Ok(ToolResult {
+                        success: true,
+                        output: format!(
+                            "Image generated successfully.\n\
+                             File: {}\n\
+                             Size: {} KB\n\
+                             Model: {}\n\
+                             Prompt: {}",
+                            output_path.display(),
+                            size_kb,
+                            model,
+                            prompt,
+                        ),
+                        error: None,
+                    });
+                }
+                Err(e) => {
+                    let err_msg = format!("Request failed with model {model}: {e}");
+                    tracing::warn!("hx_image_gen failed: {}", err_msg);
+                    last_error = err_msg;
+                    continue;
+                }
+            }
+        }
+
+        // ── All models failed ───────────────────────────────────────────
+        Ok(ToolResult {
+            success: false,
+            output: String::new(),
+            error: Some(format!(
+                "All hx_image_gen models failed. Last error: {}",
+                last_error
+            )),
+        })
+    }
+}
+
+#[async_trait]
+impl Tool for HxImageGenTool {
+    fn name(&self) -> &str {
+        "hx_image_gen"
+    }
+
+    fn description(&self) -> &str {
+        "使用外部网关生成图像。支持传递提示词生成图片，自动降级模型直至成功。返回保存到工作区的图片路径。"
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "required": ["prompt"],
+            "properties": {
+                "prompt": {
+                    "type": "string",
+                    "description": "描述要生成图片的文本提示词。"
+                },
+                "filename": {
+                    "type": "string",
+                    "description": "保存的文件名（不包含扩展名），默认是 'generated_image'。图片将被保存到工作区的 images 目录下。"
+                },
+                "size": {
+                    "type": "string",
+                    "description": "图片尺寸，如 '1024x1024' (默认)。"
+                },
+                "model": {
+                    "type": "string",
+                    "description": "可选的模型名称。如果提供，将覆盖配置中默认的模型及降级顺序。"
+                }
+            }
+        })
+    }
+
+    async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        if let Err(error) = self
+            .security
+            .enforce_tool_operation(ToolOperation::Act, "hx_image_gen")
+        {
+            return Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some(error),
+            });
+        }
+
+        self.generate(args).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::security::{AutonomyLevel, SecurityPolicy};
+
+    fn test_security() -> Arc<SecurityPolicy> {
+        Arc::new(SecurityPolicy {
+            autonomy: AutonomyLevel::Full,
+            workspace_dir: std::env::temp_dir(),
+            ..SecurityPolicy::default()
+        })
+    }
+
+    fn test_tool() -> HxImageGenTool {
+        HxImageGenTool::new(
+            test_security(),
+            std::env::temp_dir(),
+            vec!["dall-e-3".into()],
+            "https://api.openai.com/v1/images/generations".into(),
+            "dummy_key".into(),
+        )
+    }
+
+    #[test]
+    fn tool_name() {
+        let tool = test_tool();
+        assert_eq!(tool.name(), "hx_image_gen");
+    }
+
+    #[tokio::test]
+    async fn missing_prompt_returns_error() {
+        let tool = test_tool();
+        let result = tool.execute(json!({})).await.unwrap();
+        assert!(!result.success);
+        assert!(result.error.as_deref().unwrap().contains("prompt"));
+    }
+
+    #[tokio::test]
+    async fn missing_api_key_returns_error() {
+        let tool = HxImageGenTool::new(
+            test_security(),
+            std::env::temp_dir(),
+            vec!["dall-e-3".into()],
+            "https://api.openai.com/v1/images/generations".into(),
+            "".into(),
+        );
+        let result = tool.execute(json!({"prompt": "test"})).await.unwrap();
+        assert!(!result.success);
+        assert!(result.error.as_deref().unwrap().contains("API Key is required"));
+    }
+}

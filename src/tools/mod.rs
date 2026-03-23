@@ -976,10 +976,41 @@ pub fn all_tools_with_runtime(
             tool_arcs.push(Arc::new(crate::huanxing::tools::HxLocalFindUser::new(
                 hx_db.clone(),
             )));
-            // LocalStats — Guardian admin tool
             tool_arcs.push(Arc::new(crate::huanxing::tools::HxLocalStats::new(
                 hx_db.clone(),
             )));
+
+            // Register hx_image_gen if enabled
+            if root_config.huanxing.hx_image_gen.enabled {
+                let api_key = root_config
+                    .huanxing
+                    .hx_image_gen
+                    .api_key
+                    .clone()
+                    .or_else(|| root_config.api_key.clone())
+                    .unwrap_or_default();
+                    
+                let api_url = root_config
+                    .huanxing
+                    .hx_image_gen
+                    .api_url
+                    .clone()
+                    .unwrap_or_else(|| {
+                        root_config
+                            .api_url
+                            .clone()
+                            .map(|u| format!("{}/images/generations", u.trim_end_matches('/')))
+                            .unwrap_or_else(|| "https://api.openai.com/v1/images/generations".to_string())
+                    });
+
+                tool_arcs.push(Arc::new(crate::huanxing::hx_image_gen::HxImageGenTool::new(
+                    security.clone(),
+                    workspace_dir.to_path_buf(),
+                    root_config.huanxing.hx_image_gen.models.clone(),
+                    api_url,
+                    api_key,
+                )));
+            }
 
             // Build API client if agent_key is configured
             let hx_api = if let Some(ref key) = root_config.huanxing.agent_key {
