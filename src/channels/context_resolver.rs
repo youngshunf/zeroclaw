@@ -83,6 +83,10 @@ pub struct MessageContext {
 
     /// Multimodal config override for this tenant.
     pub multimodal: Option<crate::config::MultimodalConfig>,
+
+    /// Per-tenant reliability config (from workspace [reliability] or global).
+    /// Used to create the per-request resilient provider with tenant's own keys/fallbacks.
+    pub reliability: Option<crate::config::ReliabilityConfig>,
 }
 
 /// Resolves the runtime [`MessageContext`] for an incoming message.

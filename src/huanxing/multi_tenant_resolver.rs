@@ -51,6 +51,7 @@ impl MessageContextResolver for MultiTenantResolver {
             non_cli_excluded_tools: Some(tenant.non_cli_excluded_tools.clone()),
             message_timeout_secs: Some(tenant.message_timeout_secs),
             multimodal: Some(tenant.multimodal.clone()),
+            reliability: Some(tenant.reliability.clone()),
         }
     }
 

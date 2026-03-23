@@ -1611,12 +1611,18 @@ pub fn create_resilient_provider_with_options(
 
         let (provider_name, profile_override) = parse_provider_profile(fallback);
 
-        // Each fallback provider resolves its own credential via provider-
-        // specific env vars (e.g. DEEPSEEK_API_KEY for "deepseek") instead
-        // of inheriting the primary provider's key. Passing `None` lets
-        // `resolve_provider_credential` check the correct env var for the
-        // fallback provider name.
-        //
+        // HUANXING: For custom: / anthropic-custom: URL providers (same gateway,
+        // different protocol) the tenant's api_key must be forwarded so the
+        // fallback endpoint can authenticate.  Named providers (deepseek, openai,
+        // etc.) resolve their own credentials via provider-specific env vars and
+        // must NOT inherit the primary's key to avoid key-prefix mismatches.
+        let fallback_api_key =
+            if provider_name.starts_with("custom:") || provider_name.starts_with("anthropic-custom:") {
+                api_key
+            } else {
+                None
+            };
+
         // When a profile override is present (e.g. "openai-codex:second"),
         // propagate it through `auth_profile_override` so the provider
         // picks up the correct OAuth credential set.
@@ -1629,7 +1635,7 @@ pub fn create_resilient_provider_with_options(
             None => options.clone(),
         };
 
-        match create_provider_with_options(provider_name, None, &fallback_options) {
+        match create_provider_with_options(provider_name, fallback_api_key, &fallback_options) {
             Ok(provider) => providers.push((fallback.clone(), provider)),
             Err(_error) => {
                 tracing::warn!(

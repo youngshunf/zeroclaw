@@ -2167,7 +2167,7 @@ async fn process_channel_message(
             &route.provider,
             Some(tenant_api_key.clone()),
             None,
-            runtime_defaults.reliability.clone(),
+            msg_ctx.reliability.clone().unwrap_or_else(|| runtime_defaults.reliability.clone()),
             ctx.provider_runtime_options.clone(),
         )
         .await
@@ -4949,6 +4949,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
                                     non_cli_excluded_tools: None,
                                     message_timeout_secs: None,
                                     multimodal: None,
+                                    reliability: None,
                                 },
                             )) as Arc<dyn crate::channels::context_resolver::MessageContextResolver>
                         }
@@ -4974,6 +4975,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
                             non_cli_excluded_tools: None,
                             message_timeout_secs: None,
                             multimodal: None,
+                            reliability: None,
                         },
                     )) as Arc<dyn crate::channels::context_resolver::MessageContextResolver>
                 }
@@ -4999,6 +5001,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
                         non_cli_excluded_tools: None,
                         message_timeout_secs: None,
                         multimodal: None,
+                        reliability: None,
                     },
                 )) as Arc<dyn crate::channels::context_resolver::MessageContextResolver>
             }
@@ -5329,6 +5332,7 @@ mod tests {
                     non_cli_excluded_tools: None,
                     message_timeout_secs: None,
                     multimodal: None,
+                    reliability: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -5467,6 +5471,7 @@ mod tests {
                     non_cli_excluded_tools: None,
                     message_timeout_secs: None,
                     multimodal: None,
+                    reliability: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -5561,6 +5566,7 @@ mod tests {
                     non_cli_excluded_tools: None,
                     message_timeout_secs: None,
                     multimodal: None,
+                    reliability: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -5674,6 +5680,7 @@ mod tests {
                     non_cli_excluded_tools: None,
                     message_timeout_secs: None,
                     multimodal: None,
+                    reliability: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -6237,6 +6244,7 @@ BTC is currently around $65,000 based on latest tool output."#
                     non_cli_excluded_tools: None,
                     message_timeout_secs: None,
                     multimodal: None,
+                    reliability: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -6340,6 +6348,7 @@ BTC is currently around $65,000 based on latest tool output."#
                     non_cli_excluded_tools: None,
                     message_timeout_secs: None,
                     multimodal: None,
+                    reliability: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -6457,6 +6466,7 @@ BTC is currently around $65,000 based on latest tool output."#
                     non_cli_excluded_tools: None,
                     message_timeout_secs: None,
                     multimodal: None,
+                    reliability: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -6559,6 +6569,7 @@ BTC is currently around $65,000 based on latest tool output."#
                     non_cli_excluded_tools: None,
                     message_timeout_secs: None,
                     multimodal: None,
+                    reliability: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -6671,6 +6682,7 @@ BTC is currently around $65,000 based on latest tool output."#
                     non_cli_excluded_tools: None,
                     message_timeout_secs: None,
                     multimodal: None,
+                    reliability: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -6804,6 +6816,7 @@ BTC is currently around $65,000 based on latest tool output."#
                     non_cli_excluded_tools: None,
                     message_timeout_secs: None,
                     multimodal: None,
+                    reliability: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -6918,6 +6931,7 @@ BTC is currently around $65,000 based on latest tool output."#
                     non_cli_excluded_tools: None,
                     message_timeout_secs: None,
                     multimodal: None,
+                    reliability: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -7047,6 +7061,7 @@ BTC is currently around $65,000 based on latest tool output."#
                     non_cli_excluded_tools: None,
                     message_timeout_secs: None,
                     multimodal: None,
+                    reliability: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -7161,6 +7176,7 @@ BTC is currently around $65,000 based on latest tool output."#
                     non_cli_excluded_tools: None,
                     message_timeout_secs: None,
                     multimodal: None,
+                    reliability: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -7265,6 +7281,7 @@ BTC is currently around $65,000 based on latest tool output."#
                     non_cli_excluded_tools: None,
                     message_timeout_secs: None,
                     multimodal: None,
+                    reliability: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -7487,6 +7504,7 @@ BTC is currently around $65,000 based on latest tool output."#
                     non_cli_excluded_tools: None,
                     message_timeout_secs: None,
                     multimodal: None,
+                    reliability: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -7611,6 +7629,7 @@ BTC is currently around $65,000 based on latest tool output."#
                     non_cli_excluded_tools: None,
                     message_timeout_secs: None,
                     multimodal: None,
+                    reliability: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -7750,6 +7769,7 @@ BTC is currently around $65,000 based on latest tool output."#
                     non_cli_excluded_tools: None,
                     message_timeout_secs: None,
                     multimodal: None,
+                    reliability: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -7886,6 +7906,7 @@ BTC is currently around $65,000 based on latest tool output."#
                     non_cli_excluded_tools: None,
                     message_timeout_secs: None,
                     multimodal: None,
+                    reliability: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -8004,6 +8025,7 @@ BTC is currently around $65,000 based on latest tool output."#
                     non_cli_excluded_tools: None,
                     message_timeout_secs: None,
                     multimodal: None,
+                    reliability: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -8106,6 +8128,7 @@ BTC is currently around $65,000 based on latest tool output."#
                     non_cli_excluded_tools: None,
                     message_timeout_secs: None,
                     multimodal: None,
+                    reliability: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -8898,6 +8921,7 @@ BTC is currently around $65,000 based on latest tool output."#
                     non_cli_excluded_tools: None,
                     message_timeout_secs: None,
                     multimodal: None,
+                    reliability: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -9051,6 +9075,7 @@ BTC is currently around $65,000 based on latest tool output."#
                     non_cli_excluded_tools: None,
                     message_timeout_secs: None,
                     multimodal: None,
+                    reliability: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -9244,6 +9269,7 @@ BTC is currently around $65,000 based on latest tool output."#
                     non_cli_excluded_tools: None,
                     message_timeout_secs: None,
                     multimodal: None,
+                    reliability: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -9374,6 +9400,7 @@ BTC is currently around $65,000 based on latest tool output."#
                     non_cli_excluded_tools: None,
                     message_timeout_secs: None,
                     multimodal: None,
+                    reliability: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -9968,6 +9995,7 @@ This is an example JSON object for profile settings."#;
                     non_cli_excluded_tools: None,
                     message_timeout_secs: None,
                     multimodal: None,
+                    reliability: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -10077,6 +10105,7 @@ This is an example JSON object for profile settings."#;
                     non_cli_excluded_tools: None,
                     message_timeout_secs: None,
                     multimodal: None,
+                    reliability: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -10261,6 +10290,7 @@ This is an example JSON object for profile settings."#;
                     non_cli_excluded_tools: None,
                     message_timeout_secs: None,
                     multimodal: None,
+                    reliability: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -10394,6 +10424,7 @@ This is an example JSON object for profile settings."#;
                     non_cli_excluded_tools: None,
                     message_timeout_secs: None,
                     multimodal: None,
+                    reliability: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -10519,6 +10550,7 @@ This is an example JSON object for profile settings."#;
                     non_cli_excluded_tools: None,
                     message_timeout_secs: None,
                     multimodal: None,
+                    reliability: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -10664,6 +10696,7 @@ This is an example JSON object for profile settings."#;
                     non_cli_excluded_tools: None,
                     message_timeout_secs: None,
                     multimodal: None,
+                    reliability: None,
                 },
             )),
             #[cfg(feature = "huanxing")]
@@ -10947,6 +10980,7 @@ This is an example JSON object for profile settings."#;
                     non_cli_excluded_tools: None,
                     message_timeout_secs: None,
                     multimodal: None,
+                    reliability: None,
                 },
             )),
             #[cfg(feature = "huanxing")]

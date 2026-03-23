@@ -69,6 +69,9 @@ struct WorkspaceOverrides {
     /// [http_request] 节覆盖 HTTP 请求配置
     #[serde(default)]
     http_request: Option<crate::config::HttpRequestConfig>,
+    /// [reliability] 节覆盖可靠性配置（fallback_providers / model_fallbacks / api_keys 等）
+    #[serde(default)]
+    reliability: Option<crate::config::ReliabilityConfig>,
     /// Catch-all for unknown sections in config.toml (e.g. [proxy], [composio], [mcp]).
     /// Prevents serde from failing on unrecognized fields.
     #[serde(flatten)]
@@ -171,6 +174,10 @@ pub struct TenantContext {
 
     /// Per-tenant message timeout (from [channels_config] override or global).
     pub message_timeout_secs: u64,
+
+    /// Per-tenant reliability config (from [reliability] override or global).
+    /// Used when creating per-request resilient providers.
+    pub reliability: crate::config::ReliabilityConfig,
 }
 
 // Manual Debug impl because Arc<dyn Memory> doesn't impl Debug.
@@ -193,6 +200,7 @@ impl std::fmt::Debug for TenantContext {
             .field("has_session_manager", &self.session_manager.is_some())
             .field("non_cli_excluded_tools_count", &self.non_cli_excluded_tools.len())
             .field("message_timeout_secs", &self.message_timeout_secs)
+            .field("has_reliability_fallbacks", &!self.reliability.fallback_providers.is_empty())
             .finish()
     }
 }
@@ -372,6 +380,29 @@ impl TenantContext {
             .and_then(|c| c.message_timeout_secs)
             .unwrap_or(global_config.channels_config.message_timeout_secs);
 
+        // ── G. Resolve per-tenant reliability ────────────────────────
+        // 优先使用 workspace [reliability]；若租户有自己的 api_key 且 reliability.api_keys 为空，
+        // 自动注入，使 fallback_providers 也能使用租户自己的 key。
+        let effective_reliability = overrides
+            .reliability
+            .map(|mut r| {
+                if let Some(ref key) = effective_api_key {
+                    if r.api_keys.is_empty() {
+                        r.api_keys = vec![key.clone()];
+                    }
+                }
+                r
+            })
+            .unwrap_or_else(|| {
+                let mut r = global_config.reliability.clone();
+                if let Some(ref key) = effective_api_key {
+                    if r.api_keys.is_empty() {
+                        r.api_keys = vec![key.clone()];
+                    }
+                }
+                r
+            });
+
         Ok(Self {
             agent_id: agent_id.to_string(),
             user_id: user_id.to_string(),
@@ -395,6 +426,7 @@ impl TenantContext {
             cron: effective_cron,
             multimodal: effective_multimodal,
             message_timeout_secs: effective_message_timeout,
+            reliability: effective_reliability,
         })
     }
 
@@ -513,6 +545,27 @@ impl TenantContext {
             .and_then(|c| c.message_timeout_secs)
             .unwrap_or(global_config.channels_config.message_timeout_secs);
 
+        // ── G. Resolve guardian reliability ──────────────────────────
+        let effective_reliability = overrides
+            .reliability
+            .map(|mut r| {
+                if let Some(ref key) = effective_api_key {
+                    if r.api_keys.is_empty() {
+                        r.api_keys = vec![key.clone()];
+                    }
+                }
+                r
+            })
+            .unwrap_or_else(|| {
+                let mut r = global_config.reliability.clone();
+                if let Some(ref key) = effective_api_key {
+                    if r.api_keys.is_empty() {
+                        r.api_keys = vec![key.clone()];
+                    }
+                }
+                r
+            });
+
         Ok(Self {
             agent_id: "guardian".to_string(),
             user_id: String::new(),
@@ -536,6 +589,7 @@ impl TenantContext {
             cron: effective_cron,
             multimodal: effective_multimodal,
             message_timeout_secs: effective_message_timeout,
+            reliability: effective_reliability,
         })
     }
 
@@ -632,6 +686,8 @@ async fn load_workspace_overrides(workspace_dir: &std::path::Path) -> WorkspaceO
                     skills_mode = ?overrides.skills.as_ref().map(|s| s.prompt_injection_mode),
                     has_autonomy = overrides.autonomy.is_some(),
                     has_memory = overrides.memory.is_some(),
+                    has_reliability = overrides.reliability.is_some(),
+                    reliability_fallbacks = overrides.reliability.as_ref().map(|r| r.fallback_providers.len()).unwrap_or(0),
                     "Loaded workspace config.toml overrides"
                 );
                 overrides
