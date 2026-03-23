@@ -4,7 +4,7 @@
 # ═══════════════════════════════════════════════════════════════
 
 default_provider = "anthropic-custom:https://llm.dcfuture.cn"
-default_model = "qwen3.5-plus"
+default_model = "claude-sonnet-4-5"
 default_temperature = 0.7
 api_key = "sk-CBUn2XGX9ZGbPBbq8oXpSTKLcBmKmsKGrmfW5I6bHBHGAHkC"
 
@@ -52,13 +52,7 @@ forbidden_paths = [
 max_actions_per_hour = 200
 max_cost_per_day_cents = 2000
 block_high_risk_commands = true
-auto_approve = [
-    "file_read", "memory_recall", "memory_store",
-    "hx_lookup_sender", "hx_local_find_user",
-    "hx_send_sms", "hx_verify_sms",
-    "hx_register_user", "hx_local_bind_channel",
-    "hx_invalidate_cache",
-]
+auto_approve = []
 non_cli_excluded_tools = [
     # ── 系统工具（Guardian 只做注册，不需要这些）──
     "shell", "process", "git_operations",
