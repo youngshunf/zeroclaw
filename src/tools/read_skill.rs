@@ -8,6 +8,7 @@ pub struct ReadSkillTool {
     workspace_dir: PathBuf,
     open_skills_enabled: bool,
     open_skills_dir: Option<String>,
+    allow_scripts: bool,
     /// 额外技能目录（如多租户模式下的 common_skills_dir）
     extra_skills_dirs: Vec<PathBuf>,
 }
@@ -17,11 +18,13 @@ impl ReadSkillTool {
         workspace_dir: PathBuf,
         open_skills_enabled: bool,
         open_skills_dir: Option<String>,
+        allow_scripts: bool,
     ) -> Self {
         Self {
             workspace_dir,
             open_skills_enabled,
             open_skills_dir,
+            allow_scripts,
             extra_skills_dirs: Vec::new(),
         }
     }
@@ -68,6 +71,7 @@ impl Tool for ReadSkillTool {
             &self.workspace_dir,
             self.open_skills_enabled,
             self.open_skills_dir.as_deref(),
+            self.allow_scripts,
         );
 
         // 合并额外目录（如 common_skills_dir）中的技能，workspace 同名技能优先
@@ -79,6 +83,7 @@ impl Tool for ReadSkillTool {
                 extra_dir,
                 self.open_skills_enabled,
                 self.open_skills_dir.as_deref(),
+                self.allow_scripts,
             ) {
                 if !ws_names.contains(&skill.name) {
                     all_skills.push(skill);
@@ -143,7 +148,7 @@ mod tests {
     use tempfile::TempDir;
 
     fn make_tool(tmp: &TempDir) -> ReadSkillTool {
-        ReadSkillTool::new(tmp.path().join("workspace"), false, None)
+        ReadSkillTool::new(tmp.path().join("workspace"), false, None, false)
     }
 
     #[tokio::test]
@@ -203,7 +208,7 @@ description = "Ship safely"
         std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(skill_dir.join("SKILL.md"), "# Newsnow\n\nFetch hot news.\n").unwrap();
 
-        let tool = ReadSkillTool::new(workspace, false, None).with_extra_skills_dir(common_dir);
+        let tool = ReadSkillTool::new(workspace, false, None, false).with_extra_skills_dir(common_dir);
 
         let result = tool.execute(json!({ "name": "newsnow" })).await.unwrap();
 
@@ -226,7 +231,7 @@ description = "Ship safely"
         std::fs::create_dir_all(&common_skill).unwrap();
         std::fs::write(common_skill.join("SKILL.md"), "# Default Newsnow\n").unwrap();
 
-        let tool = ReadSkillTool::new(workspace, false, None).with_extra_skills_dir(common_dir);
+        let tool = ReadSkillTool::new(workspace, false, None, false).with_extra_skills_dir(common_dir);
 
         let result = tool.execute(json!({ "name": "newsnow" })).await.unwrap();
 

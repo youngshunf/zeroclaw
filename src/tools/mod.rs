@@ -467,6 +467,7 @@ pub fn all_tools_with_runtime(
             workspace_dir.to_path_buf(),
             root_config.skills.open_skills_enabled,
             root_config.skills.open_skills_dir.clone(),
+            root_config.skills.allow_scripts,
         );
         // 多租户模式：注入 common_skills_dir，让 agent 能 read_skill 读取公共技能
         #[cfg(feature = "huanxing")]
@@ -861,7 +862,8 @@ pub fn all_tools_with_runtime(
         .with_parent_tools(Arc::clone(&parent_tools))
         .with_multimodal_config(root_config.multimodal.clone())
         .with_delegate_config(root_config.delegate.clone())
-        .with_workspace_dir(workspace_dir.to_path_buf());
+        .with_workspace_dir(workspace_dir.to_path_buf())
+        .with_allow_scripts(root_config.skills.allow_scripts);
         tool_arcs.push(Arc::new(delegate_tool));
         Some(parent_tools)
     };
