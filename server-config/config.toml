@@ -85,7 +85,87 @@ auto_approve = [
 ]
 always_ask = []
 allowed_roots = []
-non_cli_excluded_tools = []
+non_cli_excluded_tools = [
+    # ═══ 硬件外设（云服务器无 GPIO/STM32）═══
+    "hardware_board_info",
+    "hardware_memory_map",
+    "hardware_memory_read",
+
+    # ═══ 桌面 GUI 工具（服务器无显示器）═══
+    "screenshot",           # 截图
+    "canvas",               # 渲染到 Web 画布（需浏览器前端）
+    "browser",              # 完整浏览器自动化
+    "browser_open",         # 打开浏览器窗口
+    "browser_delegate",     # 委托 claude CLI 浏览器
+    "image_gen",            # FAL 图片生成（未部署）
+    "image_info",           # 图片分析（非 CLI 无意义）
+
+    # ═══ 第三方集成（未部署 / 无账号）═══
+    "discord_search",       # Discord
+    "google_workspace",     # Google Workspace
+    "jira",                 # Jira
+    "linkedin",             # LinkedIn
+    "microsoft365",         # Microsoft 365
+    "notion",               # Notion
+    "pushover",             # Pushover 推送
+    "composio",             # Composio 集成
+
+    # ═══ 系统运维工具（服务器运营用，用户不需要）═══
+    "backup",               # 系统备份
+    "security_ops",         # 安全运营
+    "cloud_ops",            # 云资源管理
+    "cloud_patterns",       # 云架构模式
+    "proxy_config",         # 代理配置（运行时修改）
+    "model_routing_config", # 模型路由配置（运行时修改）
+    "model_switch",         # 切换 LLM Provider（运行时修改）
+    "data_management",      # 数据管理
+
+    # ═══ SOP 工作流（企业功能，用户不需要）═══
+    "sop_execute",
+    "sop_list",
+    "sop_approve",
+    "sop_advance",
+    "sop_status",
+
+    # ═══ 多 Agent 协作（用户侧无需直接操作）═══
+    "delegate",             # Agent 委托
+    "swarm",                # Swarm 模式
+    "sessions_history",     # 跨会话历史
+    "sessions_list",        # 会话列表
+    "sessions_send",        # 跨会话发送
+
+    # ═══ 开发者工具（个人用户不需要）═══
+    "git_operations",       # Git 操作
+    "claude_code",          # Claude Code CLI 集成
+    "project_intel",        # 项目情报分析
+    "knowledge",            # 知识图谱（未启用）
+
+    # ═══ 基础设施管理（Guardian/Admin 专用）═══
+    "hx_register_user",     # 注册新用户
+    "hx_send_sms",          # 发送短信验证码
+    "hx_verify_sms",        # 验证短信
+    "hx_lookup_sender",     # 查找发送者身份
+    "hx_local_find_user",   # 本地查找用户
+    "hx_local_bind_channel",# 绑定渠道
+    "hx_local_list_users",  # 列出所有用户
+    "hx_local_update_user", # 更新用户信息
+    "hx_local_stats",       # 服务器统计
+    "hx_invalidate_cache",  # 缓存失效
+
+    # ═══ 低价值 / 内部工具 ═══
+    "reaction",             # 消息表情回应（渠道层已处理）
+    "vi_verify",            # Verifiable Intent 验证（内部测试）
+    "weather",              # 天气（web_search_tool 可替代）
+    "text_browser",         # 文本浏览器（lynx/w3m，服务器未必有）
+    "calculator",           # 简单计算（LLM 直接计算即可）
+    "schedule",             # Shell 任务调度（cron 系列已覆盖）
+    "workspace",            # 工作区切换（多租户下由系统管理）
+    "dashscope",            # 百炼 TTS（hx_tts 替代）
+    "hx_tts",               # 语音合成（非 CLI 无 TTS 渲染）
+
+    # ═══ MCP 相关（mcp 功能未启用）═══
+    "tool_search",          # MCP deferred tools 加载（mcp 未启用时无意义）
+]
 
 
 # ┌─────────────────────────────────────────────────────────────┐
@@ -127,7 +207,7 @@ allow_loopback = false
 # │                    可靠性（LLM 重试/降级）                    │
 # └─────────────────────────────────────────────────────────────┘
 [reliability]
-provider_retries = 5                         # 单个 provider 最多重试次数
+provider_retries = 2                         # 单个 provider 最多重试次数
 provider_backoff_ms = 500                     # 重试退避时间      
 fallback_providers = ["custom:https://llm.dcfuture.cn/v1"]    # 降级 provider 列表
 api_keys = ["sk-xxx"]
