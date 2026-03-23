@@ -195,7 +195,10 @@ impl HxImageGenTool {
                     };
 
                     // ── Save to disk ───────────────────────────────────────────
-                    let images_dir = self.workspace_dir.join("images");
+                    let active_security = crate::tools::get_active_security()
+                        .unwrap_or_else(|| self.security.clone());
+                    let images_dir = active_security.workspace_dir.join("images");
+                    
                     if let Err(e) = tokio::fs::create_dir_all(&images_dir).await {
                         return Ok(ToolResult {
                             success: false,
