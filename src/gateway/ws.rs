@@ -94,6 +94,8 @@ pub struct WsQuery {
     pub token: Option<String>,
     /// 连接级默认 session_id（向后兼容旧协议）
     pub session_id: Option<String>,
+    /// Optional human-readable name for the session.
+    pub name: Option<String>,
 }
 
 /// Extract a bearer token from WebSocket-compatible sources.

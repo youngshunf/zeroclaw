@@ -925,7 +925,7 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
     #[cfg(not(feature = "huanxing"))]
     let inner = inner
         .route("/api/sessions", get(api::handle_api_sessions_list))
-        .route("/api/sessions/{id}", delete(api::handle_api_session_delete));
+        .route("/api/sessions/{id}", delete(api::handle_api_session_delete).put(api::handle_api_session_rename));
 
     // ── HuanXing Hub 同步 API（requires huanxing feature）──
     #[cfg(feature = "huanxing")]

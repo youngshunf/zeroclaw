@@ -173,6 +173,7 @@ pub async fn run_wizard(force: bool) -> Result<Config> {
         http_request: crate::config::HttpRequestConfig::default(),
         multimodal: crate::config::MultimodalConfig::default(),
         web_fetch: crate::config::WebFetchConfig::default(),
+        link_enricher: crate::config::LinkEnricherConfig::default(),
         text_browser: crate::config::TextBrowserConfig::default(),
         web_search: crate::config::WebSearchConfig::default(),
         project_intel: crate::config::ProjectIntelConfig::default(),
@@ -607,6 +608,7 @@ async fn run_quick_setup_with_home(
         http_request: crate::config::HttpRequestConfig::default(),
         multimodal: crate::config::MultimodalConfig::default(),
         web_fetch: crate::config::WebFetchConfig::default(),
+        link_enricher: crate::config::LinkEnricherConfig::default(),
         text_browser: crate::config::TextBrowserConfig::default(),
         web_search: crate::config::WebSearchConfig::default(),
         project_intel: crate::config::ProjectIntelConfig::default(),
@@ -4197,6 +4199,7 @@ fn setup_channels() -> Result<ChannelsConfig> {
                     device_id: detected_device_id,
                     room_id,
                     allowed_users,
+                    allowed_rooms: vec![],
                     interrupt_on_new_message: false,
                 });
             }

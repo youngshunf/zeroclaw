@@ -545,6 +545,7 @@ mod tests {
             max_images: 1,
             max_image_size_mb: 5,
             allow_remote_fetch: false,
+            ..Default::default()
         };
 
         let error = prepare_messages_for_provider(&messages, &config)
@@ -587,6 +588,7 @@ mod tests {
             max_images: 4,
             max_image_size_mb: 1,
             allow_remote_fetch: false,
+            ..Default::default()
         };
 
         let error = prepare_messages_for_provider(&messages, &config)

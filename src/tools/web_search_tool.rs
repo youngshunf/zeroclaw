@@ -10,7 +10,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 /// Web search tool for searching the internet.
-/// Supports providers: DuckDuckGo (free), Brave, Firecrawl, Tavily, Perplexity, Exa, and Jina.
+/// Supports providers: DuckDuckGo (free), Brave, Firecrawl, Tavily, Perplexity, Exa, Jina,
+/// and SearXNG (self-hosted).
 pub struct WebSearchTool {
     security: Arc<SecurityPolicy>,
     /// Provider selector as configured by user. Routed via provider aliases at runtime.
@@ -22,6 +23,8 @@ pub struct WebSearchTool {
     exa_api_keys: Vec<String>,
     jina_api_keys: Vec<String>,
     api_url: Option<String>,
+    /// SearXNG instance base URL (e.g. "https://searx.example.com").
+    searxng_instance_url: Option<String>,
     max_results: usize,
     timeout_secs: u64,
     user_agent: String,
@@ -73,6 +76,7 @@ impl WebSearchTool {
             None,
             None,
             None,
+            None,
             api_url,
             max_results,
             timeout_secs,
@@ -101,6 +105,7 @@ impl WebSearchTool {
         perplexity_api_key: Option<String>,
         exa_api_key: Option<String>,
         jina_api_key: Option<String>,
+        searxng_instance_url: Option<String>,
         api_url: Option<String>,
         max_results: usize,
         timeout_secs: u64,
@@ -133,6 +138,7 @@ impl WebSearchTool {
             exa_api_keys,
             jina_api_keys,
             api_url,
+            searxng_instance_url,
             max_results: max_results.clamp(1, 10),
             timeout_secs: timeout_secs.max(1),
             user_agent,
@@ -208,6 +214,7 @@ impl WebSearchTool {
             "perplexity" => Some("perplexity"),
             "exa" => Some("exa"),
             "jina" => Some("jina"),
+            "searxng" => Some("searxng"),
             _ => None,
         }
     }
@@ -528,6 +535,7 @@ impl WebSearchTool {
             .get("results")
             .and_then(serde_json::Value::as_array)
             .ok_or_else(|| anyhow::anyhow!("Tavily response missing results array"))?;
+
         if results.is_empty() {
             return Ok(format!("No results found for: {}", query));
         }
@@ -547,6 +555,74 @@ impl WebSearchTool {
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("")
                 .trim();
+
+            lines.push(format!("{}. {}", i + 1, title));
+            lines.push(format!("   {}", url));
+            if !content.is_empty() {
+                lines.push(format!("   {}", content));
+            }
+        }
+
+        Ok(lines.join("\n"))
+    }
+
+    async fn search_searxng(&self, query: &str) -> anyhow::Result<String> {
+        let instance_url = self.searxng_instance_url.as_deref()
+            .filter(|u| !u.is_empty())
+            .ok_or_else(|| anyhow::anyhow!(
+                "SearXNG instance URL not configured. Set [web_search] searxng_instance_url \
+                 in config.toml or the SEARXNG_INSTANCE_URL environment variable."
+            ))?;
+        let base_url = instance_url.trim_end_matches('/');
+
+        let encoded_query = urlencoding::encode(query);
+        let search_url = format!(
+            "{}/search?q={}&format=json&pageno=1",
+            base_url, encoded_query
+        );
+
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(self.timeout_secs))
+            .user_agent(self.user_agent.as_str())
+            .build()?;
+
+        let response = client
+            .get(&search_url)
+            .header("Accept", "application/json")
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            anyhow::bail!("SearXNG search failed with status: {}", response.status());
+        }
+
+        let json: serde_json::Value = response.json().await?;
+        self.parse_searxng_results(&json, query)
+    }
+
+    fn parse_searxng_results(
+        &self,
+        json: &serde_json::Value,
+        query: &str,
+    ) -> anyhow::Result<String> {
+        let results = json
+            .get("results")
+            .and_then(|r| r.as_array())
+            .ok_or_else(|| anyhow::anyhow!("Invalid SearXNG API response"))?;
+
+        if results.is_empty() {
+            return Ok(format!("No results found for: {}", query));
+        }
+
+        let mut lines = vec![format!("Search results for: {} (via SearXNG)", query)];
+
+        for (i, result) in results.iter().take(self.max_results).enumerate() {
+            let title = result
+                .get("title")
+                .and_then(|t| t.as_str())
+                .unwrap_or("No title");
+            let url = result.get("url").and_then(|u| u.as_str()).unwrap_or("");
+            let content = result.get("content").and_then(|c| c.as_str()).unwrap_or("");
 
             lines.push(format!("{}. {}", i + 1, title));
             lines.push(format!("   {}", url));
@@ -819,6 +895,7 @@ impl WebSearchTool {
             "perplexity" => self.search_perplexity(query).await,
             "exa" => self.search_exa(query).await,
             "jina" => self.search_jina(query).await,
+            "searxng" => self.search_searxng(query).await,
             _ => anyhow::bail!("Unknown search provider: {provider}"),
         }
     }
@@ -1144,6 +1221,7 @@ mod tests {
         let tool = WebSearchTool::new(
             test_security(),
             "firecrawl".to_string(),
+            None,
             None,
             None,
             5,
