@@ -137,8 +137,15 @@ pub async fn prepare_messages_for_provider(
 
     let remote_client = build_runtime_proxy_client_with_timeouts("provider.ollama", 30, 10);
 
+    // Find the index of the last user message so we can distinguish
+    // "current turn" images (must succeed) from "history" images (best-effort).
+    let last_user_idx = messages
+        .iter()
+        .rposition(|m| m.role == "user")
+        .unwrap_or(messages.len());
+
     let mut normalized_messages = Vec::with_capacity(messages.len());
-    for message in messages {
+    for (msg_idx, message) in messages.iter().enumerate() {
         if message.role != "user" {
             normalized_messages.push(message.clone());
             continue;
@@ -150,18 +157,49 @@ pub async fn prepare_messages_for_provider(
             continue;
         }
 
+        let is_current_turn = msg_idx == last_user_idx;
+
         let mut normalized_refs = Vec::with_capacity(refs.len());
-        for reference in refs {
-            let data_uri =
-                normalize_image_reference(&reference, config, max_bytes, &remote_client).await?;
-            normalized_refs.push(data_uri);
+        for reference in &refs {
+            match normalize_image_reference(reference, config, max_bytes, &remote_client).await {
+                Ok(data_uri) => normalized_refs.push(data_uri),
+                Err(err) if is_current_turn => {
+                    // Current turn: fail loudly so the user knows their image
+                    // could not be processed.
+                    return Err(err);
+                }
+                Err(err) => {
+                    // History turn: log and skip the stale image so it doesn't
+                    // poison the entire conversation (#4102).
+                    tracing::warn!(
+                        "Skipping stale image in history (will not block LLM call): {err}"
+                    );
+                }
+            }
         }
 
-        let content = compose_multimodal_message(&cleaned_text, &normalized_refs);
-        normalized_messages.push(ChatMessage {
-            role: message.role.clone(),
-            content,
-        });
+        if normalized_refs.is_empty() {
+            // All images failed — push text-only version
+            if cleaned_text.is_empty() {
+                // Image-only message with all images expired — replace with
+                // placeholder so the conversation flow isn't broken.
+                normalized_messages.push(ChatMessage {
+                    role: message.role.clone(),
+                    content: "[用户发送了图片，但图片链接已过期]".to_string(),
+                });
+            } else {
+                normalized_messages.push(ChatMessage {
+                    role: message.role.clone(),
+                    content: cleaned_text,
+                });
+            }
+        } else {
+            let content = compose_multimodal_message(&cleaned_text, &normalized_refs);
+            normalized_messages.push(ChatMessage {
+                role: message.role.clone(),
+                content,
+            });
+        }
     }
 
     Ok(PreparedMessages {

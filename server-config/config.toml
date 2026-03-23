@@ -28,11 +28,11 @@ api_key = "enc2:77058663e7ce15d65c7d90e2f188278a25b260a99129e956ddffa8738e3a4280
 # - "anthropic-custom:URL" = Anthropic 原生格式（支持 native tool calling）
 # - "custom:URL"           = OpenAI 兼容格式（/v1/chat/completions）
 default_provider = "anthropic-custom:https://llm.dcfuture.cn"
-default_model = "claude-sonnet-4-6"
+default_model = "claude-sonnet-4-5"
 default_temperature = 0.7
 
 # 单次 LLM 请求超时（秒）
-provider_timeout_secs = 120
+provider_timeout_secs = 30
 
 # 模型/嵌入路由规则（高级功能，留空使用默认）
 model_routes = []
@@ -71,18 +71,7 @@ block_high_risk_commands = true
 shell_env_passthrough = []
 
 # Guardian 自动批准的工具列表
-auto_approve = [
-    # 基础
-    "file_read", "memory_recall",
-    # 唤星用户管理
-    "hx_lookup_sender", "hx_local_find_user",
-    "hx_send_sms", "hx_verify_sms",
-    "hx_register_user", "hx_local_bind_channel", "hx_invalidate_cache",
-    "hx_get_user", "hx_check_quota", "hx_get_subscription", "hx_usage_stats",
-    "hx_local_list_users", "hx_local_update_user", "hx_local_stats",
-    # HASN 社交网络
-    "hasn_send", "hasn_contacts", "hasn_add_friend", "hasn_inbox", "hasn_respond_request",
-]
+auto_approve = []
 always_ask = []
 allowed_roots = []
 non_cli_excluded_tools = [
@@ -219,7 +208,7 @@ scheduler_retries = 2
 [reliability.model_fallbacks]
 # 模型降级映射，例如:
 "claude-sonnet-4-6" = ["MiniMax-M2.5","qwen3-coder-next","qwen3.5-plus","claude-sonnet-4-5","gpt-5.3-codex","gpt-5.2-codex","gpt-5.2"]
-"claude-sonnet-4-5" = ["MiniMax-M2.5","qwen3-coder-next","qwen3.5-plus","claude-sonnet-4-6","gpt-5.3-codex","gpt-5.2-codex","gpt-5.2"]
+"claude-sonnet-4-5" = ["qwen3.5-plus","MiniMax-M2.5","qwen3-coder-next","claude-sonnet-4-6","gpt-5.3-codex","gpt-5.2-codex","gpt-5.2"]
 "qwen3.5-plus" = ["MiniMax-M2.5","qwen3-coder-next","qwen3.5-plus","claude-sonnet-4-5","gpt-5.3-codex","gpt-5.2-codex","gpt-5.2"]
 
 # ┌─────────────────────────────────────────────────────────────┐
@@ -435,7 +424,7 @@ admin_channels = ["feishu"]                   # Admin 只在飞书群可用
 
 # ── 租户默认值 ──
 default_template = "finance"                  # 新注册时默认模板
-default_model = "qwen3.5-plus"                # 租户默认模型
+default_model = "claude-sonnet-4-5"                # 租户默认模型
 default_provider = "anthropic-custom:https://llm.dcfuture.cn"  # 租户默认 provider
 
 # ── Guardian 专用工具（租户不可见）──

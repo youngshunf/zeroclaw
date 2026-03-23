@@ -4271,7 +4271,10 @@ fn collect_configured_channels(
 
     #[cfg(feature = "huanxing")]
     if let Some(ref napcat_cfg) = config.channels_config.napcat {
-        match NapcatChannel::from_config(napcat_cfg.clone()) {
+        match NapcatChannel::from_config_with_workspace(
+            napcat_cfg.clone(),
+            Some(&config.workspace_dir),
+        ) {
             Ok(channel) => channels.push(ConfiguredChannel {
                 display_name: "Napcat",
                 channel: Arc::new(channel),
