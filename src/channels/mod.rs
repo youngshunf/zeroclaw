@@ -429,6 +429,97 @@ impl InFlightTaskCompletion {
     }
 }
 
+/// Download remote images referenced in `[IMAGE:https://...]` markers to the
+/// tenant's workspace, replacing URLs with local paths.
+///
+/// QQ CDN (and similar) URLs expire quickly.  By downloading at message-receive
+/// time into the *tenant* workspace we guarantee:
+///   1. The path stored in session history never goes stale.
+///   2. Each tenant's images stay in their own workspace (multi-tenant isolation).
+///
+/// Falls back to the original URL if download fails — the multimodal layer will
+/// handle the error gracefully for history messages.
+async fn localize_remote_image_markers(
+    content: &str,
+    workspace_dir: &std::path::Path,
+) -> String {
+    use std::path::Path;
+
+    let media_dir = workspace_dir.join("media");
+    if let Err(e) = tokio::fs::create_dir_all(&media_dir).await {
+        tracing::warn!("Failed to create tenant media dir: {e}");
+        return content.to_string();
+    }
+
+    let client = crate::config::build_runtime_proxy_client("channel.image_download");
+
+    let mut result = String::with_capacity(content.len());
+    let mut cursor = 0usize;
+
+    while let Some(rel_start) = content[cursor..].find("[IMAGE:http") {
+        let start = cursor + rel_start;
+        result.push_str(&content[cursor..start]);
+
+        let marker_body_start = start + "[IMAGE:".len();
+        let Some(rel_end) = content[marker_body_start..].find(']') else {
+            result.push_str(&content[start..]);
+            cursor = content.len();
+            break;
+        };
+        let end = marker_body_start + rel_end;
+        let url = content[marker_body_start..end].trim();
+
+        // Determine file extension from URL path, default to .jpg
+        let ext = url
+            .split('?')
+            .next()
+            .and_then(|path| Path::new(path).extension())
+            .and_then(|e| e.to_str())
+            .unwrap_or("jpg");
+
+        let unique = &uuid::Uuid::new_v4().to_string()[..8];
+        let filename = format!("img_{unique}.{ext}");
+        let dest = media_dir.join(&filename);
+
+        let downloaded = async {
+            let resp = client
+                .get(url)
+                .timeout(std::time::Duration::from_secs(30))
+                .send()
+                .await?;
+            if !resp.status().is_success() {
+                anyhow::bail!("HTTP {}", resp.status());
+            }
+            let bytes = resp.bytes().await?;
+            if bytes.is_empty() {
+                anyhow::bail!("empty response");
+            }
+            tokio::fs::write(&dest, &bytes).await?;
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+
+        match downloaded {
+            Ok(()) => {
+                tracing::info!("Downloaded image → {}", dest.display());
+                result.push_str(&format!("[IMAGE:{}]", dest.display()));
+            }
+            Err(e) => {
+                tracing::warn!("Failed to download image (will keep URL): {e}");
+                result.push_str(&content[start..=end]);
+            }
+        }
+
+        cursor = end + 1;
+    }
+
+    if cursor < content.len() {
+        result.push_str(&content[cursor..]);
+    }
+
+    result
+}
+
 fn conversation_memory_key(msg: &traits::ChannelMessage) -> String {
     // Include thread_ts for per-topic memory isolation in forum groups
     match &msg.thread_ts {
@@ -2091,6 +2182,16 @@ async fn process_channel_message(
     } else {
         msg
     };
+
+    // ── Download remote images to tenant workspace ──────────────────────
+    // QQ CDN URLs (rkey) expire within minutes.  Download them NOW into the
+    // tenant's workspace so the local path stored in session history never
+    // goes stale.  This runs after msg_ctx is resolved so we know the
+    // correct per-tenant workspace_dir.
+    if msg.content.contains("[IMAGE:http") {
+        msg.content =
+            localize_remote_image_markers(&msg.content, &msg_ctx.workspace_dir).await;
+    }
 
     let target_channel = ctx
         .channels_by_name

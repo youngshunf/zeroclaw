@@ -239,114 +239,6 @@ impl NapcatChannel {
         crate::config::build_runtime_proxy_client("channel.napcat")
     }
 
-    /// Download an image from a remote URL to the local media cache.
-    ///
-    /// Returns the local file path on success.  If the media_dir is not
-    /// configured or the download fails, returns `None` (the caller should
-    /// fall back to the original URL).
-    async fn download_image(&self, url: &str) -> Option<PathBuf> {
-        let dir = self.media_dir.as_ref()?;
-
-        if let Err(e) = tokio::fs::create_dir_all(dir).await {
-            tracing::warn!("Napcat: failed to create media cache dir: {e}");
-            return None;
-        }
-
-        // Determine a sensible extension from the URL path, default to .jpg
-        let ext = url
-            .split('?')
-            .next()
-            .and_then(|path| Path::new(path).extension())
-            .and_then(|e| e.to_str())
-            .unwrap_or("jpg");
-
-        let unique = &Uuid::new_v4().to_string()[..8];
-        let filename = format!("img_{unique}.{ext}");
-        let dest = dir.join(&filename);
-
-        let client = self.http_client();
-        let response = match client
-            .get(url)
-            .timeout(Duration::from_secs(30))
-            .send()
-            .await
-        {
-            Ok(resp) => resp,
-            Err(e) => {
-                tracing::warn!("Napcat: failed to download image: {e}");
-                return None;
-            }
-        };
-
-        if !response.status().is_success() {
-            tracing::warn!(
-                "Napcat: image download returned HTTP {}",
-                response.status()
-            );
-            return None;
-        }
-
-        let bytes = match response.bytes().await {
-            Ok(b) => b,
-            Err(e) => {
-                tracing::warn!("Napcat: failed to read image bytes: {e}");
-                return None;
-            }
-        };
-
-        if bytes.is_empty() {
-            return None;
-        }
-
-        if let Err(e) = tokio::fs::write(&dest, &bytes).await {
-            tracing::warn!("Napcat: failed to write image file: {e}");
-            return None;
-        }
-
-        tracing::info!("Napcat: downloaded image → {}", dest.display());
-        Some(dest)
-    }
-
-    /// Replace any `[IMAGE:https://...]` markers in content with locally
-    /// downloaded copies.  Falls back to the original URL if download fails.
-    async fn localize_image_markers(&self, content: &str) -> String {
-        if !content.contains("[IMAGE:http") {
-            return content.to_string();
-        }
-
-        let mut result = String::with_capacity(content.len());
-        let mut cursor = 0usize;
-
-        while let Some(rel_start) = content[cursor..].find("[IMAGE:http") {
-            let start = cursor + rel_start;
-            result.push_str(&content[cursor..start]);
-
-            let marker_body_start = start + "[IMAGE:".len();
-            let Some(rel_end) = content[marker_body_start..].find(']') else {
-                result.push_str(&content[start..]);
-                cursor = content.len();
-                break;
-            };
-            let end = marker_body_start + rel_end;
-            let url = content[marker_body_start..end].trim();
-
-            if let Some(local_path) = self.download_image(url).await {
-                result.push_str(&format!("[IMAGE:{}]", local_path.display()));
-            } else {
-                // Keep original URL as fallback
-                result.push_str(&content[start..=end]);
-            }
-
-            cursor = end + 1;
-        }
-
-        if cursor < content.len() {
-            result.push_str(&content[cursor..]);
-        }
-
-        result
-    }
-
     async fn post_onebot(&self, endpoint: &str, body: &Value) -> Result<()> {
         let url = format!("{}{}", self.api_base_url, endpoint);
         let mut request = self.http_client().post(&url).json(body);
@@ -447,11 +339,6 @@ impl NapcatChannel {
                 parsed
             }
         };
-
-        // Download remote images immediately so the local path survives rkey
-        // expiry.  Without this, QQ CDN URLs stored in session history become
-        // stale within minutes and poison all subsequent LLM calls (#4102).
-        let content = self.localize_image_markers(&content).await;
 
         // HuanXing voice ASR: transcribe [VOICE:url] markers to text
         #[cfg(feature = "huanxing")]
