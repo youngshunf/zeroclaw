@@ -51,18 +51,72 @@ max_actions_per_hour = 1000
 max_cost_per_day_cents = 10000
 block_high_risk_commands = true
 auto_approve = [
-    "file_read", "file_write", "file_create",
+    "file_read", "file_write", "file_edit",
     "memory_recall", "memory_store",
     "shell", "process",
     "glob_search", "content_search",
-    "web_search", "web_fetch",
-    "cron_add", "cron_list", "cron_remove", "cron_update",
+    "web_search_tool", "web_fetch",
+    "cron_add", "cron_list", "cron_remove", "cron_update", "cron_run", "cron_runs",
     "hx_lookup_sender", "hx_local_find_user",
     "hx_local_list_users", "hx_local_update_user", "hx_local_stats",
     "hx_invalidate_cache", "hx_register_user",
     "hx_get_user", "hx_check_quota", "hx_usage_stats",
 ]
-non_cli_excluded_tools = []
+non_cli_excluded_tools = [
+    # ═══ 硬件外设（服务器无 GPIO/STM32）═══
+    "hardware_board_info",
+    "hardware_memory_map",
+    "hardware_memory_read",
+
+    # ═══ 第三方集成（未部署）═══
+    "composio",
+    "discord_search",
+    "google_workspace",
+    "jira",
+    "linkedin",
+    "microsoft365",
+    "notion",
+    "pushover",
+
+    # ═══ HASN 社交（admin 不做社交，只做运维）═══
+    "hasn_send",
+    "hasn_contacts",
+    "hasn_add_friend",
+    "hasn_inbox",
+    "hasn_respond_request",
+
+    # ═══ 用户注册流程（Guardian 专用）═══
+    "hx_send_sms",
+    "hx_verify_sms",
+    "hx_local_bind_channel",
+
+    # ═══ 个人文档（用户私有数据，admin 不直接操作）═══
+    "hx_doc_create", "hx_doc_update", "hx_doc_delete", "hx_doc_move", "hx_doc_share",
+    "hx_folder_create", "hx_folder_delete", "hx_folder_move",
+
+    # ═══ 服务器无 GUI ═══
+    "screenshot",
+    "browser",
+    "browser_open",
+    "browser_delegate",
+    "image_gen",
+    "image_info",
+
+    # ═══ 低价值 / 内部测试工具 ═══
+    "reaction",                  # 已由渠道层处理
+    "vi_verify",                 # 内部测试工具
+    "weather",                   # 可用 web_search_tool 替代
+    "canvas",                    # 交互式画布（非 CLI 无意义）
+    "dashscope",                 # 语音合成（admin 无需 TTS）
+    "hx_tts",                    # 同上
+
+    # ═══ 多 Agent 协作（admin 单机运维，无需委托）═══
+    "swarm",
+    "delegate",
+    "sessions_history",
+    "sessions_list",
+    "sessions_send",
+]
 
 # ── 安全 ──────────────────────────────────────────────────────
 [security]

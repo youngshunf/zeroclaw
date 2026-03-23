@@ -128,8 +128,9 @@ allow_loopback = false
 # └─────────────────────────────────────────────────────────────┘
 [reliability]
 provider_retries = 5                         # 单个 provider 最多重试次数
-provider_backoff_ms = 500                     # 重试退避时间
-fallback_providers = []                       # 降级 provider 列表
+provider_backoff_ms = 500                     # 重试退避时间      
+fallback_providers = ["custom:https://llm.dcfuture.cn/v1"]    # 降级 provider 列表
+api_keys = ["sk-xxx"]
 channel_initial_backoff_secs = 2              # 渠道连接初始退避
 channel_max_backoff_secs = 60                 # 渠道连接最大退避
 scheduler_poll_secs = 15
@@ -137,8 +138,9 @@ scheduler_retries = 2
 
 [reliability.model_fallbacks]
 # 模型降级映射，例如:
-"claude-sonnet-4-6" = ["qwen3.5-plus","claude-sonnet-4-5","gpt-5.3-codex","gpt-5.2-codex","gpt-5.2"]
-
+"claude-sonnet-4-6" = ["MiniMax-M2.5","qwen3-coder-next","qwen3.5-plus","claude-sonnet-4-5","gpt-5.3-codex","gpt-5.2-codex","gpt-5.2"]
+"claude-sonnet-4-5" = ["MiniMax-M2.5","qwen3-coder-next","qwen3.5-plus","claude-sonnet-4-6","gpt-5.3-codex","gpt-5.2-codex","gpt-5.2"]
+"qwen3.5-plus" = ["MiniMax-M2.5","qwen3-coder-next","qwen3.5-plus","claude-sonnet-4-5","gpt-5.3-codex","gpt-5.2-codex","gpt-5.2"]
 
 # ┌─────────────────────────────────────────────────────────────┐
 # │                    Agent 核心设置                             │

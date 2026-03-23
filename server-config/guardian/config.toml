@@ -40,7 +40,7 @@ min_relevance_score = 0.4
 
 # ── 自治与安全 ────────────────────────────────────────────────
 [autonomy]
-level = "supervised"
+level = "full"
 workspace_only = true
 allowed_commands = []
 forbidden_paths = [
@@ -60,16 +60,23 @@ auto_approve = [
     "hx_invalidate_cache",
 ]
 non_cli_excluded_tools = [
-    # ── 系统工具 ──
+    # ── 系统工具（Guardian 只做注册，不需要这些）──
     "shell", "process", "git_operations",
-    "browser", "browser_open",
-    "http_request", "web_fetch", "web_search",
-    "schedule", "screenshot", "image_info",
-    "proxy_config", "web_search_config", "web_access_config",
-    "model_routing_config", "channel_ack_config", "quota_tools",
+    "browser", "browser_open", "browser_delegate",
+    "http_request", "web_fetch", "web_search_tool",
+    "schedule", "screenshot", "image_info", "image_gen",
+    "proxy_config", "model_routing_config", "model_switch",
     "composio", "delegate",
     "cron_add", "cron_list", "cron_remove", "cron_update", "cron_run", "cron_runs",
-    "file_write", "file_create",
+    "file_write", "file_edit",
+    "backup", "security_ops", "cloud_ops", "cloud_patterns",
+    "sop_execute", "sop_list", "sop_approve", "sop_advance", "sop_status",
+    "swarm", "data_management",
+    "hardware_board_info", "hardware_memory_map", "hardware_memory_read",
+    "discord_search", "google_workspace", "jira", "linkedin", "microsoft365", "notion",
+    "pushover", "sessions_history", "sessions_list", "sessions_send",
+    "git_operations", "claude_code", "project_intel",
+    "reaction", "vi_verify", "weather",
     # ── 唤星非注册工具（Guardian 只做注册引导）──
     "hx_get_user", "hx_check_quota", "hx_get_subscription", "hx_usage_stats",
     "hx_local_list_users", "hx_local_update_user", "hx_local_stats",
