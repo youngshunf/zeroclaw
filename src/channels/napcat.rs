@@ -176,16 +176,19 @@ pub struct NapcatChannel {
     dedup: Arc<RwLock<HashSet<String>>>,
     /// Directory for caching downloaded images so they survive rkey expiry.
     media_dir: Option<PathBuf>,
+    /// Transcription config for voice ASR (from `[transcription]` in config.toml).
+    transcription: Option<crate::config::TranscriptionConfig>,
 }
 
 impl NapcatChannel {
     pub fn from_config(config: NapcatConfig) -> Result<Self> {
-        Self::from_config_with_workspace(config, None)
+        Self::from_config_with_workspace(config, None, None)
     }
 
     pub fn from_config_with_workspace(
         config: NapcatConfig,
         workspace_dir: Option<&Path>,
+        transcription: Option<crate::config::TranscriptionConfig>,
     ) -> Result<Self> {
         let websocket_url = config.websocket_url.trim().to_string();
         if websocket_url.is_empty() {
@@ -209,6 +212,7 @@ impl NapcatChannel {
             allowed_users: config.allowed_users,
             dedup: Arc::new(RwLock::new(HashSet::new())),
             media_dir,
+            transcription,
         })
     }
 
@@ -340,9 +344,13 @@ impl NapcatChannel {
             }
         };
 
-        // HuanXing voice ASR: transcribe [VOICE:url] markers to text
+        // Voice ASR: transcribe [VOICE:url] markers to text using upstream TranscriptionManager
         #[cfg(feature = "huanxing")]
-        let content = crate::huanxing::voice::transcribe_voice_markers(content).await;
+        let content = if let Some(ref transcription_cfg) = self.transcription {
+            crate::huanxing::voice::transcribe_voice_markers(content, transcription_cfg).await
+        } else {
+            content
+        };
 
         if content.trim().is_empty() {
             return None;

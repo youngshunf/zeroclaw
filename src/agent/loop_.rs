@@ -1228,28 +1228,30 @@ fn parse_perl_style_tool_calls(response: &str) -> Vec<ParsedToolCall> {
     let mut calls = Vec::new();
 
     // Regex to find TOOL_CALL blocks - handle double closing braces }}
+    // Optional brackets [TOOL_CALL] and [/TOOL_CALL] are supported.
     static PERL_RE: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"(?s)TOOL_CALL\s*\{(.+?)\}\}\s*/TOOL_CALL").unwrap());
+        LazyLock::new(|| Regex::new(r"(?s)\[?TOOL_CALL\]?\s*\{(.+?)\}\}\s*\[?/TOOL_CALL\]?").unwrap());
 
-    // Regex to find tool => "name" in the content
+    // Regex to find tool => "name" or tool => 'name'
     static TOOL_NAME_RE: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r#"tool\s*=>\s*"([^"]+)""#).unwrap());
+        LazyLock::new(|| Regex::new(r#"tool\s*=>\s*(?:"([^"]+)"|'([^']+)')"#).unwrap());
 
     // Regex to find args => { ... } block
     static ARGS_BLOCK_RE: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"(?s)args\s*=>\s*\{(.+?)\}").unwrap());
 
-    // Regex to find --key "value" pairs
+    // Regex to find --key "value" or --key 'value' pairs
     static ARGS_RE: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r#"--(\w+)\s+"([^"]+)""#).unwrap());
+        LazyLock::new(|| Regex::new(r#"--(\w+)\s+(?:"([^"]+)"|'([^']+)')"#).unwrap());
 
     for cap in PERL_RE.captures_iter(response) {
         let content = cap.get(1).map(|m| m.as_str()).unwrap_or("");
 
         // Extract tool name
-        let tool_name = TOOL_NAME_RE
-            .captures(content)
-            .and_then(|c| c.get(1))
+        let tool_name_cap = TOOL_NAME_RE.captures(content);
+        let tool_name = tool_name_cap
+            .as_ref()
+            .and_then(|c| c.get(1).or_else(|| c.get(2)))
             .map(|m| m.as_str())
             .unwrap_or("");
 
@@ -1268,7 +1270,7 @@ fn parse_perl_style_tool_calls(response: &str) -> Vec<ParsedToolCall> {
 
         for arg_cap in ARGS_RE.captures_iter(args_block) {
             let key = arg_cap.get(1).map(|m| m.as_str()).unwrap_or("");
-            let value = arg_cap.get(2).map(|m| m.as_str()).unwrap_or("");
+            let value = arg_cap.get(2).or_else(|| arg_cap.get(3)).map(|m| m.as_str()).unwrap_or("");
 
             if !key.is_empty() {
                 arguments.insert(
@@ -1943,17 +1945,9 @@ fn parse_tool_calls(response: &str) -> (String, Vec<ParsedToolCall>) {
             for call in perl_calls {
                 calls.push(call);
                 // Try to remove the TOOL_CALL block from text
-                while let Some(start) = cleaned_text.find("TOOL_CALL") {
-                    if let Some(end) = cleaned_text.find("/TOOL_CALL") {
-                        let end_pos = end + "/TOOL_CALL".len();
-                        if end_pos <= cleaned_text.len() {
-                            cleaned_text =
-                                format!("{}{}", &cleaned_text[..start], &cleaned_text[end_pos..]);
-                        }
-                    } else {
-                        break;
-                    }
-                }
+                static STRIP_RE: LazyLock<Regex> =
+                    LazyLock::new(|| Regex::new(r"(?s)\[?TOOL_CALL\]?.*?\[?/TOOL_CALL\]?").unwrap());
+                cleaned_text = STRIP_RE.replace_all(&cleaned_text, "").to_string();
             }
             if !cleaned_text.trim().is_empty() {
                 text_parts.push(cleaned_text.trim().to_string());

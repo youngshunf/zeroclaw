@@ -13,7 +13,7 @@ pub use schema::{
     ConversationalAiConfig, CostConfig, CronConfig, CronJobDecl, CronScheduleDecl,
     DataRetentionConfig, DeepgramSttConfig, DelegateAgentConfig, DelegateToolConfig, DiscordConfig,
     DockerRuntimeConfig, EdgeTtsConfig, ElevenLabsTtsConfig, EmbeddingRouteConfig, EstopConfig,
-    FeishuConfig, GatewayConfig, GoogleSttConfig, GoogleTtsConfig, GoogleWorkspaceAllowedOperation,
+    FeishuConfig,    GatewayConfig, GenericOpenAiTtsConfig, GoogleSttConfig, GoogleTtsConfig, GoogleWorkspaceAllowedOperation,
     GoogleWorkspaceConfig, HardwareConfig, HardwareTransport, HeartbeatConfig, HooksConfig,
     HttpRequestConfig, IMessageConfig, IdentityConfig, ImageGenConfig, ImageProviderDalleConfig,
     ImageProviderFluxConfig, ImageProviderImagenConfig, ImageProviderStabilityConfig, JiraConfig,

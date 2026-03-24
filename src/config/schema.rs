@@ -10690,6 +10690,7 @@ default_temperature = 0.7
                     ack_reactions: None,
                     proxy_url: None,
                 }),
+                wechat_pad: None,
                 discord: None,
                 discord_history: None,
                 slack: None,
@@ -11675,6 +11676,7 @@ allowed_users = ["@ops:matrix.org"]
         let c = ChannelsConfig {
             cli: true,
             telegram: None,
+            wechat_pad: None,
             discord: None,
             discord_history: None,
             slack: None,
@@ -11997,6 +11999,7 @@ channel_id = "C123"
         let c = ChannelsConfig {
             cli: true,
             telegram: None,
+            wechat_pad: None,
             discord: None,
             discord_history: None,
             slack: None,

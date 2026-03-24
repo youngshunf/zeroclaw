@@ -1,28 +1,26 @@
-//! 百炼 DashScope TTS Provider
+//! 百炼 DashScope TTS Provider (qwen3-tts)
 //!
-//! Uses DashScope Omni models (qwen-omni-turbo, qwen2.5-omni-7b) via streaming
-//! SSE to synthesize speech. Audio data is returned as base64 chunks in
-//! `choices[0].delta.audio.data`.
+//! Uses DashScope's multimodal-generation API to synthesize speech with
+//! qwen3-tts models. Non-streaming mode returns an audio file URL which is
+//! then downloaded; streaming mode returns base64 PCM chunks via SSE.
 //!
 //! Supported models:
-//! - `qwen-omni-turbo` / `qwen-omni-turbo-latest` (recommended, faster)
-//! - `qwen2.5-omni-7b` (higher quality)
+//! - `qwen3-tts-instruct-flash` (instruction-controlled, recommended)
+//! - `qwen3-tts-flash` (standard, faster)
 //!
-//! Supported voices: `Chelsie`, `Ethan`
-//! Supported audio formats: `wav`, `pcm`, `mp3`
+//! Audio output: WAV (non-streaming) / PCM (streaming), 24kHz sample rate.
 //!
 //! This is a huanxing-specific provider — kept in `src/huanxing/` per dev conventions.
 
 use anyhow::{bail, Context, Result};
-use base64::Engine;
 
-/// DashScope TTS provider using Omni models with streaming audio output.
+/// DashScope TTS provider using qwen3-tts models.
 pub struct DashScopeTtsProvider {
     api_key: String,
     model: String,
     base_url: String,
     default_voice: String,
-    audio_format: String,
+    instructions: Option<String>,
     client: reqwest::Client,
 }
 
@@ -33,25 +31,29 @@ pub struct DashScopeTtsConfig {
     #[serde(default)]
     pub api_key: Option<String>,
 
-    /// Model name. Supported: `qwen-omni-turbo`, `qwen-omni-turbo-latest`,
-    /// `qwen2.5-omni-7b`. Default: `"qwen-omni-turbo"`.
+    /// Model name. Default: `"qwen3-tts-instruct-flash"`.
+    ///
+    /// Options: `qwen3-tts-instruct-flash`, `qwen3-tts-flash`.
     #[serde(default = "default_dashscope_tts_model")]
     pub model: String,
 
-    /// Default voice. Options: `Chelsie` (female), `Ethan` (male).
-    /// Default: `"Chelsie"`.
+    /// Default voice. See DashScope docs for available system voices.
+    /// Common options: `Cherry`, `Ethan`, `Ryan`, `Serena`.
+    /// Default: `"Cherry"`.
     #[serde(default = "default_dashscope_tts_voice")]
     pub default_voice: String,
 
-    /// Audio output format. Options: `wav`, `pcm`, `mp3`.
-    /// Default: `"mp3"`.
-    #[serde(default = "default_dashscope_tts_format")]
-    pub audio_format: String,
-
     /// Base URL for DashScope API.
-    /// Default: `"https://dashscope.aliyuncs.com/compatible-mode"`.
+    /// Default: `"https://dashscope.aliyuncs.com"`.
     #[serde(default = "default_dashscope_tts_base_url")]
     pub base_url: String,
+
+    /// Instruction for qwen3-tts-instruct models.
+    /// Controls timbre, emotion, speed, and style via natural language.
+    /// Example: `"用温柔甜美的声音朗读"`.
+    /// Only effective with `qwen3-tts-instruct-*` models.
+    #[serde(default)]
+    pub instructions: Option<String>,
 }
 
 impl Default for DashScopeTtsConfig {
@@ -60,26 +62,22 @@ impl Default for DashScopeTtsConfig {
             api_key: None,
             model: default_dashscope_tts_model(),
             default_voice: default_dashscope_tts_voice(),
-            audio_format: default_dashscope_tts_format(),
             base_url: default_dashscope_tts_base_url(),
+            instructions: None,
         }
     }
 }
 
 fn default_dashscope_tts_model() -> String {
-    "qwen-omni-turbo".into()
+    "qwen3-tts-instruct-flash".into()
 }
 
 fn default_dashscope_tts_voice() -> String {
-    "Chelsie".into()
-}
-
-fn default_dashscope_tts_format() -> String {
-    "mp3".into()
+    "Cherry".into()
 }
 
 fn default_dashscope_tts_base_url() -> String {
-    "https://dashscope.aliyuncs.com/compatible-mode".into()
+    "https://dashscope.aliyuncs.com".into()
 }
 
 impl DashScopeTtsProvider {
@@ -108,7 +106,7 @@ impl DashScopeTtsProvider {
             model: config.model.clone(),
             base_url,
             default_voice: config.default_voice.clone(),
-            audio_format: config.audio_format.clone(),
+            instructions: config.instructions.clone(),
             client: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(120))
                 .build()
@@ -116,13 +114,15 @@ impl DashScopeTtsProvider {
         })
     }
 
-    /// Synthesize text to audio bytes via streaming SSE.
+    /// Synthesize text to audio bytes using qwen3-tts multimodal-generation API.
     ///
-    /// Omni models require `stream: true` with `modalities: ["text", "audio"]`
-    /// to produce audio output. Audio is returned as base64-encoded chunks in
-    /// `choices[0].delta.audio.data`.
-    async fn synthesize_stream(&self, text: &str, voice: &str) -> Result<Vec<u8>> {
-        let url = format!("{}/v1/chat/completions", self.base_url);
+    /// Non-streaming mode: the API returns a JSON response containing an audio
+    /// file URL. We download the audio from that URL.
+    async fn synthesize_nonstream(&self, text: &str, voice: &str) -> Result<Vec<u8>> {
+        let url = format!(
+            "{}/api/v1/services/aigc/multimodal-generation/generation",
+            self.base_url
+        );
 
         let voice = if voice.is_empty() {
             &self.default_voice
@@ -130,30 +130,26 @@ impl DashScopeTtsProvider {
             voice
         };
 
+        let mut input = serde_json::json!({
+            "text": text,
+            "voice": voice,
+        });
+
+        // Add instructions for instruct models
+        if let Some(ref instructions) = self.instructions {
+            if !instructions.is_empty() && self.model.contains("instruct") {
+                input["instructions"] = serde_json::json!(instructions);
+            }
+        }
+
         let body = serde_json::json!({
             "model": self.model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": "你是一个语音朗读助手。请将用户提供的文字内容原样朗读出来，不要添加、删除或修改任何内容。直接朗读文字即可。"
-                },
-                {
-                    "role": "user",
-                    "content": format!("请朗读以下内容：\n\n{text}")
-                }
-            ],
-            "modalities": ["text", "audio"],
-            "audio": {
-                "voice": voice,
-                "format": self.audio_format
-            },
-            "stream": true,
-            "stream_options": {"include_usage": true}
+            "input": input,
         });
 
         tracing::info!(
-            "DashScope TTS: synthesizing with model={}, voice={}, format={}",
-            self.model, voice, self.audio_format
+            "DashScope TTS: synthesizing with model={}, voice={}",
+            self.model, voice
         );
 
         let resp = self
@@ -167,58 +163,67 @@ impl DashScopeTtsProvider {
             .context("Failed to send DashScope TTS request")?;
 
         let status = resp.status();
+        let resp_body: serde_json::Value = resp
+            .json()
+            .await
+            .context("Failed to parse DashScope TTS response")?;
+
         if !status.is_success() {
-            let error_body = resp.text().await.unwrap_or_default();
-            bail!("DashScope TTS API error ({}): {}", status, error_body);
+            let err_msg = resp_body
+                .pointer("/message")
+                .or_else(|| resp_body.pointer("/error/message"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown error");
+            bail!("DashScope TTS API error ({status}): {err_msg}");
         }
 
-        // Parse SSE stream and collect audio chunks
-        let mut audio_chunks: Vec<String> = Vec::new();
-        let full_body = resp.bytes().await.context("Failed to read SSE stream")?;
-        let body_str = String::from_utf8_lossy(&full_body);
+        // Non-streaming response: extract audio URL from output.audio.url
+        let audio_url = resp_body
+            .pointer("/output/audio/url")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .context(
+                "DashScope TTS response missing output.audio.url — \
+                 ensure the model supports non-streaming TTS",
+            )?;
 
-        for line in body_str.lines() {
-            if !line.starts_with("data: ") {
-                continue;
-            }
-            let payload = &line[6..];
-            if payload == "[DONE]" {
-                break;
-            }
+        tracing::info!(
+            "DashScope TTS: got audio URL, downloading (model={}, voice={})",
+            self.model,
+            voice
+        );
 
-            if let Ok(chunk) = serde_json::from_str::<serde_json::Value>(payload) {
-                // Extract audio data from delta.audio.data
-                if let Some(data) = chunk
-                    .pointer("/choices/0/delta/audio/data")
-                    .and_then(|v| v.as_str())
-                    .filter(|s| !s.is_empty())
-                {
-                    audio_chunks.push(data.to_string());
-                }
-            }
-        }
+        // Download the audio file
+        let audio_resp = self
+            .client
+            .get(audio_url)
+            .send()
+            .await
+            .context("Failed to download DashScope TTS audio")?;
 
-        if audio_chunks.is_empty() {
+        if !audio_resp.status().is_success() {
             bail!(
-                "DashScope TTS ({}) returned no audio data. \
-                 Ensure the model supports audio output with modalities=[\"text\",\"audio\"].",
-                self.model
+                "DashScope TTS audio download failed ({}): {}",
+                audio_resp.status(),
+                audio_url
             );
         }
 
-        // Concatenate all base64 chunks and decode
-        let full_b64 = audio_chunks.join("");
-        let audio_bytes = base64::engine::general_purpose::STANDARD
-            .decode(&full_b64)
-            .context("Failed to decode DashScope audio base64 data")?;
+        let audio_bytes = audio_resp
+            .bytes()
+            .await
+            .context("Failed to read DashScope TTS audio bytes")?
+            .to_vec();
+
+        if audio_bytes.is_empty() {
+            bail!("DashScope TTS: downloaded audio is empty");
+        }
 
         tracing::info!(
-            "DashScope TTS: synthesized {} chunks → {} bytes (model={}, voice={}, format={})",
-            audio_chunks.len(),
+            "DashScope TTS: synthesized {} bytes (model={}, voice={})",
             audio_bytes.len(),
             self.model,
-            voice,
-            self.audio_format
+            voice
         );
 
         Ok(audio_bytes)
@@ -232,18 +237,22 @@ impl crate::channels::tts::TtsProvider for DashScopeTtsProvider {
     }
 
     async fn synthesize(&self, text: &str, voice: &str) -> Result<Vec<u8>> {
-        self.synthesize_stream(text, voice).await
+        self.synthesize_nonstream(text, voice).await
     }
 
     fn supported_voices(&self) -> Vec<String> {
-        vec!["Chelsie".to_string(), "Ethan".to_string()]
+        // Common qwen3-tts system voices
+        vec![
+            "Cherry".to_string(),
+            "Ethan".to_string(),
+            "Ryan".to_string(),
+            "Serena".to_string(),
+            "Ava".to_string(),
+        ]
     }
 
     fn supported_formats(&self) -> Vec<String> {
-        vec![
-            "wav".to_string(),
-            "pcm".to_string(),
-            "mp3".to_string(),
-        ]
+        // qwen3-tts outputs WAV (non-streaming) / PCM (streaming)
+        vec!["wav".to_string(), "pcm".to_string()]
     }
 }

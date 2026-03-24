@@ -1307,8 +1307,17 @@ pub fn all_tools_with_runtime(
 
                     // TTS voice tool (1)
                     if root_config.tts.enabled {
+                        let mut tts_config = root_config.tts.clone();
+                        
+                        // 多租户模式下，如果 TTS 未配置独立的 api_key，默认使用用户的 LLM 主 api_key
+                        if let Some(ref mut generic) = tts_config.generic_openai {
+                            if generic.api_key.as_deref().unwrap_or("").trim().is_empty() {
+                                generic.api_key = root_config.api_key.clone();
+                            }
+                        }
+                        
                         tool_arcs.push(Arc::new(crate::huanxing::tools::HxTts::new(
-                            root_config.tts.clone(),
+                            tts_config,
                         )));
                         tracing::info!("HuanXing TTS tool registered (hx_tts)");
                     }

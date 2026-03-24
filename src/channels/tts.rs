@@ -526,6 +526,104 @@ impl TtsProvider for PiperTtsProvider {
     }
 }
 
+// ── Generic OpenAI-compatible TTS ────────────────────────────────
+
+/// Generic OpenAI-compatible TTS provider (`POST /v1/audio/speech`).
+///
+/// Works with any TTS endpoint that implements the OpenAI audio speech API,
+/// such as SiliconFlow, MiniMax, or self-hosted alternatives.
+pub struct GenericOpenAiTtsProvider {
+    api_key: String,
+    api_url: String,
+    model: String,
+    client: reqwest::Client,
+}
+
+impl GenericOpenAiTtsProvider {
+    /// Create a new generic OpenAI-compatible TTS provider.
+    pub fn new(config: &crate::config::GenericOpenAiTtsConfig) -> Result<Self> {
+        let api_key = config
+            .api_key
+            .as_deref()
+            .map(str::trim)
+            .filter(|k| !k.is_empty())
+            .map(ToOwned::to_owned)
+            .or_else(|| {
+                std::env::var("OPENAI_API_KEY")
+                    .ok()
+                    .map(|v| v.trim().to_string())
+                    .filter(|v| !v.is_empty())
+            })
+            .context(
+                "Missing API key for generic_openai TTS: set [tts.generic_openai].api_key or OPENAI_API_KEY env",
+            )?;
+
+        Ok(Self {
+            api_key,
+            api_url: config.api_url.clone(),
+            model: config.model.clone(),
+            client: reqwest::Client::builder()
+                .timeout(TTS_HTTP_TIMEOUT)
+                .build()
+                .context("Failed to build HTTP client for generic OpenAI TTS")?,
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl TtsProvider for GenericOpenAiTtsProvider {
+    fn name(&self) -> &str {
+        "generic_openai"
+    }
+
+    async fn synthesize(&self, text: &str, voice: &str) -> Result<Vec<u8>> {
+        let body = serde_json::json!({
+            "model": self.model,
+            "input": text,
+            "voice": voice,
+        });
+
+        let resp = self
+            .client
+            .post(&self.api_url)
+            .bearer_auth(&self.api_key)
+            .json(&body)
+            .send()
+            .await
+            .context("Failed to send generic OpenAI TTS request")?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let error_body: serde_json::Value = resp
+                .json()
+                .await
+                .unwrap_or_else(|_| serde_json::json!({"error": "unknown"}));
+            let msg = error_body["error"]["message"]
+                .as_str()
+                .unwrap_or("unknown error");
+            bail!("Generic OpenAI TTS API error ({}): {}", status, msg);
+        }
+
+        let bytes = resp
+            .bytes()
+            .await
+            .context("Failed to read generic OpenAI TTS response body")?;
+        Ok(bytes.to_vec())
+    }
+
+    fn supported_voices(&self) -> Vec<String> {
+        // Voices are provider-specific; return empty (dynamic lookup).
+        Vec::new()
+    }
+
+    fn supported_formats(&self) -> Vec<String> {
+        ["mp3", "opus", "aac", "flac", "wav", "pcm"]
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect()
+    }
+}
+
 // ── TtsManager ───────────────────────────────────────────────────
 
 /// Central manager for multi-provider TTS synthesis.
@@ -601,6 +699,18 @@ impl TtsManager {
         if let Some(ref piper_cfg) = config.piper {
             let provider = PiperTtsProvider::new(&piper_cfg.api_url);
             providers.insert("piper".to_string(), Box::new(provider));
+        }
+
+        // Generic OpenAI-compatible TTS provider
+        if let Some(ref generic_cfg) = config.generic_openai {
+            match GenericOpenAiTtsProvider::new(generic_cfg) {
+                Ok(p) => {
+                    providers.insert("generic_openai".to_string(), Box::new(p));
+                }
+                Err(e) => {
+                    tracing::warn!("Skipping generic OpenAI TTS provider: {e}");
+                }
+            }
         }
 
         let max_text_length = if config.max_text_length == 0 {

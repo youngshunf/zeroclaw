@@ -115,8 +115,13 @@ pub async fn asr_via_dashscope(audio_url: &str) -> Result<String> {
 /// Scan message content for `[VOICE:url]` markers and attempt ASR transcription.
 ///
 /// If a `[VOICE:url]` marker is found, downloads the audio and transcribes it
-/// using DashScope. The marker is replaced with the transcribed text prefixed by 🎤.
-pub async fn transcribe_voice_markers(content: String) -> String {
+/// using the upstream `TranscriptionManager` (configured via `[transcription]`
+/// in config.toml). The marker is replaced with the transcribed text prefixed
+/// by 🎤.
+pub async fn transcribe_voice_markers(
+    content: String,
+    transcription_config: &crate::config::TranscriptionConfig,
+) -> String {
     let Some(start) = content.find("[VOICE:") else {
         return content;
     };
@@ -130,7 +135,7 @@ pub async fn transcribe_voice_markers(content: String) -> String {
 
     tracing::info!("ASR: attempting to transcribe voice from {voice_url}");
 
-    match asr_via_dashscope(voice_url).await {
+    match transcribe_voice_url(voice_url, transcription_config).await {
         Ok(text) if !text.is_empty() => {
             tracing::info!("ASR: transcribed text: {text}");
             let before = &content[..start];
@@ -146,6 +151,45 @@ pub async fn transcribe_voice_markers(content: String) -> String {
             content
         }
     }
+}
+
+/// Download audio from a URL and transcribe using the upstream TranscriptionManager.
+///
+/// Uses the provided `TranscriptionConfig` (typically GroqProvider pointing at
+/// DashScope qwen3-asr-flash OpenAI-compatible endpoint).
+async fn transcribe_voice_url(
+    audio_url: &str,
+    config: &crate::config::TranscriptionConfig,
+) -> Result<String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()?;
+
+    let audio_bytes = client
+        .get(audio_url)
+        .send()
+        .await
+        .context("Failed to download voice audio")?
+        .bytes()
+        .await
+        .context("Failed to read voice audio bytes")?;
+
+    if audio_bytes.is_empty() {
+        anyhow::bail!("Downloaded audio is empty");
+    }
+
+    tracing::info!("ASR: downloaded {} bytes of audio", audio_bytes.len());
+
+    // Derive filename from URL for MIME type detection
+    let file_name = audio_url
+        .split('?')
+        .next()
+        .and_then(|path| path.rsplit('/').next())
+        .unwrap_or("voice.ogg")
+        .to_string();
+
+    crate::channels::transcription::transcribe_audio(audio_bytes.to_vec(), &file_name, config)
+        .await
 }
 
 // ── NapCat Voice Helpers ──────────────────────────────────────────

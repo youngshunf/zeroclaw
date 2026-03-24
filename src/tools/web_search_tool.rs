@@ -1223,7 +1223,6 @@ mod tests {
             "firecrawl".to_string(),
             None,
             None,
-            None,
             5,
             15,
             "test".to_string(),
@@ -1295,6 +1294,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             5,
             15,
             "test".to_string(),
@@ -1323,6 +1323,7 @@ mod tests {
         let tool = WebSearchTool::new_with_options(
             test_security(),
             "duckduckgo".to_string(),
+            None,
             None,
             None,
             None,

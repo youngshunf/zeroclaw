@@ -1,7 +1,6 @@
 use crate::security::policy::ToolOperation;
 use crate::security::SecurityPolicy;
 use crate::tools::traits::{Tool, ToolResult};
-use anyhow::Context;
 use async_trait::async_trait;
 use serde_json::json;
 use std::path::PathBuf;
@@ -168,7 +167,7 @@ impl HxImageGenTool {
                         }
                         
                         match img_resp.bytes().await {
-                            Ok(b) => b,
+                            Ok(b) => b.to_vec(),
                             Err(e) => {
                                 let err_msg = format!("Failed to read image bytes (model {}): {}", model, e);
                                 tracing::warn!("hx_image_gen failed: {}", err_msg);
@@ -179,7 +178,7 @@ impl HxImageGenTool {
                     } else if let Some(b64) = b64_json {
                         use base64::{engine::general_purpose, Engine as _};
                         match general_purpose::STANDARD.decode(b64) {
-                            Ok(decoded) => bytes::Bytes::from(decoded),
+                            Ok(decoded) => decoded,
                             Err(e) => {
                                 let err_msg = format!("Failed to decode base64 image (model {}): {}", model, e);
                                 tracing::warn!("hx_image_gen failed: {}", err_msg);

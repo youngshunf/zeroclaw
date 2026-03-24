@@ -144,14 +144,11 @@ non_cli_excluded_tools = [
     # ═══ 低价值 / 内部工具 ═══
     "reaction",             # 消息表情回应（渠道层已处理）
     "vi_verify",            # Verifiable Intent 验证（内部测试）
-    "weather",              # 天气（web_search_tool 可替代）
     "text_browser",         # 文本浏览器（lynx/w3m，服务器未必有）
     "calculator",           # 简单计算（LLM 直接计算即可）
     "schedule",             # Shell 任务调度（cron 系列已覆盖）
     "workspace",            # 工作区切换（多租户下由系统管理）
-    "dashscope",            # 百炼 TTS（hx_tts 替代）
-    "hx_tts",               # 语音合成（非 CLI 无 TTS 渲染）
-
+  
     # ═══ MCP 相关（mcp 功能未启用）═══
     "tool_search",          # MCP deferred tools 加载（mcp 未启用时无意义）
 ]
@@ -210,7 +207,7 @@ scheduler_retries = 2
 "claude-sonnet-4-6" = ["MiniMax-M2.7","qwen3-coder-next","qwen3.5-plus","claude-sonnet-4-5","gpt-5.3-codex","gpt-5.2-codex","gpt-5.2"]
 "claude-sonnet-4-5" = ["MiniMax-M2.7","qwen3.5-plus","qwen3-coder-next","claude-sonnet-4-6","gpt-5.3-codex","gpt-5.2-codex","gpt-5.2"]
 "qwen3.5-plus" = ["MiniMax-M2.7","qwen3-coder-next","qwen3.5-plus","claude-sonnet-4-5","gpt-5.3-codex","gpt-5.2-codex","gpt-5.2"]
-
+"MiniMax-M2.7" = ["MiniMax-M2.5","qwen3.5-plus","qwen3-coder-next","claude-sonnet-4-5","gpt-5.3-codex","gpt-5.2-codex","gpt-5.2"]
 # ┌─────────────────────────────────────────────────────────────┐
 # │                    Agent 核心设置                             │
 # └─────────────────────────────────────────────────────────────┘
@@ -218,7 +215,7 @@ scheduler_retries = 2
 compact_context = true                        # 上下文过长时自动压缩
 max_tool_iterations = 15                      # 单次对话最多工具调用轮次
 max_history_messages = 100                    # 历史消息保留条数
-max_context_tokens = 32000                    # 最大上下文 token 数
+max_context_tokens = 200000                    # 最大上下文 token 数
 parallel_tools = false                        # 并行工具调用（实验性）
 
 [scheduler]
@@ -236,7 +233,8 @@ allow_scripts = true                          # 允许技能运行脚本
 prompt_injection_mode = "compact"             # compact = 压缩注入技能 prompt
 
 [skills.skill_creation]
-enabled = false                               # 用户自建技能
+enabled = true                               # 用户自建技能
+max_skills = 100 
 
 
 # ┌─────────────────────────────────────────────────────────────┐
@@ -384,6 +382,7 @@ default_format = "wav"
 api_url = "https://llm.dcfuture.cn/v1/audio/speech"
 api_key = ""                                     # 租户模板中由用户 api_key 填充
 model = "qwen3-tts-instruct-flash"
+default_voice = "Kai"
 
 
 # ┌─────────────────────────────────────────────────────────────┐
@@ -471,14 +470,6 @@ default_template = "finance"                  # 新注册时默认模板
 default_model = "claude-sonnet-4-5"                # 租户默认模型
 default_provider = "anthropic-custom:https://llm.dcfuture.cn"  # 租户默认 provider
 
-# ── Guardian 专用工具（租户不可见）──
-guardian_only_tools = [
-    "hx_register_user",
-    "hx_invalidate_cache",
-    "hx_local_update_user",
-    "hx_local_list_users",
-    "hx_local_stats",
-]
 
 # ── 唤星后端 API ──
 api_base_url = "https://api.huanxing.dcfuture.cn"
@@ -492,7 +483,7 @@ server_id = "huanxing-local-dev"              # 服务器部署时改为 "huanxi
 
 # ── Hub 自动同步（从 Gitee 拉取最新技能和模板）──
 [huanxing.hub_sync]
-gitee_repo = "huanxing-team/huanxing-hub"
+gitee_repo = "git@gitee.com:youngshunf/huanxing-agent-hub.git"
 gitee_branch = "main"
 auto_sync_on_startup = true                   # 启动时自动同步
 sync_interval_hours = 24                      # 每24小时同步一次
