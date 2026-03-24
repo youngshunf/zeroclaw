@@ -12,6 +12,9 @@
 
 set -euo pipefail
 
+# 确保能找到 Homebrew 里的交叉编译工具链 (x86_64-linux-musl-gcc)
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+
 # ── 配置 ──────────────────────────────────────────────────────
 SERVER_HOST="huanxing-server"              # SSH config 中的别名
 SERVER_IP="115.191.47.200"

@@ -426,8 +426,11 @@ pub async fn auto_synthesize_voice_markers(
                 if marker.starts_with('/')
                     || marker.starts_with("http")
                     || marker.starts_with("file:")
+                    || marker.starts_with("localfile:")
                 {
-                    result.push_str(line);
+                    // Normalize the marker, removing localfile: so it's a standard path
+                    let marker_normalized = marker.strip_prefix("localfile:").unwrap_or(marker);
+                    result.push_str(&line.replace(marker, marker_normalized));
                     result.push('\n');
                     continue;
                 }

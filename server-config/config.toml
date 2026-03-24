@@ -270,6 +270,13 @@ app_secret = "tjX2bliFmFB5wsJd9jiL1gDOuDT0Llha"
 allowed_users = ["*"]                         # * = 允许所有用户
 receive_mode = "websocket"                    # websocket = 长连接（推荐）
 
+# ── QQ 官方机器人 ──
+[channels_config.qq]
+app_id = "102858867"
+# app_secret 使用 enc2 加密（服务器部署时可替换明文或加密值）
+app_secret = "Y9kMybEsWBqWCtaI0jTDyjVH4rfTI7xn"
+allowed_users = ["*"]                         # * = 允许所有用户
+
 # ── NapCat（QQ 机器人）──
 [channels_config.napcat]
 websocket_url = "ws://127.0.0.1:3001"         # NapCat WebSocket 地址

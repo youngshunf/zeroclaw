@@ -921,7 +921,7 @@ impl QQChannel {
 #[async_trait]
 impl Channel for QQChannel {
     fn name(&self) -> &str {
-        "qq"
+        "qqbot"
     }
 
     async fn send(&self, message: &SendMessage) -> anyhow::Result<()> {
@@ -1132,7 +1132,7 @@ impl Channel for QQChannel {
                                 sender: user_openid.to_string(),
                                 reply_target: chat_id,
                                 content,
-                                channel: "qq".to_string(),
+                                channel: "qqbot".to_string(),
                                 timestamp: std::time::SystemTime::now()
                                     .duration_since(std::time::UNIX_EPOCH)
                                     .unwrap_or_default()
@@ -1171,7 +1171,7 @@ impl Channel for QQChannel {
                                 sender: author_id.to_string(),
                                 reply_target: chat_id,
                                 content,
-                                channel: "qq".to_string(),
+                                channel: "qqbot".to_string(),
                                 timestamp: std::time::SystemTime::now()
                                     .duration_since(std::time::UNIX_EPOCH)
                                     .unwrap_or_default()
@@ -1211,7 +1211,7 @@ mod tests {
     #[test]
     fn test_name() {
         let ch = make_channel();
-        assert_eq!(ch.name(), "qq");
+        assert_eq!(ch.name(), "qqbot");
     }
 
     #[test]

@@ -263,13 +263,24 @@ impl TenantRouter {
         tokio::spawn(async move {
             // ── Step 1: Register server ──────────────────────────────
             let stats = db.get_stats().await.unwrap_or_default();
+            let sys = collect_system_metrics();
             let mut payload = serde_json::json!({
                 "server_id": server_id,
                 "server_name": server_id,
                 "gateway_status": "running",
                 "user_count": stats.total_users,
                 "active_user_count": stats.active_users,
+                "cpu_usage": sys.cpu_usage,
+                "memory_usage": sys.memory_usage,
+                "total_memory_gb": sys.total_memory_gb,
+                "zeroclaw_version": env!("CARGO_PKG_VERSION"),
             });
+            if let Some(disk) = sys.disk_usage {
+                payload["disk_usage"] = serde_json::json!(disk);
+            }
+            if let Some(disk_gb) = sys.total_disk_gb {
+                payload["total_disk_gb"] = serde_json::json!(disk_gb);
+            }
             if let Some(ref ip) = server_ip {
                 payload["ip_address"] = serde_json::Value::String(ip.clone());
             }
@@ -296,9 +307,14 @@ impl TenantRouter {
                     "active_user_count": stats.active_users,
                     "cpu_usage": sys.cpu_usage,
                     "memory_usage": sys.memory_usage,
+                    "total_memory_gb": sys.total_memory_gb,
+                    "zeroclaw_version": env!("CARGO_PKG_VERSION"),
                 });
                 if let Some(disk) = sys.disk_usage {
                     hb["disk_usage"] = serde_json::json!(disk);
+                }
+                if let Some(disk_gb) = sys.total_disk_gb {
+                    hb["total_disk_gb"] = serde_json::json!(disk_gb);
                 }
 
                 let path = format!("/api/v1/huanxing/agent/servers/{}/heartbeat", server_id);
@@ -328,7 +344,9 @@ impl TenantRouter {
 struct SystemMetrics {
     cpu_usage: f64,
     memory_usage: f64,
+    total_memory_gb: f64,
     disk_usage: Option<f64>,
+    total_disk_gb: Option<f64>,
 }
 
 fn collect_system_metrics() -> SystemMetrics {
@@ -356,7 +374,7 @@ fn collect_system_metrics() -> SystemMetrics {
     };
 
     // Memory: parse /proc/meminfo (Linux only)
-    let memory_usage = {
+    let (memory_usage, total_memory_gb) = {
         #[cfg(target_os = "linux")]
         {
             if let Ok(content) = std::fs::read_to_string("/proc/meminfo") {
@@ -377,24 +395,68 @@ fn collect_system_metrics() -> SystemMetrics {
                             .unwrap_or(0);
                     }
                 }
-                if total > 0 {
+                let usage = if total > 0 {
                     ((total - available) as f64 / total as f64 * 100.0 * 100.0).round() / 100.0
                 } else {
                     0.0
-                }
+                };
+                let total_gb = (total as f64 / (1024.0 * 1024.0) * 100.0).round() / 100.0;
+                (usage, total_gb)
             } else {
-                0.0
+                (0.0, 0.0)
             }
         }
         #[cfg(not(target_os = "linux"))]
         {
-            0.0
+            (0.0, 0.0)
+        }
+    };
+
+    // Disk: run `df -k /`
+    let (disk_usage, total_disk_gb) = {
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            if let Ok(output) = std::process::Command::new("df").arg("-k").arg("/").output() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let mut lines = stdout.lines();
+                let _header = lines.next();
+                if let Some(data) = lines.next() {
+                    let parts: Vec<&str> = data.split_whitespace().collect();
+                    if parts.len() >= 4 {
+                        let tz_block = if cfg!(target_os = "macos") { parts[1] } else { parts[1] };
+                        let used_block = if cfg!(target_os = "macos") { parts[2] } else { parts[2] };
+                        if let (Ok(total_k), Ok(used_k)) = (tz_block.parse::<f64>(), used_block.parse::<f64>()) {
+                            if total_k > 0.0 {
+                                let usage = (used_k / total_k * 100.0 * 100.0).round() / 100.0;
+                                let total_gb = (total_k / (1024.0 * 1024.0) * 100.0).round() / 100.0;
+                                (Some(usage), Some(total_gb))
+                            } else {
+                                (None, None)
+                            }
+                        } else {
+                            (None, None)
+                        }
+                    } else {
+                        (None, None)
+                    }
+                } else {
+                    (None, None)
+                }
+            } else {
+                (None, None)
+            }
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        {
+            (None, None)
         }
     };
 
     SystemMetrics {
         cpu_usage,
         memory_usage,
-        disk_usage: None,
+        total_memory_gb,
+        disk_usage,
+        total_disk_gb,
     }
 }

@@ -712,7 +712,7 @@ fn channel_delivery_instructions(channel_name: &str) -> Option<&'static str> {
              - Keep normal text outside markers and never wrap markers in code fences.\n\
              - Use tool results silently: answer the latest user message directly, and do not narrate delayed/internal tool execution bookkeeping.",
         ),
-        "qq" => Some(
+        "qqbot" => Some(
             "When responding on QQ:\n\
              - Use Markdown formatting\n\
              - Be concise and direct\n\

@@ -18,7 +18,7 @@
 
 ### hx_lookup_sender
 - 每次收到新消息都先调用，判断用户是否已注册
-- 参数：`channel_type`（napcat/lark/qq）、`sender_id`（发送者ID）
+- 参数：`channel_type`（napcat/lark/qqbot）、`sender_id`（发送者ID）
 
 ### hx_register_user
 - 注册前**必须**先通过 `hx_verify_sms` 验证手机号
@@ -29,7 +29,7 @@
 ### channel_type 判断
 - NapCat/QQ消息 → `napcat`
 - 飞书消息 → `lark`
-- QQ官方机器人 → `qq`
+- QQ官方机器人 → `qqbot`
 
 ## 禁止使用的工具
 

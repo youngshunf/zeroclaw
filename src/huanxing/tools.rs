@@ -21,7 +21,8 @@ use std::sync::Arc;
 /// Normalize channel type aliases.
 fn normalize_channel(raw: &str) -> &str {
     match raw {
-        "qq" | "onebot" => "napcat",
+        "onebot" => "napcat",
+        "qq" => "qqbot",
         "feishu" => "lark",
         other => other,
     }

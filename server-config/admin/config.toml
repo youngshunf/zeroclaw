@@ -4,7 +4,7 @@
 # ═══════════════════════════════════════════════════════════════
 
 default_provider = "custom:https://llm.dcfuture.cn/v1"
-default_model = "claude-sonnet-4-5"
+default_model = "MiniMax-M2.7"
 default_temperature = 0.7
 api_key = "sk-CBUn2XGX9ZGbPBbq8oXpSTKLcBmKmsKGrmfW5I6bHBHGAHkC"
 
