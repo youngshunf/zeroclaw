@@ -26,7 +26,6 @@ LOCAL_DIR="$(cd "$(dirname "$0")" && pwd)"
 TARGET="x86_64-unknown-linux-musl"
 BINARY="$LOCAL_DIR/target/${TARGET}/release/zeroclaw"
 CONFIG_DIR="$LOCAL_DIR/server-config"
-SERVER_CONFIG="$CONFIG_DIR/115.191.47.200"
 
 # ── 颜色 ──────────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -43,8 +42,8 @@ err()  { echo -e "${RED}❌ $*${NC}"; exit 1; }
 # ── 函数 ──────────────────────────────────────────────────────
 
 do_build() {
-    log "交叉编译 zeroclaw (target: ${TARGET}, features: huanxing)..."
-    cargo build --release --target "$TARGET" --features huanxing
+    log "交叉编译 zeroclaw (target: ${TARGET}, features: huanxing,channel-lark)..."
+    cargo build --release --target "$TARGET" --features huanxing,channel-lark
     local size
     size=$(ls -lh "$BINARY" | awk '{print $5}')
     ok "编译完成: $BINARY ($size)"
@@ -95,17 +94,45 @@ do_deploy_binary() {
 do_sync_config() {
     log "同步配置文件..."
 
-    # 同步 config.toml（仅当本地版本较新时）
-    if [ -f "$SERVER_CONFIG/config.toml" ]; then
-        log "  同步 config.toml..."
-        scp "$SERVER_CONFIG/config.toml" "${SERVER_HOST}:${REMOTE_CONFIG}/config.toml"
-        ok "  config.toml 已更新"
+    # ── 本地路径 → 远程路径映射 ──
+    # 部署时自动将本地开发路径替换为服务器路径
+    LOCAL_PROJECT_ROOT="/Users/mac/openclaw-workspace/huanxing/huanxing-project"
+    REMOTE_ZEROCLAW_CONFIG="/opt/huanxing/config"
+    REMOTE_HUB="/opt/huanxing/hub"
+
+    # 同步 config.toml（替换路径后上传）
+    if [ -f "$CONFIG_DIR/config.toml" ]; then
+        log "  处理 config.toml（替换本地路径 → 远程路径）..."
+        local tmp_config
+        tmp_config=$(mktemp /tmp/zeroclaw-config.XXXXXX.toml)
+
+        # 复制并替换路径，同时替换 server_id 为 115 服务器的环境标识
+        sed \
+            -e "s|${LOCAL_PROJECT_ROOT}/huanxing-zeroclaw/server-config|${REMOTE_ZEROCLAW_CONFIG}|g" \
+            -e "s|${LOCAL_PROJECT_ROOT}/huanxing-hub/templates|${REMOTE_HUB}/templates|g" \
+            -e "s|${LOCAL_PROJECT_ROOT}/huanxing-hub|${REMOTE_HUB}|g" \
+            -e 's|server_id = "[^"]*"|server_id = "huanxing-115-test"|g' \
+            "$CONFIG_DIR/config.toml" > "$tmp_config"
+
+        # 验证替换结果（不应残留本地路径）
+        if grep -q "/Users/mac" "$tmp_config"; then
+            warn "  config.toml 中仍有未替换的本地路径:"
+            grep "/Users/mac" "$tmp_config" | head -5
+            echo ""
+            read -p "  是否继续上传？(y/N) " -n 1 -r
+            echo ""
+            [[ $REPLY =~ ^[Yy]$ ]] || { rm -f "$tmp_config"; err "已取消"; }
+        fi
+
+        scp "$tmp_config" "${SERVER_HOST}:${REMOTE_CONFIG}/config.toml"
+        rm -f "$tmp_config"
+        ok "  config.toml 已更新（路径已替换为远程路径）"
     fi
 
     # 同步 .env
-    if [ -f "$SERVER_CONFIG/.env" ]; then
+    if [ -f "$CONFIG_DIR/.env" ]; then
         log "  同步 .env..."
-        scp "$SERVER_CONFIG/.env" "${SERVER_HOST}:${REMOTE_CONFIG}/.env"
+        scp "$CONFIG_DIR/.env" "${SERVER_HOST}:${REMOTE_CONFIG}/.env"
         ok "  .env 已更新"
     fi
 

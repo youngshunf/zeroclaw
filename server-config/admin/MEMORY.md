@@ -1,14 +1,18 @@
-# MEMORY.md — Admin Agent 记忆索引
+# MEMORY.md — Admin 管家长期记忆
 
-每次会话开始，读取这个文件了解历史上下文。
+> 每次会话开始时加载。记录重大运营事件、系统洞察和关键决策。
+> 日常数据用 `memory_store` 存储，仅将精华内容沉淀到这里。
 
-## 运维日志格式
-- 按日期记录在 `memory/YYYY-MM-DD.md`
-- 包含：系统状态、用户操作、异常事件
+## 系统信息
 
-## 关键数据位置
-- 用户数据库：`../../data/users.db`
-- Guardian 工作区：`../../guardian/`
-- 用户 Agent 工作区：`../../agents/`
-- 系统日志：`/tmp/zeroclaw-local.log`
-- 全局配置：`../../config.toml`
+- ZeroClaw 服务：systemd `huanxing.service`
+- 系统日志：`journalctl -u huanxing`
+- 用户数据库：工作区 `data/users.db`
+
+## 运营洞察
+
+（心跳任务会自动将重要洞察更新到这里）
+
+## 重大事件
+
+（系统故障、重要变更等记录在这里）

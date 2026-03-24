@@ -53,7 +53,7 @@ fn derive_api_base_from_websocket(websocket_url: &str) -> Option<String> {
     Some(url.to_string().trim_end_matches('/').to_string())
 }
 
-fn compose_onebot_content(content: &str, reply_message_id: Option<&str>) -> String {
+async fn compose_onebot_content(content: &str, reply_message_id: Option<&str>) -> String {
     let mut parts = Vec::new();
     if let Some(reply_id) = reply_message_id {
         let trimmed = reply_id.trim();
@@ -62,23 +62,62 @@ fn compose_onebot_content(content: &str, reply_message_id: Option<&str>) -> Stri
         }
     }
 
+    use base64::{engine::general_purpose, Engine as _};
+
     for line in content.lines() {
         let trimmed = line.trim();
-        if let Some(marker) = trimmed
-            .strip_prefix("[IMAGE:")
-            .and_then(|v| v.strip_suffix(']'))
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-        {
-            parts.push(format!("[CQ:image,file={marker}]"));
+
+        // 1. Try to parse Markdown image e.g. `![alt](/path/to/img.png)`
+        let mut image_path_opt = None;
+        if trimmed.starts_with("![") {
+            if let Some(close_bracket) = trimmed.find("](") {
+                let path_start = close_bracket + 2;
+                if trimmed.ends_with(')') {
+                    image_path_opt = Some(&trimmed[path_start..trimmed.len() - 1]);
+                }
+            }
+        }
+
+        // 2. Try to parse [IMAGE:...]
+        let marker = if let Some(path) = image_path_opt {
+            Some(path.trim())
+        } else if let Some(path) = trimmed.strip_prefix("[IMAGE:").and_then(|v| v.strip_suffix(']')) {
+            Some(path.trim())
+        } else {
+            None
+        };
+
+        if let Some(path) = marker {
+            if !path.is_empty() {
+                // If the path is local, encode as base64 so Napcat (if inside Docker) can read it
+                if path.starts_with('/') || path.starts_with("file://") || std::path::Path::new(path).exists() {
+                    let clean_path = path.strip_prefix("file://").unwrap_or(path);
+                    if let Ok(bytes) = tokio::fs::read(clean_path).await {
+                        let b64 = general_purpose::STANDARD.encode(&bytes);
+                        parts.push(format!("[CQ:image,file=base64://{}]", b64));
+                        continue;
+                    }
+                }
+                parts.push(format!("[CQ:image,file={path}]"));
+            }
             continue;
         }
-        // HuanXing voice support: convert [VOICE:marker] to [CQ:record]
+
+        // 3. Try HuanXing voice support
         #[cfg(feature = "huanxing")]
-        if let Some(cq) = crate::huanxing::voice::compose_napcat_voice_segment(trimmed) {
-            parts.push(cq);
+        if let Some(voice_path) = trimmed.strip_prefix("[VOICE:").and_then(|v| v.strip_suffix(']')).map(str::trim) {
+            if !voice_path.is_empty() {
+                let clean_path = voice_path.strip_prefix("file://").unwrap_or(voice_path);
+                if let Ok(bytes) = tokio::fs::read(clean_path).await {
+                    let b64 = general_purpose::STANDARD.encode(&bytes);
+                    parts.push(format!("[CQ:record,file=base64://{}]", b64));
+                } else if let Some(cq) = crate::huanxing::voice::compose_napcat_voice_segment(trimmed) {
+                    parts.push(cq);
+                }
+            }
             continue;
         }
+
         parts.push(line.to_string());
     }
 
@@ -427,7 +466,7 @@ impl Channel for NapcatChannel {
     }
 
     async fn send(&self, message: &SendMessage) -> Result<()> {
-        let payload = compose_onebot_content(&message.content, message.thread_ts.as_deref());
+        let payload = compose_onebot_content(&message.content, message.thread_ts.as_deref()).await;
         if payload.trim().is_empty() {
             return Ok(());
         }
@@ -500,10 +539,10 @@ mod tests {
         assert_eq!(base, "http://127.0.0.1:3001");
     }
 
-    #[test]
-    fn compose_onebot_content_includes_reply_and_image_markers() {
+    #[tokio::test]
+    async fn compose_onebot_content_includes_reply_and_image_markers() {
         let content = "hello\n[IMAGE:https://example.com/cat.png]";
-        let parsed = compose_onebot_content(content, Some("123"));
+        let parsed = compose_onebot_content(content, Some("123")).await;
         assert!(parsed.contains("[CQ:reply,id=123]"));
         assert!(parsed.contains("[CQ:image,file=https://example.com/cat.png]"));
         assert!(parsed.contains("hello"));

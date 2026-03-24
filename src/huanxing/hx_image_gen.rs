@@ -297,11 +297,16 @@ impl HxImageGenTool {
                      File: {}\n\
                      Size: {} KB\n\
                      Model: {}\n\
-                     Prompt: {}",
+                     Prompt: {}\n\n\
+                     VERY IMPORTANT: To display this image to the user, you MUST reply with exactly:\n\
+                     ![{}]({})\n\
+                     Do NOT use a relative path. You MUST use the exact absolute path shown above.",
                     output_path.display(),
                     size_kb,
                     model,
                     prompt,
+                    safe_name,
+                    output_path.display(),
                 ),
                 error: None,
             });

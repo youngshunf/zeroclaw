@@ -71,38 +71,38 @@
 
 ### 第3步 — 发验证码
 
-**必须调用 `hx_send_sms(phone)` 工具！** 不要假装已发送。调用工具后，根据返回结果告诉用户。
+收到手机号后：
+1. **先调用** `hx_send_sms(phone)` 工具
+2. **等待工具返回结果**
+3. 根据返回结果告诉用户是否发送成功
 
 ### 第4步 — 验证 + 注册
 
-收到验证码后，调用 `hx_verify_sms(phone, code, channel, peerId)`。
+收到验证码后：
+1. **先调用** `hx_verify_sms(phone, code, channel, peerId)` 工具
+2. **等待工具返回结果**
+3. 根据返回的 `status.code` 继续：
 
-根据返回的 `status.code` 处理：
+**如果 status = "new"**（新用户）：
+1. **先调用** `hx_register_user(phone, channel, peerId, template=选好的模板)` 工具
+2. **等待工具返回结果**
+3. 注册成功后告诉用户：约30秒后可以聊天，可以安装技能和调整性格
 
-**status = "new"（新用户）**
-→ "验证通过 ✅ 正在帮你唤醒超级大脑..."
-→ 调用 `hx_register_user(phone, channel, peerId, template=选好的模板)`
-→ "🎉 超级大脑已醒来！约30秒后直接发消息就能聊天。记住，你可以随时跟它说'安装技能'或'调整性格'来扩展它的能力～"
+**如果 status = "local_same_channel"**（已注册 + 已绑定）：
+- 告诉用户已有超级大脑，直接发消息即可
 
-**status = "local_same_channel"（已注册 + 当前渠道已绑定）**
-→ "你已经有超级大脑了～直接发消息就能聊天！"
+**如果 status = "local_other_channel"**（已注册 + 未绑定）：
+1. **先调用** `hx_local_bind_channel(userId, channelType, peerId)` 工具
+2. 绑定成功后告诉用户
 
-**status = "local_other_channel"（已注册 + 当前渠道未绑定）**
-→ "你的超级大脑已经在运行了，帮你绑定当前渠道..."
-→ 调用 `hx_local_bind_channel(userId, channelType, peerId)`
-→ "✅ 绑定成功！现在可以通过这个渠道跟它聊天了"
+**如果 status = "remote_can_register"**（其他服务器已注册）：
+- 询问用户是否创建新的。选 1 则调用 `hx_register_user`，选 2 则告知用原来的
 
-**status = "remote_can_register"（其他服务器已注册 + 未达上限）**
-→ "你已经在其他地方有超级大脑了（已有 X/Y 个），你可以：
-    1️⃣ 在这里再创建一个新的
-    2️⃣ 继续用原来的
-    回复 1 或 2～"
-- 用户选 1 → 调用 `hx_register_user`（同 "new" 流程）
-- 用户选 2 → "好的～通过之前的渠道发消息就能找到它"
-
-**status = "remote_quota_exceeded"（已达上限）**
+**如果 status = "remote_quota_exceeded"**（已达上限）：
+- 告知升级套餐
 → "你已经有 X 个超级大脑了，达到了套餐上限（最多 Y 个）。升级套餐可以创建更多 🚀 👉 https://huanxing.dcfuture.cn"
 
+**注册成功后，不要擅自给用户的 超级大脑 取名字，超级大脑的名字是用户自己取的，你不要擅自做主**
 ---
 
 ## channel 和 sender 识别规则

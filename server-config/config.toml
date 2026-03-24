@@ -19,10 +19,10 @@
 # └─────────────────────────────────────────────────────────────┘
 
 # Guardian 工作区路径（必须设置，程序启动时加载 SOUL.md 等）
-workspace_dir = "server-config/guardian"
+workspace_dir = "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-zeroclaw/server-config/guardian"
 
-# LLM API 密钥（本地用 enc2 加密；服务器部署时替换为明文）
-api_key = "enc2:77058663e7ce15d65c7d90e2f188278a25b260a99129e956ddffa8738e3a42800bddc1fd0ce13a43e361861851d07cb79d83da220e5d3f1a93772fa30b09ccf82a1054f4e5960b33763d7a57a0679b"
+# LLM API 密钥
+api_key = "sk-CBUn2XGX9ZGbPBbq8oXpSTKLcBmKmsKGrmfW5I6bHBHGAHkC"
 
 # LLM Provider 配置
 # - "anthropic-custom:URL" = Anthropic 原生格式（支持 native tool calling）
@@ -266,7 +266,7 @@ session_backend = "sqlite"
 [channels_config.feishu]
 app_id = "cli_a91dacdaca38dcd2"
 # app_secret 使用 enc2 加密（服务器部署时替换为对应环境的加密值）
-app_secret = "enc2:91901c57d7709f709c7636ba370d9a201e092640c3ae4ca99f2013b22217b7a7b0f0cb796f4d96045e2ad0ffe8fbeadfde835cbbdb2264b4c9024235"
+app_secret = "tjX2bliFmFB5wsJd9jiL1gDOuDT0Llha"
 allowed_users = ["*"]                         # * = 允许所有用户
 receive_mode = "websocket"                    # websocket = 长连接（推荐）
 
@@ -322,7 +322,7 @@ port = 42618                                  # 网关端口
 host = "127.0.0.1"                            # 只监听本地
 require_pairing = true                        # 需要配对码连接
 allow_public_bind = false
-paired_tokens = ["enc2:a747455a73ad81991dbf19588c30842a954e104822dd236e751a6c34f8c9d8ee6407c3afc3a4a3de011efcd61a43d8406f271685517bde7d2047fce6fe0b999dd7149204634e9b38aeedb9662288b9d882f0b72b2f31ae0064f77ef5"]
+paired_tokens = ["8bb4c82a822cc1fe36118076b986bb8d081c6a4dd1580215"]
 
 [gateway.pairing_dashboard]
 code_length = 8
@@ -335,18 +335,22 @@ max_pending_codes = 3
 # └─────────────────────────────────────────────────────────────┘
 
 # ── 网页搜索 ──
-# API Key 建议放在 .env 文件中（TAVILY_API_KEY 等）
+# SearXNG 自部署（115服务器），Tavily 备选
 [web_search]
 enabled = true
-provider = "tavily"                           # tavily / brave / exa / jina / duckduckgo
+provider = "searxng"                          # searxng（自部署） / tavily（备选）
 max_results = 5
 timeout_secs = 15
+searxng_url = "http://localhost:8888"         # 自部署 SearXNG 地址
+fallback_provider = "tavily"                  # SearXNG 不可用时降级
+# TAVILY_API_KEY 放在 .env 文件中
 
 # ── 网页抓取 ──
 [web_fetch]
-enabled = true                                # ⚠️ 服务器上应设为 true
+enabled = true
 allowed_domains = ["*"]
 timeout_secs = 30
+# firecrawl_url = "http://localhost:3002"     # Firecrawl API（待部署完成后启用）
 
 # ── 浏览器 ──
 [browser]
@@ -380,7 +384,6 @@ default_format = "wav"
 
 [tts.generic_openai]                             # 通过 LLM 网关（使用用户 api_key）
 api_url = "https://llm.dcfuture.cn/v1/audio/speech"
-api_key = ""                                     # 租户模板中由用户 api_key 填充
 model = "qwen3-tts-instruct-flash"
 default_voice = "Kai"
 
@@ -454,11 +457,11 @@ compress = true
 enabled = true
 
 # ── 数据路径（本地开发路径，服务器部署时改为 /opt/huanxing/...）──
-db_path = "server-config/data/users.db"                     # 用户数据库
-agents_dir = "server-config/agents"                         # 租户 Agent 工作区
-guardian_workspace = "server-config/guardian"                # Guardian 工作区
-admin_workspace = "server-config/admin"                     # Admin 工作区
-common_skills_dir = "server-config/common-skills"           # 公共技能目录
+db_path = "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-zeroclaw/server-config/data/users.db"                     # 用户数据库
+agents_dir = "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-zeroclaw/server-config/agents"                         # 租户 Agent 工作区
+guardian_workspace = "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-zeroclaw/server-config/guardian"                # Guardian 工作区
+admin_workspace = "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-zeroclaw/server-config/admin"                     # Admin 工作区
+common_skills_dir = "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-zeroclaw/server-config/common-skills"           # 公共技能目录
 templates_dir = "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-hub/templates"                   # 模板目录（本地）
 hub_dir = "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-hub"                                                # Hub 目录（服务器上设为 /opt/huanxing/hub）
 
@@ -499,7 +502,7 @@ per_tenant_timeout_secs = 60                  # 每租户心跳超时
 [huanxing.hx_image_gen]
 enabled = true
 # 默认按顺序降级使用的模型
-models = ["dall-e-3"]
+models = ["qwen-image-2.0-pro","qwen-image-2.0","qwen-image-plus-2026-01-09","qwen-image-max-2025-12-30"]
 # 图片生成 API URL (兼容 OpenAI格式)
 api_url = "https://llm.dcfuture.cn/v1/images/generations"
 # 如果在这里提供 api_key，将覆盖全局的 api_key

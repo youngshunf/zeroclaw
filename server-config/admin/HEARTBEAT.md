@@ -1,24 +1,23 @@
-# HEARTBEAT.md — Admin 管家心跳任务
+# HEARTBEAT.md — Admin 管家定时任务
 
-> 心跳引擎只执行以 `- ` 开头的行。每次心跳从中选取任务执行。
-> 间隔: 30分钟 | 每次最多: 3个任务
+> 所有任务**必须**带 `schedule:cron` 标签，系统根据 cron 表达式自动触发。
+> 不带 schedule 的任务会被系统忽略。
+> 格式: `- [priority|schedule:分 时 日 月 周] 任务描述`
+> ⚠️ cron 时间为 UTC。中国时间 = UTC + 8（如：早8点 → UTC 0:00，晚8点 → UTC 12:00）
 
-## 系统巡检（每次心跳）
+## 系统巡检
 
-- 检查 ZeroClaw daemon 进程是否正常运行，检查磁盘空间使用率，查看最近 30 分钟的错误日志，发现异常则记录到当日记忆并汇报
-- 检查 sessions.db 和 brain.db 文件大小，确保没有异常增长
+- [high|schedule:0 */1 * * *] 每小时巡检：检查 ZeroClaw daemon 进程状态、磁盘空间使用率、最近 1 小时错误日志。一切正常回复 HEARTBEAT_OK，发现异常则用 `memory_store` 记录并简短汇报。
+- [schedule:30 0 * * *] 每日数据库体检（早8:30）：检查 sessions.db 和 brain.db 文件大小，确保没有异常增长。结果用 `memory_store` 记录。
 
-## 运营统计（每日首次心跳）
+## QQ NapCat 监控
 
-- 统计今日和昨日的新注册用户数、活跃用户数，生成简要运营数据存入记忆
+- [high|schedule:*/30 * * * *] 每半小时检查 NapCat 登录状态：用 `shell` 执行 `docker ps | grep napcat` 检查容器是否运行，再用 `curl -s http://localhost:6099/api/get_login_info` 检查 QQ 登录状态。如果容器未运行或 QQ 被踢下线/异常退出，立即汇报管理员并提醒重新登录。正常则回复 HEARTBEAT_OK。
+
+## 运营统计
+
+- [high|schedule:0 1 * * *] 每日运营快报（早9点）：用 `hx_local_stats` 统计昨日新注册用户数、活跃用户数，生成简要运营数据，用 `memory_store` 记录并汇报给管理员。
 
 ## 记忆维护
 
-- 检查 `memory/` 目录下今天的日记文件是否存在，不存在就创建；将最近的运营事件、系统状态追加记录
-- 检查 MEMORY.md 是否需要更新，有重要运营洞察则更新
-
-## 行为规则
-
-- 有异常需要关注 → 简短汇报
-- 一切正常 → 回复 `HEARTBEAT_OK`
-- 深夜（23:00-08:00）保持安静，回复 `HEARTBEAT_OK`
+- [schedule:0 16 * * *] 记忆整理（每日0点）：用 `memory_recall` 回顾最近记忆，用 `memory_store` 保存重要信息；将提炼出的记忆精华（重大事件、运营洞察）用 `file_edit` 更新到 `MEMORY.md`；用 `memory_forget` 清除过时条目。完成后回复 HEARTBEAT_OK。
