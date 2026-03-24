@@ -67,3 +67,4 @@ clients/android/build/
 *.aab
 
 server-config/115.191.47.200
+*.wav

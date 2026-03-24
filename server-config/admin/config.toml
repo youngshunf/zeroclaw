@@ -4,7 +4,7 @@
 # ═══════════════════════════════════════════════════════════════
 
 default_provider = "custom:https://llm.dcfuture.cn/v1"
-default_model = "claude-sonnet-4-6"
+default_model = "claude-sonnet-4-5"
 default_temperature = 0.7
 api_key = "sk-CBUn2XGX9ZGbPBbq8oXpSTKLcBmKmsKGrmfW5I6bHBHGAHkC"
 
@@ -50,18 +50,7 @@ forbidden_paths = []
 max_actions_per_hour = 1000
 max_cost_per_day_cents = 10000
 block_high_risk_commands = true
-auto_approve = [
-    "file_read", "file_write", "file_edit",
-    "memory_recall", "memory_store",
-    "shell", "process",
-    "glob_search", "content_search",
-    "web_search_tool", "web_fetch",
-    "cron_add", "cron_list", "cron_remove", "cron_update", "cron_run", "cron_runs",
-    "hx_lookup_sender", "hx_local_find_user",
-    "hx_local_list_users", "hx_local_update_user", "hx_local_stats",
-    "hx_invalidate_cache", "hx_register_user",
-    "hx_get_user", "hx_check_quota", "hx_usage_stats",
-]
+auto_approve = []
 non_cli_excluded_tools = [
     # ═══ 硬件外设（服务器无 GPIO/STM32）═══
     "hardware_board_info",
