@@ -1019,33 +1019,12 @@ pub fn all_tools_with_runtime(
                     key,
                     &root_config.huanxing.server_id_or_hostname(),
                 );
-                // API-dependent tools: SMS, quota, subscription, usage
-                tool_arcs.push(Arc::new(crate::huanxing::tools::HxSendSms::new(
-                    api.clone(),
-                )));
-                tool_arcs.push(Arc::new(crate::huanxing::tools::HxVerifySms::new(
-                    api.clone(),
-                    hx_db.clone(),
-                )));
-                tool_arcs.push(Arc::new(crate::huanxing::tools::HxCheckQuota::new(
-                    api.clone(),
-                )));
-                tool_arcs.push(Arc::new(crate::huanxing::tools::HxGetSubscription::new(
-                    api.clone(),
-                )));
-                tool_arcs.push(Arc::new(crate::huanxing::tools::HxUsageStats::new(
-                    api.clone(),
-                )));
-                tool_arcs.push(Arc::new(crate::huanxing::tools::HxFileUpload::new(
+                // API-dependent tools: SMS, quota, subscription, usage, upload, deploy
+                tool_arcs.extend(crate::huanxing::tools::huanxing_api_tools(
                     api.clone(),
                     hx_db.clone(),
                     workspace_dir.to_path_buf(),
-                )));
-                tool_arcs.push(Arc::new(crate::huanxing::tools::HxDeployWebsite::new(
-                    api.clone(),
-                    workspace_dir.to_path_buf(),
-                    hx_db.clone(),
-                )));
+                ));
                 tracing::info!("HuanXing API tools registered (sms, quota, subscription, usage, file_upload, website_deploy)");
                 Some(api)
             } else {

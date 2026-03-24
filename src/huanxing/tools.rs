@@ -1935,3 +1935,20 @@ impl Tool for HxDeployWebsite {
         }
     }
 }
+
+/// Returns all Huanxing API-dependent tools to avoid upstream file intrusion
+pub fn huanxing_api_tools(
+    api: ApiClient,
+    db: TenantDb,
+    workspace_dir: std::path::PathBuf,
+) -> Vec<Arc<dyn Tool>> {
+    vec![
+        Arc::new(HxSendSms::new(api.clone())),
+        Arc::new(HxVerifySms::new(api.clone(), db.clone())),
+        Arc::new(HxCheckQuota::new(api.clone())),
+        Arc::new(HxGetSubscription::new(api.clone())),
+        Arc::new(HxUsageStats::new(api.clone())),
+        Arc::new(HxFileUpload::new(api.clone(), db.clone(), workspace_dir.clone())),
+        Arc::new(HxDeployWebsite::new(api.clone(), workspace_dir.clone(), db.clone())),
+    ]
+}
