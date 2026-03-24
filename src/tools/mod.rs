@@ -1036,7 +1036,21 @@ pub fn all_tools_with_runtime(
                 tool_arcs.push(Arc::new(crate::huanxing::tools::HxUsageStats::new(
                     api.clone(),
                 )));
-                tracing::info!("HuanXing API tools registered (sms, quota, subscription, usage)");
+                let current_agent_id = workspace_dir
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or_default()
+                    .to_string();
+
+                tool_arcs.push(Arc::new(crate::huanxing::tools::HxFileUpload::new(
+                    api.clone(),
+                )));
+                tool_arcs.push(Arc::new(crate::huanxing::tools::HxDeployWebsite::new(
+                    api.clone(),
+                    current_agent_id.clone(),
+                    hx_db.clone(),
+                )));
+                tracing::info!("HuanXing API tools registered (sms, quota, subscription, usage, file_upload, website_deploy)");
                 Some(api)
             } else {
                 tracing::info!("HuanXing agent_key not configured, API tools skipped");

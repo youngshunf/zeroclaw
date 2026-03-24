@@ -525,6 +525,7 @@ async fn synthesize_and_save(
 ) -> Result<String> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
+        .redirect(reqwest::redirect::Policy::none())
         .build()?;
 
     let body = serde_json::json!({
@@ -542,6 +543,17 @@ async fn synthesize_and_save(
         .context("HxVoice TTS: failed to send request")?;
 
     let status = resp.status();
+
+    // If the API returns a 302 Redirect (e.g. from New-API minimax/ali TTS direct OSS links), 
+    // capture the Location header and return it as the audio URL, avoiding local cache.
+    if status.is_redirection() {
+        if let Some(loc) = resp.headers().get(reqwest::header::LOCATION) {
+            if let Ok(url_str) = loc.to_str() {
+                return Ok(url_str.to_string());
+            }
+        }
+    }
+
     if !status.is_success() {
         let err_body = resp.text().await.unwrap_or_default();
         anyhow::bail!("HxVoice TTS API error ({status}): {err_body}");
