@@ -2976,7 +2976,17 @@ async fn process_channel_message(
             // Extract condensed tool-use context from the history messages
             // added during run_tool_call_loop, so the LLM retains awareness
             // of what it did on subsequent turns.
-            let tool_summary = extract_tool_context_summary(&history, history_len_before_tools);
+            //
+            // IMPORTANT: Skip the "[Used tools: ...]" prefix when native tool
+            // calling is active.  Storing it in the conversation history causes
+            // the model to *text-generate* the prefix (e.g. "[Used tools: hx_send_sms]")
+            // instead of issuing a real tool_use content block on subsequent
+            // turns — effectively hallucinating tool execution.
+            let tool_summary = if active_provider.supports_native_tools() {
+                String::new()
+            } else {
+                extract_tool_context_summary(&history, history_len_before_tools)
+            };
             let history_response = if tool_summary.is_empty() || msg.channel == "telegram" {
                 delivered_response.clone()
             } else {

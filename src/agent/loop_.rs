@@ -2704,6 +2704,17 @@ pub(crate) async fn run_tool_call_loop(
         }
         let use_native_tools = provider.supports_native_tools() && !tool_specs.is_empty();
 
+        // ── Debug: log tool specs being sent to LLM ──
+        if iteration == 0 {
+            let tool_names: Vec<&str> = tool_specs.iter().map(|t| t.name.as_str()).collect();
+            tracing::info!(
+                tool_count = tool_specs.len(),
+                use_native_tools,
+                tool_names = ?tool_names,
+                "🔧 [DEBUG] Tool specs for LLM request"
+            );
+        }
+
         let image_marker_count = multimodal::count_image_markers(history);
 
         // ── Vision provider routing ──────────────────────────
@@ -2892,6 +2903,27 @@ pub(crate) async fn run_tool_call_loop(
                     // this ensures we support both native and prompt-guided models.
                     let mut calls = parse_structured_tool_calls(&resp.tool_calls);
                     let mut parsed_text = String::new();
+
+                    // ── Debug: log LLM response tool call status ──
+                    tracing::info!(
+                        native_tool_calls = resp.tool_calls.len(),
+                        response_text_len = response_text.len(),
+                        response_excerpt = %truncate_with_ellipsis(&response_text, 200),
+                        stop_reason = ?resp.text.as_deref().unwrap_or("(none)"),
+                        "🔧 [DEBUG] LLM response parsed — native_tool_calls={}, text_len={}",
+                        resp.tool_calls.len(),
+                        response_text.len(),
+                    );
+                    if !resp.tool_calls.is_empty() {
+                        for tc in &resp.tool_calls {
+                            tracing::info!(
+                                tool_name = %tc.name,
+                                tool_id = %tc.id,
+                                args_excerpt = %truncate_with_ellipsis(&tc.arguments, 200),
+                                "🔧 [DEBUG] Native tool call from LLM"
+                            );
+                        }
+                    }
 
                     if calls.is_empty() {
                         let (fallback_text, fallback_calls) = parse_tool_calls(&response_text);

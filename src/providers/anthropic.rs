@@ -143,6 +143,8 @@ struct NativeChatResponse {
     content: Vec<NativeContentIn>,
     #[serde(default)]
     usage: Option<AnthropicUsage>,
+    #[serde(default)]
+    stop_reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -723,6 +725,26 @@ impl Provider for AnthropicProvider {
         );
 
         let native_response: NativeChatResponse = response.json().await?;
+
+        // ── Debug: log raw Anthropic response structure ──
+        {
+            let content_types: Vec<&str> = native_response.content.iter().map(|c| c.kind.as_str()).collect();
+            let tool_use_names: Vec<&str> = native_response.content.iter()
+                .filter(|c| c.kind == "tool_use")
+                .filter_map(|c| c.name.as_deref())
+                .collect();
+            tracing::info!(
+                stop_reason = ?native_response.stop_reason,
+                content_block_count = native_response.content.len(),
+                content_types = ?content_types,
+                tool_use_names = ?tool_use_names,
+                "🔧 [DEBUG] Anthropic raw response — stop_reason={:?}, content_blocks={}, types={:?}",
+                native_response.stop_reason,
+                native_response.content.len(),
+                content_types,
+            );
+        }
+
         Ok(Self::parse_native_response(native_response))
     }
 
