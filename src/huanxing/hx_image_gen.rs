@@ -43,6 +43,22 @@ impl HxImageGenTool {
             .unwrap_or_default()
     }
 
+    /// Read api_key from a tenant's workspace config.toml at runtime.
+    async fn resolve_tenant_api_key(workspace_dir: &std::path::Path) -> Option<String> {
+        let config_path = workspace_dir.join("config.toml");
+        if !config_path.exists() {
+            return None;
+        }
+        let content = tokio::fs::read_to_string(&config_path).await.ok()?;
+        // Simple partial deserialize to extract api_key
+        #[derive(serde::Deserialize)]
+        struct Partial {
+            api_key: Option<String>,
+        }
+        let parsed: Partial = toml::from_str(&content).ok()?;
+        parsed.api_key.filter(|k| !k.is_empty())
+    }
+
     /// Core generation logic: try models sequentially until success.
     async fn generate(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         // ── Parse parameters ───────────────────────────────────────
@@ -89,14 +105,36 @@ impl HxImageGenTool {
             });
         }
 
-        let api_key = &self.api_key;
-        if api_key.is_empty() {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("API Key is required for hx_image_gen".into()),
+        // ── Resolve api_key dynamically from tenant workspace ─────
+        // Priority: tenant workspace config.toml api_key > global fallback api_key
+        let active_security = crate::tools::get_active_security()
+            .unwrap_or_else(|| self.security.clone());
+        let api_key = Self::resolve_tenant_api_key(&active_security.workspace_dir)
+            .await
+            .or_else(|| {
+                if !self.api_key.is_empty() {
+                    Some(self.api_key.clone())
+                } else {
+                    None
+                }
             });
-        }
+
+        let api_key = match api_key {
+            Some(k) if !k.is_empty() => k,
+            _ => {
+                return Ok(ToolResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some("API Key is required for hx_image_gen. Please ensure your workspace config.toml contains an api_key.".into()),
+                });
+            }
+        };
+
+        tracing::info!(
+            "hx_image_gen: using api_key from workspace {} (key prefix: {}...)",
+            active_security.workspace_dir.display(),
+            &api_key[..api_key.len().min(12)]
+        );
 
         let client = Self::http_client();
         let url = &self.api_url;
@@ -231,8 +269,6 @@ impl HxImageGenTool {
             };
 
             // ── Save to disk ───────────────────────────────────────────
-            let active_security = crate::tools::get_active_security()
-                .unwrap_or_else(|| self.security.clone());
             let images_dir = active_security.workspace_dir.join("images");
             
             if let Err(e) = tokio::fs::create_dir_all(&images_dir).await {
