@@ -103,6 +103,11 @@ impl HxImageGenTool {
 
         let mut last_error = String::new();
 
+        // Maximum retries for rate-limited (429) requests on the same model
+        const MAX_RATE_LIMIT_RETRIES: u32 = 2;
+        // Base backoff delay in seconds for 429 retries
+        const RATE_LIMIT_BACKOFF_BASE_SECS: u64 = 3;
+
         // ── Loop over models for fallback ───────────────────────────
         for model in &models_to_try {
             tracing::info!("hx_image_gen: attempting generation with model '{}'", model);
@@ -114,132 +119,156 @@ impl HxImageGenTool {
                 "n": 1
             });
 
-            let resp_result = client
-                .post(url)
-                .header("Authorization", format!("Bearer {}", api_key))
-                .header("Content-Type", "application/json")
-                .json(&body)
-                .send()
-                .await;
+            // Inner retry loop for rate-limit (429) errors on the same model
+            let mut attempt = 0u32;
+            let resp_json: serde_json::Value = loop {
+                attempt += 1;
 
-            match resp_result {
-                Ok(resp) => {
-                    let status = resp.status();
-                    if !status.is_success() {
+                let resp_result = client
+                    .post(url)
+                    .header("Authorization", format!("Bearer {}", api_key))
+                    .header("Content-Type", "application/json")
+                    .json(&body)
+                    .send()
+                    .await;
+
+                match resp_result {
+                    Ok(resp) => {
+                        let status = resp.status();
+                        if status.is_success() {
+                            // Parse JSON and break out of retry loop
+                            match resp.json::<serde_json::Value>().await {
+                                Ok(json) => break json,
+                                Err(e) => {
+                                    let err_msg = format!("Failed to parse JSON response for model {model}: {e}");
+                                    tracing::warn!("hx_image_gen: {}", err_msg);
+                                    last_error = err_msg;
+                                    break serde_json::Value::Null; // will be caught below
+                                }
+                            }
+                        }
+
                         let body_text = resp.text().await.unwrap_or_default();
+
+                        // 429 = rate limit → retry with backoff on the SAME model
+                        if status.as_u16() == 429 && attempt <= MAX_RATE_LIMIT_RETRIES {
+                            let delay = RATE_LIMIT_BACKOFF_BASE_SECS * attempt as u64;
+                            tracing::warn!(
+                                "hx_image_gen: rate limited (429) on model {model}, retry {attempt}/{MAX_RATE_LIMIT_RETRIES} after {delay}s"
+                            );
+                            tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
+                            continue; // retry same model
+                        }
+
+                        // Non-retryable error or retries exhausted → fall through to next model
                         let err_msg = format!("API error ({status}) with model {model}: {body_text}");
                         tracing::warn!("hx_image_gen failed: {}", err_msg);
                         last_error = err_msg;
-                        continue;
+                        break serde_json::Value::Null;
                     }
+                    Err(e) => {
+                        let err_msg = format!("Request failed with model {model}: {e}");
+                        tracing::warn!("hx_image_gen failed: {}", err_msg);
+                        last_error = err_msg;
+                        break serde_json::Value::Null;
+                    }
+                }
+            };
 
-                    let resp_json: serde_json::Value = match resp.json().await {
-                        Ok(json) => json,
-                        Err(e) => {
-                            let err_msg = format!("Failed to parse JSON response for model {model}: {e}");
-                            tracing::warn!("hx_image_gen failed: {}", err_msg);
-                            last_error = err_msg;
-                            continue;
-                        }
-                    };
+            // If we broke out with Null, skip to next model
+            if resp_json.is_null() {
+                continue;
+            }
 
-                    // Extract the image either from url or b64_json
-                    let image_url = resp_json.pointer("/data/0/url").and_then(|v| v.as_str());
-                    let b64_json = resp_json.pointer("/data/0/b64_json").and_then(|v| v.as_str());
+            // ── Successful response — extract image ─────────────────
+            let image_url = resp_json.pointer("/data/0/url").and_then(|v| v.as_str());
+            let b64_json = resp_json.pointer("/data/0/b64_json").and_then(|v| v.as_str());
 
-                    let bytes = if let Some(u) = image_url {
-                        // ── Download image URL ─────────────────────────────────
-                        let img_resp = match client.get(u).send().await {
-                            Ok(r) => r,
-                            Err(e) => {
-                                let err_msg = format!("Failed to download image from {} (model {}): {}", u, model, e);
-                                tracing::warn!("hx_image_gen failed: {}", err_msg);
-                                last_error = err_msg;
-                                continue;
-                            }
-                        };
-                        
-                        if !img_resp.status().is_success() {
-                            let err_msg = format!("Failed to download image from {} (status {})", u, img_resp.status());
-                            tracing::warn!("hx_image_gen failed: {}", err_msg);
-                            last_error = err_msg;
-                            continue;
-                        }
-                        
-                        match img_resp.bytes().await {
-                            Ok(b) => b.to_vec(),
-                            Err(e) => {
-                                let err_msg = format!("Failed to read image bytes (model {}): {}", model, e);
-                                tracing::warn!("hx_image_gen failed: {}", err_msg);
-                                last_error = err_msg;
-                                continue;
-                            }
-                        }
-                    } else if let Some(b64) = b64_json {
-                        use base64::{engine::general_purpose, Engine as _};
-                        match general_purpose::STANDARD.decode(b64) {
-                            Ok(decoded) => decoded,
-                            Err(e) => {
-                                let err_msg = format!("Failed to decode base64 image (model {}): {}", model, e);
-                                tracing::warn!("hx_image_gen failed: {}", err_msg);
-                                last_error = err_msg;
-                                continue;
-                            }
-                        }
-                    } else {
-                        let err_msg = format!("No image URL or b64_json in API response for model {}", model);
+            let bytes = if let Some(u) = image_url {
+                // ── Download image URL ─────────────────────────────────
+                let img_resp = match client.get(u).send().await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        let err_msg = format!("Failed to download image from {} (model {}): {}", u, model, e);
                         tracing::warn!("hx_image_gen failed: {}", err_msg);
                         last_error = err_msg;
                         continue;
-                    };
-
-                    // ── Save to disk ───────────────────────────────────────────
-                    let active_security = crate::tools::get_active_security()
-                        .unwrap_or_else(|| self.security.clone());
-                    let images_dir = active_security.workspace_dir.join("images");
-                    
-                    if let Err(e) = tokio::fs::create_dir_all(&images_dir).await {
-                        return Ok(ToolResult {
-                            success: false,
-                            output: String::new(),
-                            error: Some(format!("Failed to create images directory: {}", e)),
-                        });
                     }
-
-                    let output_path = images_dir.join(format!("{safe_name}.png"));
-                    if let Err(e) = tokio::fs::write(&output_path, &bytes).await {
-                        return Ok(ToolResult {
-                            success: false,
-                            output: String::new(),
-                            error: Some(format!("Failed to write image file: {}", e)),
-                        });
-                    }
-
-                    let size_kb = bytes.len() / 1024;
-
-                    return Ok(ToolResult {
-                        success: true,
-                        output: format!(
-                            "Image generated successfully.\n\
-                             File: {}\n\
-                             Size: {} KB\n\
-                             Model: {}\n\
-                             Prompt: {}",
-                            output_path.display(),
-                            size_kb,
-                            model,
-                            prompt,
-                        ),
-                        error: None,
-                    });
-                }
-                Err(e) => {
-                    let err_msg = format!("Request failed with model {model}: {e}");
+                };
+                
+                if !img_resp.status().is_success() {
+                    let err_msg = format!("Failed to download image from {} (status {})", u, img_resp.status());
                     tracing::warn!("hx_image_gen failed: {}", err_msg);
                     last_error = err_msg;
                     continue;
                 }
+                
+                match img_resp.bytes().await {
+                    Ok(b) => b.to_vec(),
+                    Err(e) => {
+                        let err_msg = format!("Failed to read image bytes (model {}): {}", model, e);
+                        tracing::warn!("hx_image_gen failed: {}", err_msg);
+                        last_error = err_msg;
+                        continue;
+                    }
+                }
+            } else if let Some(b64) = b64_json {
+                use base64::{engine::general_purpose, Engine as _};
+                match general_purpose::STANDARD.decode(b64) {
+                    Ok(decoded) => decoded,
+                    Err(e) => {
+                        let err_msg = format!("Failed to decode base64 image (model {}): {}", model, e);
+                        tracing::warn!("hx_image_gen failed: {}", err_msg);
+                        last_error = err_msg;
+                        continue;
+                    }
+                }
+            } else {
+                let err_msg = format!("No image URL or b64_json in API response for model {}", model);
+                tracing::warn!("hx_image_gen failed: {}", err_msg);
+                last_error = err_msg;
+                continue;
+            };
+
+            // ── Save to disk ───────────────────────────────────────────
+            let active_security = crate::tools::get_active_security()
+                .unwrap_or_else(|| self.security.clone());
+            let images_dir = active_security.workspace_dir.join("images");
+            
+            if let Err(e) = tokio::fs::create_dir_all(&images_dir).await {
+                return Ok(ToolResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some(format!("Failed to create images directory: {}", e)),
+                });
             }
+
+            let output_path = images_dir.join(format!("{safe_name}.png"));
+            if let Err(e) = tokio::fs::write(&output_path, &bytes).await {
+                return Ok(ToolResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some(format!("Failed to write image file: {}", e)),
+                });
+            }
+
+            let size_kb = bytes.len() / 1024;
+
+            return Ok(ToolResult {
+                success: true,
+                output: format!(
+                    "Image generated successfully.\n\
+                     File: {}\n\
+                     Size: {} KB\n\
+                     Model: {}\n\
+                     Prompt: {}",
+                    output_path.display(),
+                    size_kb,
+                    model,
+                    prompt,
+                ),
+                error: None,
+            });
         }
 
         // ── All models failed ───────────────────────────────────────────
