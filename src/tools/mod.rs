@@ -1036,18 +1036,14 @@ pub fn all_tools_with_runtime(
                 tool_arcs.push(Arc::new(crate::huanxing::tools::HxUsageStats::new(
                     api.clone(),
                 )));
-                let current_agent_id = workspace_dir
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or_default()
-                    .to_string();
-
                 tool_arcs.push(Arc::new(crate::huanxing::tools::HxFileUpload::new(
                     api.clone(),
+                    hx_db.clone(),
+                    workspace_dir.to_path_buf(),
                 )));
                 tool_arcs.push(Arc::new(crate::huanxing::tools::HxDeployWebsite::new(
                     api.clone(),
-                    current_agent_id.clone(),
+                    workspace_dir.to_path_buf(),
                     hx_db.clone(),
                 )));
                 tracing::info!("HuanXing API tools registered (sms, quota, subscription, usage, file_upload, website_deploy)");

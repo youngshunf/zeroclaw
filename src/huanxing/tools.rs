@@ -1657,12 +1657,12 @@ impl Tool for HxTts {
 pub struct HxFileUpload {
     api: ApiClient,
     db: super::db::TenantDb,
-    agent_id: String,
+    workspace_dir: std::path::PathBuf,
 }
 
 impl HxFileUpload {
-    pub fn new(api: ApiClient, db: super::db::TenantDb, agent_id: String) -> Self {
-        Self { api, db, agent_id }
+    pub fn new(api: ApiClient, db: super::db::TenantDb, workspace_dir: std::path::PathBuf) -> Self {
+        Self { api, db, workspace_dir }
     }
 }
 
@@ -1701,10 +1701,16 @@ impl Tool for HxFileUpload {
             });
         }
 
+        let agent_id = self.workspace_dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default()
+            .to_string();
+
         // 自动从数据库获取 user_id
-        let user_id = match self.db.find_by_agent_id(&self.agent_id).await {
+        let user_id = match self.db.find_by_agent_id(&agent_id).await {
             Ok(Some(user)) => user.user_id,
-            _ => self.agent_id.clone(), // 退回使用 agent_id 避免上传失败
+            _ => agent_id.clone(), // 退回使用 agent_id 避免上传失败
         };
 
         let path = std::path::Path::new(file_path);
@@ -1769,13 +1775,13 @@ impl Tool for HxFileUpload {
 /// Deploy generated websites to the 117 Server via backend agent API.
 pub struct HxDeployWebsite {
     api: ApiClient,
-    agent_id: String,
+    workspace_dir: std::path::PathBuf,
     db: TenantDb,
 }
 
 impl HxDeployWebsite {
-    pub fn new(api: ApiClient, agent_id: String, db: TenantDb) -> Self {
-        Self { api, agent_id, db }
+    pub fn new(api: ApiClient, workspace_dir: std::path::PathBuf, db: TenantDb) -> Self {
+        Self { api, workspace_dir, db }
     }
 }
 
@@ -1819,10 +1825,16 @@ impl Tool for HxDeployWebsite {
             });
         }
 
+        let agent_id = self.workspace_dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default()
+            .to_string();
+
         // 自动从数据库获取 user_id
-        let user_id = match self.db.find_by_agent_id(&self.agent_id).await {
+        let user_id = match self.db.find_by_agent_id(&agent_id).await {
             Ok(Some(user)) => user.user_id,
-            _ => self.agent_id.clone(), // 退回使用 agent_id 避免上传失败
+            _ => agent_id.clone(), // 退回使用 agent_id 避免上传失败
         };
 
         let path = std::path::Path::new(dir_path);
