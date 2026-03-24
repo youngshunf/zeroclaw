@@ -2958,6 +2958,23 @@ async fn process_channel_message(
                 sanitized_response
             };
 
+            // HuanXing: auto-synthesize [VOICE:voice_name]text markers to audio files
+            // when the LLM outputs voice text instead of calling hx_tts tool.
+            #[cfg(feature = "huanxing")]
+            let delivered_response =
+                if let Some(voice_cfg) = crate::huanxing::voice::HxVoiceConfig::from_config(
+                    &ctx.prompt_config,
+                ) {
+                    crate::huanxing::voice::auto_synthesize_voice_markers(
+                        &delivered_response,
+                        &voice_cfg,
+                        &msg_ctx.workspace_dir,
+                    )
+                    .await
+                } else {
+                    delivered_response
+                };
+
             runtime_trace::record_event(
                 "channel_message_outbound",
                 Some(msg.channel.as_str()),

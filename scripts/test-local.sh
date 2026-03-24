@@ -5,7 +5,8 @@
 # 用法:
 #   ./scripts/test-local.sh server    # 云端多租户模式（端口 42618）
 #   ./scripts/test-local.sh desktop   # 桌面端模式（端口 42620）
-#   ./scripts/test-local.sh build     # 仅编译检查
+#   ./scripts/test-local.sh build     # 仅编译（debug 模式，快）
+#   ./scripts/test-local.sh release   # 仅编译（release 模式，慢但性能好）
 #   ./scripts/test-local.sh check     # 编译 + cargo test + clippy
 #   ./scripts/test-local.sh status    # 查看 daemon_state.json
 #
@@ -19,7 +20,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 SERVER_CONFIG="$PROJECT_DIR/server-config"
 DESKTOP_CONFIG="$HOME/.zeroclaw/config.toml"
-BINARY="$PROJECT_DIR/target/release/zeroclaw"
+BINARY="$PROJECT_DIR/target/debug/zeroclaw"
+BINARY_RELEASE="$PROJECT_DIR/target/release/zeroclaw"
+BUILD_MODE="debug"  # 默认 debug 模式，编译快
 
 # 颜色
 RED='\033[0;31m'
@@ -62,14 +65,22 @@ preflight_check() {
 
 # ── 编译 ──────────────────────────────────────────────────────
 do_build() {
-    info "编译 zeroclaw（release 模式）..."
+    local mode="${1:-debug}"
     cd "$PROJECT_DIR"
 
     # 设置编译时环境变量
     export ZEROCLAW_BUILD_VERSION="local-test-$(date +%Y%m%d)"
 
-    cargo build --release --bin zeroclaw --features "huanxing,channel-lark" 2>&1
-    ok "编译完成: $BINARY"
+    if [[ "$mode" == "release" ]]; then
+        info "编译 zeroclaw（release 模式，较慢）..."
+        cargo build --release --bin zeroclaw --features "huanxing,channel-lark" 2>&1
+        BINARY="$BINARY_RELEASE"
+        ok "编译完成: $BINARY"
+    else
+        info "编译 zeroclaw（debug 模式，快速）..."
+        cargo build --bin zeroclaw --features "huanxing,channel-lark" 2>&1
+        ok "编译完成: $BINARY"
+    fi
 }
 
 # ── 完整检查 ──────────────────────────────────────────────────
@@ -118,7 +129,7 @@ run_server() {
 
     # 编译（如果二进制不存在或源码更新）
     if [[ ! -f "$BINARY" ]] || [[ $(find "$PROJECT_DIR/src" -newer "$BINARY" -name '*.rs' | head -1) ]]; then
-        do_build
+        do_build "$BUILD_MODE"
     else
         ok "二进制已是最新，跳过编译"
     fi
@@ -156,7 +167,7 @@ run_desktop() {
 
     # 编译
     if [[ ! -f "$BINARY" ]] || [[ $(find "$PROJECT_DIR/src" -newer "$BINARY" -name '*.rs' | head -1) ]]; then
-        do_build
+        do_build "$BUILD_MODE"
     else
         ok "二进制已是最新，跳过编译"
     fi
@@ -219,9 +230,10 @@ case "${1:-help}" in
         run_desktop
         ;;
     build|b)
-        cd "$PROJECT_DIR"
-        export ZEROCLAW_BUILD_VERSION="local-test-$(date +%Y%m%d)"
-        do_build
+        do_build debug
+        ;;
+    release|r)
+        do_build release
         ;;
     check|c)
         do_check
@@ -230,11 +242,12 @@ case "${1:-help}" in
         show_status
         ;;
     *)
-        echo "用法: $0 {server|desktop|build|check|status}"
+        echo "用法: $0 {server|desktop|build|release|check|status}"
         echo ""
         echo "  server  (s)   云端多租户模式 — 端口 42618，含 tenant_heartbeat"
         echo "  desktop (d)   桌面端模式 — 端口 42617，单用户 sidecar"
-        echo "  build   (b)   仅编译"
+        echo "  build   (b)   仅编译（debug 模式，快速）"
+        echo "  release (r)   仅编译（release 模式，较慢但性能好）"
         echo "  check   (c)   编译 + test + clippy"
         echo "  status  (st)  查看 daemon 运行状态"
         ;;

@@ -1527,11 +1527,12 @@ fn mask_phone(phone: &str) -> String {
 /// for the channel layer to send as a voice message.
 pub struct HxTts {
     tts_config: crate::config::TtsConfig,
+    workspace_dir: std::path::PathBuf,
 }
 
 impl HxTts {
-    pub fn new(tts_config: crate::config::TtsConfig) -> Self {
-        Self { tts_config }
+    pub fn new(tts_config: crate::config::TtsConfig, workspace_dir: std::path::PathBuf) -> Self {
+        Self { tts_config, workspace_dir }
     }
 }
 
@@ -1605,14 +1606,14 @@ impl Tool for HxTts {
         // Synthesize audio using huanxing voice module
         match super::voice::synthesize_with_voice(&self.tts_config, text, voice).await {
             Ok(audio_bytes) => {
-                // Write to temp file and return path marker for channel layer to pick up
-                let tmp_dir = std::env::temp_dir().join("zeroclaw-tts");
-                let _ = std::fs::create_dir_all(&tmp_dir);
+                // Write to tenant workspace tts_cache dir
+                let tts_dir = self.workspace_dir.join("tts_cache");
+                let _ = std::fs::create_dir_all(&tts_dir);
                 let ext = &self.tts_config.default_format;
                 let filename = format!("{}.{ext}", uuid::Uuid::new_v4());
-                let tmp_path = tmp_dir.join(&filename);
+                let file_path = tts_dir.join(&filename);
 
-                if let Err(e) = std::fs::write(&tmp_path, &audio_bytes) {
+                if let Err(e) = std::fs::write(&file_path, &audio_bytes) {
                     return Ok(ToolResult {
                         success: false,
                         output: String::new(),
@@ -1623,13 +1624,13 @@ impl Tool for HxTts {
                 tracing::info!(
                     "hx_tts: synthesized {} bytes, saved to {}",
                     audio_bytes.len(),
-                    tmp_path.display()
+                    file_path.display()
                 );
 
-                // Return VOICE marker — channel layer will detect this and send as voice message
+                // Return VOICE marker with file:// prefix for NapCat
                 Ok(ToolResult {
                     success: true,
-                    output: format!("[VOICE:{}]", tmp_path.display()),
+                    output: format!("[VOICE:file://{}]", file_path.display()),
                     error: None,
                 })
             }
