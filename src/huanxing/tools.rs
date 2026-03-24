@@ -1531,11 +1531,18 @@ fn mask_phone(phone: &str) -> String {
 pub struct HxTts {
     tts_config: crate::config::TtsConfig,
     workspace_dir: std::path::PathBuf,
+    api: Option<crate::huanxing::ApiClient>,
+    db: crate::huanxing::TenantDb,
 }
 
 impl HxTts {
-    pub fn new(tts_config: crate::config::TtsConfig, workspace_dir: std::path::PathBuf) -> Self {
-        Self { tts_config, workspace_dir }
+    pub fn new(
+        tts_config: crate::config::TtsConfig,
+        workspace_dir: std::path::PathBuf,
+        api: Option<crate::huanxing::ApiClient>,
+        db: crate::huanxing::TenantDb,
+    ) -> Self {
+        Self { tts_config, workspace_dir, api, db }
     }
 }
 
@@ -1611,43 +1618,117 @@ impl Tool for HxTts {
         let api_key = generic.and_then(|g| g.api_key.clone()).unwrap_or_default();
         let model = generic.map(|g| g.model.clone()).unwrap_or_default();
 
-        let voice_config = super::voice::HxVoiceConfig {
-            api_url,
-            api_key,
-            model,
-            default_voice: self.tts_config.default_voice.clone(),
-            format: self.tts_config.default_format.clone(),
+        let client = match reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(60))
+            .build()
+        {
+            Ok(c) => c,
+            Err(e) => return Ok(ToolResult {
+                success: false, output: String::new(),
+                error: Some(format!("Failed to build HTTP client: {e}"))
+            }),
         };
 
-        // Synthesize audio using huanxing voice module (handles HTTP 302 redirects dynamically)
-        match super::voice::synthesize_and_save(&voice_config, text, voice, &self.workspace_dir).await {
-            Ok(file_path_or_url) => {
-                let final_mark = if file_path_or_url.starts_with("http") || file_path_or_url.starts_with("file:") {
-                    format!("[VOICE:{}]", file_path_or_url)
-                } else {
-                    format!("[VOICE:file://{}]", file_path_or_url)
-                };
+        let body = serde_json::json!({
+            "model": model,
+            "input": text,
+            "voice": voice,
+        });
 
-                tracing::info!(
-                    "hx_tts: synthesized voice message, endpoint yielded: {}",
-                    file_path_or_url
-                );
+        // 1. Fetch TTS binary stream securely with reqwest (HuanXing exclusive logic, no dependency on upstream)
+        let resp = match client.post(&api_url).bearer_auth(&api_key).json(&body).send().await {
+            Ok(r) => r,
+            Err(e) => return Ok(ToolResult {
+                success: false, output: String::new(),
+                error: Some(format!("TTS request failed: {e}")),
+            }),
+        };
 
-                Ok(ToolResult {
-                    success: true,
-                    output: final_mark,
-                    error: None,
-                })
-            }
-            Err(e) => {
-                tracing::error!("hx_tts: 语音合成失败: {e:?}");
-                Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(format!("语音合成失败: {e}")),
-                })
+        let status = resp.status();
+        if !status.is_success() {
+            let err_body = resp.text().await.unwrap_or_default();
+            return Ok(ToolResult {
+                success: false, output: String::new(),
+                error: Some(format!("TTS API error ({status}): {err_body}")),
+            });
+        }
+
+        let audio_bytes = match resp.bytes().await {
+            Ok(b) => b,
+            Err(e) => return Ok(ToolResult {
+                success: false, output: String::new(),
+                error: Some(format!("Failed to read audio bytes: {e}")),
+            }),
+        };
+
+        if audio_bytes.is_empty() {
+            return Ok(ToolResult {
+                success: false, output: String::new(),
+                error: Some("TTS returned empty audio".to_string()),
+            });
+        }
+
+        let ext = &self.tts_config.default_format;
+        let filename = format!("voice_{}.{}", uuid::Uuid::new_v4().simple(), ext);
+
+        // 2. Safely proxy binary up to CDN explicitly if Huanxing API enabled
+        if let Some(api) = &self.api {
+            let agent_id = self.workspace_dir
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or_default()
+                .to_string();
+
+            let user_id = match self.db.find_by_agent_id(&agent_id).await {
+                Ok(Some(user)) => user.user_id,
+                _ => agent_id.clone(),
+            };
+
+            let part = reqwest::multipart::Part::bytes(audio_bytes.to_vec())
+                .file_name(filename.clone());
+            let form = reqwest::multipart::Form::new().part("file", part);
+
+            match api.agent_post_multipart("/api/v1/huanxing/agent/files/upload", form, &[("user_id", &user_id)]).await {
+                Ok(upload_resp) => {
+                    if let Some(url) = upload_resp["data"]["url"].as_str() {
+                        tracing::info!("hx_tts: uploaded audio to OSS successfully: {}", url);
+                        return Ok(ToolResult {
+                            success: true,
+                            output: format!("[VOICE:{}]", url),
+                            error: None,
+                        });
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("hx_tts: OSS upload failed ({e}), falling back to local file.");
+                }
             }
         }
+
+        // 3. Fallback: Save to tenant local cache directory if no API/CDN
+        let tts_dir = self.workspace_dir.join("tts_cache");
+        let _ = tokio::fs::create_dir_all(&tts_dir).await;
+        let file_path = tts_dir.join(&filename);
+
+        if let Err(e) = tokio::fs::write(&file_path, &audio_bytes).await {
+            return Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some(format!("写入本地音频文件失败: {e}")),
+            });
+        }
+
+        tracing::info!(
+            "hx_tts: synthesized {} bytes, saved to local fallback {}",
+            audio_bytes.len(),
+            file_path.display()
+        );
+
+        Ok(ToolResult {
+            success: true,
+            output: format!("[VOICE:file://{}]", file_path.display()),
+            error: None,
+        })
     }
 }
 
