@@ -1606,34 +1606,36 @@ impl Tool for HxTts {
             .and_then(|v| v.as_str())
             .unwrap_or(&self.tts_config.default_voice);
 
-        // Synthesize audio using huanxing voice module
-        match super::voice::synthesize_with_voice(&self.tts_config, text, voice).await {
-            Ok(audio_bytes) => {
-                // Write to tenant workspace tts_cache dir
-                let tts_dir = self.workspace_dir.join("tts_cache");
-                let _ = std::fs::create_dir_all(&tts_dir);
-                let ext = &self.tts_config.default_format;
-                let filename = format!("{}.{ext}", uuid::Uuid::new_v4());
-                let file_path = tts_dir.join(&filename);
+        let generic = self.tts_config.generic_openai.as_ref();
+        let api_url = generic.map(|g| g.api_url.clone()).unwrap_or_default();
+        let api_key = generic.and_then(|g| g.api_key.clone()).unwrap_or_default();
+        let model = generic.map(|g| g.model.clone()).unwrap_or_default();
 
-                if let Err(e) = std::fs::write(&file_path, &audio_bytes) {
-                    return Ok(ToolResult {
-                        success: false,
-                        output: String::new(),
-                        error: Some(format!("写入音频文件失败: {e}")),
-                    });
-                }
+        let voice_config = super::voice::HxVoiceConfig {
+            api_url,
+            api_key,
+            model,
+            default_voice: self.tts_config.default_voice.clone(),
+            format: self.tts_config.default_format.clone(),
+        };
+
+        // Synthesize audio using huanxing voice module (handles HTTP 302 redirects dynamically)
+        match super::voice::synthesize_and_save(&voice_config, text, voice, &self.workspace_dir).await {
+            Ok(file_path_or_url) => {
+                let final_mark = if file_path_or_url.starts_with("http") || file_path_or_url.starts_with("file:") {
+                    format!("[VOICE:{}]", file_path_or_url)
+                } else {
+                    format!("[VOICE:file://{}]", file_path_or_url)
+                };
 
                 tracing::info!(
-                    "hx_tts: synthesized {} bytes, saved to {}",
-                    audio_bytes.len(),
-                    file_path.display()
+                    "hx_tts: synthesized voice message, endpoint yielded: {}",
+                    file_path_or_url
                 );
 
-                // Return VOICE marker with file:// prefix for NapCat
                 Ok(ToolResult {
                     success: true,
-                    output: format!("[VOICE:file://{}]", file_path.display()),
+                    output: final_mark,
                     error: None,
                 })
             }

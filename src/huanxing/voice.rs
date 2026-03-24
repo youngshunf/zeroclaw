@@ -517,7 +517,7 @@ pub async fn auto_synthesize_voice_markers(
 ///
 /// POST to `/v1/audio/speech` with the tenant's api_key — no upstream
 /// `TtsManager` dependency.
-async fn synthesize_and_save(
+pub async fn synthesize_and_save(
     config: &HxVoiceConfig,
     text: &str,
     voice: &str,
