@@ -63,6 +63,36 @@ impl ApiClient {
         self.handle_response(resp, "GET", path).await
     }
 
+    /// POST multipart form with Agent Key auth.
+    pub async fn agent_post_multipart(
+        &self,
+        path: &str,
+        form: reqwest::multipart::Form,
+        query: &[(&str, &str)],
+    ) -> Result<Value> {
+        let url = format!("{}{}", self.base_url, path);
+
+        let mut h = reqwest::header::HeaderMap::new();
+        if let Ok(v) = reqwest::header::HeaderValue::from_str(&self.agent_key) {
+            h.insert("X-Agent-Key", v);
+        }
+        if let Ok(v) = reqwest::header::HeaderValue::from_str(&self.server_id) {
+            h.insert("X-Server-Id", v);
+        }
+        h.insert("X-App-Code", reqwest::header::HeaderValue::from_static("huanxing"));
+
+        let resp = self
+            .client
+            .post(&url)
+            .headers(h)
+            .query(query)
+            .multipart(form)
+            .send()
+            .await
+            .with_context(|| format!("POST multipart {path}"))?;
+        self.handle_response(resp, "POST", path).await
+    }
+
     /// PUT with Agent Key auth.
     pub async fn agent_put(&self, path: &str, body: &Value) -> Result<Value> {
         let url = format!("{}{}", self.base_url, path);

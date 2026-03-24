@@ -788,6 +788,7 @@ impl Tool for HxVerifySms {
                                 "status": {
                                     "code": "local_same_channel",
                                     "agentId": local_user.agent_id,
+                                    "userId": local_user.user_id,
                                 }
                             })
                             .to_string(),
@@ -802,6 +803,7 @@ impl Tool for HxVerifySms {
                                 "status": {
                                     "code": "local_other_channel",
                                     "agentId": local_user.agent_id,
+                                    "userId": local_user.user_id,
                                 }
                             })
                             .to_string(),
@@ -1643,6 +1645,281 @@ impl Tool for HxTts {
                     error: Some(format!("语音合成失败: {e}")),
                 })
             }
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════
+// hx_file_upload — Agent File Upload 
+// ═══════════════════════════════════════════════════════
+
+/// File upload to OSS via backend agent API.
+pub struct HxFileUpload {
+    api: ApiClient,
+    db: super::db::TenantDb,
+    agent_id: String,
+}
+
+impl HxFileUpload {
+    pub fn new(api: ApiClient, db: super::db::TenantDb, agent_id: String) -> Self {
+        Self { api, db, agent_id }
+    }
+}
+
+#[async_trait]
+impl Tool for HxFileUpload {
+    fn name(&self) -> &str {
+        "hx_file_upload"
+    }
+
+    fn description(&self) -> &str {
+        "将Agent生成的本地文件上传到云端(OSS/CDN)，以便将访问链接发送给用户。\n\
+         重要：如果是生成图片、视频或文档等需要发给用户的文件，必须先使用此工具将其上传并获取URL链接！"
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "需要上传的文件在本地系统中的绝对路径"
+                }
+            },
+            "required": ["file_path"]
+        })
+    }
+
+    async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        let file_path = args["file_path"].as_str().unwrap_or_default();
+
+        if file_path.is_empty() {
+            return Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some("file_path is required".to_string()),
+            });
+        }
+
+        // 自动从数据库获取 user_id
+        let user_id = match self.db.find_by_agent_id(&self.agent_id).await {
+            Ok(Some(user)) => user.user_id,
+            _ => self.agent_id.clone(), // 退回使用 agent_id 避免上传失败
+        };
+
+        let path = std::path::Path::new(file_path);
+        if !path.exists() || !path.is_file() {
+            return Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some(format!("文件不存在或不是有效文件: {}", file_path)),
+            });
+        }
+
+        let contents = match tokio::fs::read(path).await {
+            Ok(bytes) => bytes,
+            Err(e) => return Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some(format!("读取本地文件失败: {}", e)),
+            }),
+        };
+
+        let filename = path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("upload_temp_file")
+            .to_string();
+
+        let part = reqwest::multipart::Part::bytes(contents)
+            .file_name(filename);
+        
+        let form = reqwest::multipart::Form::new().part("file", part);
+
+        match self
+            .api
+            .agent_post_multipart("/api/v1/huanxing/agent/files/upload", form, &[("user_id", &user_id)])
+            .await
+        {
+            Ok(resp) => {
+                let url = resp["data"]["url"].as_str().unwrap_or_default().to_string();
+                Ok(ToolResult {
+                    success: true,
+                    output: json!({
+                        "uploaded": true,
+                        "url": url,
+                        "message": "文件上传成功，请将此URL作为结果链接发送给用户"
+                    })
+                    .to_string(),
+                    error: None,
+                })
+            }
+            Err(e) => Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some(format!("上传到云端失败: {}", e)),
+            }),
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════
+// hx_deploy_website — Agent Website Deployment
+// ═══════════════════════════════════════════════════════
+
+/// Deploy generated websites to the 117 Server via backend agent API.
+pub struct HxDeployWebsite {
+    api: ApiClient,
+    agent_id: String,
+    db: TenantDb,
+}
+
+impl HxDeployWebsite {
+    pub fn new(api: ApiClient, agent_id: String, db: TenantDb) -> Self {
+        Self { api, agent_id, db }
+    }
+}
+
+#[async_trait]
+impl Tool for HxDeployWebsite {
+    fn name(&self) -> &str {
+        "hx_deploy_website"
+    }
+
+    fn description(&self) -> &str {
+        "将Agent生成的带有 index.html 的网站文件夹打包并部署到官网服务器，然后返回可访问的预览链接给用户。\n\
+         重要：参数 dir_path 必须是指向本地生成网站的绝对路径。"
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "dir_path": {
+                    "type": "string",
+                    "description": "本地网站文件夹的绝对路径"
+                },
+                "site_name": {
+                    "type": "string",
+                    "description": "自定义的网站项目名称（仅包含字母和数字，可选）"
+                }
+            },
+            "required": ["dir_path"]
+        })
+    }
+
+    async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        let dir_path = args["dir_path"].as_str().unwrap_or_default();
+        let site_name = args["site_name"].as_str().unwrap_or("default");
+
+        if dir_path.is_empty() {
+            return Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some("dir_path is required".to_string()),
+            });
+        }
+
+        // 自动从数据库获取 user_id
+        let user_id = match self.db.find_by_agent_id(&self.agent_id).await {
+            Ok(Some(user)) => user.user_id,
+            _ => self.agent_id.clone(), // 退回使用 agent_id 避免上传失败
+        };
+
+        let path = std::path::Path::new(dir_path);
+        if !path.exists() || !path.is_dir() {
+            return Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some(format!("目标目录不存在或不是有效的文件夹: {}", dir_path)),
+            });
+        }
+
+        // 检查是否包含 index.html
+        if !path.join("index.html").exists() {
+            return Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some("该目录不包含 index.html，不能作为网站部署".to_string()),
+            });
+        }
+
+        // 将目录内容打包为 ZIP
+        let temp_dir = std::env::temp_dir();
+        let zip_filename = format!("deploy_{}_{}.zip", user_id, uuid::Uuid::new_v4().simple());
+        let zip_path = temp_dir.join(&zip_filename);
+
+        // 使用系统 zip 命令进行目录压缩 (cd dir_path && zip -r temp_zip_path .)
+        let zip_cmd = tokio::process::Command::new("zip")
+            .current_dir(path)
+            .arg("-r")
+            .arg(&zip_path)
+            .arg(".")
+            .output()
+            .await;
+
+        match zip_cmd {
+            Ok(out) if !out.status.success() => {
+                return Ok(ToolResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some(format!("压缩网站文件失败: {}", String::from_utf8_lossy(&out.stderr))),
+                });
+            }
+            Err(e) => {
+                return Ok(ToolResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some(format!("调用 zip 命令失败: {}", e)),
+                });
+            }
+            _ => {}
+        }
+
+        let contents = match tokio::fs::read(&zip_path).await {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                let _ = tokio::fs::remove_file(&zip_path).await;
+                return Ok(ToolResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some(format!("读取压缩文件失败: {}", e)),
+                });
+            }
+        };
+
+        // 清理临时文件
+        let _ = tokio::fs::remove_file(&zip_path).await;
+
+        let part = reqwest::multipart::Part::bytes(contents)
+            .file_name(zip_filename);
+        
+        let form = reqwest::multipart::Form::new()
+            .part("file", part)
+            .text("site_name", site_name.to_string());
+
+        match self
+            .api
+            .agent_post_multipart("/api/v1/huanxing/agent/website/deploy", form, &[("user_id", &user_id)])
+            .await
+        {
+            Ok(resp) => {
+                let url = resp["data"]["url"].as_str().unwrap_or_default().to_string();
+                Ok(ToolResult {
+                    success: true,
+                    output: json!({
+                        "deployed": true,
+                        "url": url,
+                        "message": "网站部署成功，请将此URL发送给用户预览"
+                    })
+                    .to_string(),
+                    error: None,
+                })
+            }
+            Err(e) => Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some(format!("上传到网站部署服务失败: {}", e)),
+            }),
         }
     }
 }
