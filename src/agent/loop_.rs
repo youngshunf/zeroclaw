@@ -1244,8 +1244,17 @@ fn parse_perl_style_tool_calls(response: &str) -> Vec<ParsedToolCall> {
     static ARGS_RE: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r#"--(\w+)\s+(?:"([^"]+)"|'([^']+)')"#).unwrap());
 
+    // Strip stray XML tags (e.g. </parameter>) that some models mix into
+    // the Perl-style format.  These interfere with arg extraction but carry
+    // no semantic meaning here.
+    static XML_TAG_STRIP_RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"</?[a-zA-Z_][a-zA-Z0-9_-]*[^>]*>").unwrap());
+
     for cap in PERL_RE.captures_iter(response) {
-        let content = cap.get(1).map(|m| m.as_str()).unwrap_or("");
+        let raw_content = cap.get(1).map(|m| m.as_str()).unwrap_or("");
+        // Clean stray XML tags before further parsing
+        let cleaned = XML_TAG_STRIP_RE.replace_all(raw_content, "");
+        let content = cleaned.as_ref();
 
         // Extract tool name
         let tool_name_cap = TOOL_NAME_RE.captures(content);
@@ -1259,16 +1268,29 @@ fn parse_perl_style_tool_calls(response: &str) -> Vec<ParsedToolCall> {
             continue;
         }
 
-        // Extract args block
-        let args_block = ARGS_BLOCK_RE
+        // Extract args block — try the delimited `args => { ... }` first.
+        // When PERL_RE's `}}` consumes both the inner args `}` and the
+        // outer `}`, ARGS_BLOCK_RE won't find a closing brace inside the
+        // captured group.  In that case, fall back to scanning everything
+        // after `args => {` (or the entire content) for `--key "value"`.
+        let args_search_region = ARGS_BLOCK_RE
             .captures(content)
             .and_then(|c| c.get(1))
-            .map(|m| m.as_str())
-            .unwrap_or("");
+            .map(|m| m.as_str().to_string())
+            .unwrap_or_else(|| {
+                // Fallback: grab everything after `args => {`
+                static ARGS_OPEN_RE: LazyLock<Regex> =
+                    LazyLock::new(|| Regex::new(r"(?s)args\s*=>\s*\{(.+)").unwrap());
+                ARGS_OPEN_RE
+                    .captures(content)
+                    .and_then(|c| c.get(1))
+                    .map(|m| m.as_str().to_string())
+                    .unwrap_or_else(|| content.to_string())
+            });
 
         let mut arguments = serde_json::Map::new();
 
-        for arg_cap in ARGS_RE.captures_iter(args_block) {
+        for arg_cap in ARGS_RE.captures_iter(&args_search_region) {
             let key = arg_cap.get(1).map(|m| m.as_str()).unwrap_or("");
             let value = arg_cap.get(2).or_else(|| arg_cap.get(3)).map(|m| m.as_str()).unwrap_or("");
 
@@ -6921,6 +6943,37 @@ Tail"#;
             "uname -a"
         );
     }
+
+    #[test]
+    fn parse_perl_style_handles_multiline_with_parameter_tag() {
+        // Exact format from production logs where the model outputs a
+        // multiline Perl-style block with </parameter> XML contamination
+        // and only two closing braces (one for args, one for outer).
+        let response = "[TOOL_CALL]\n{tool => \"shell\", args => {\n  --command \"bash /opt/napcat/start.sh restart\"</parameter>\n}}\n[/TOOL_CALL]";
+
+        let calls = parse_perl_style_tool_calls(response);
+        assert_eq!(calls.len(), 1, "expected 1 tool call but got {}", calls.len());
+        assert_eq!(calls[0].name, "shell");
+        assert_eq!(
+            calls[0].arguments.get("command").unwrap().as_str().unwrap(),
+            "bash /opt/napcat/start.sh restart"
+        );
+    }
+
+    #[test]
+    fn parse_tool_calls_handles_perl_style_with_parameter_contamination() {
+        // Verify the full parse_tool_calls dispatch also picks up this format
+        let response = "[TOOL_CALL]\n{tool => \"shell\", args => {\n  --command \"ps aux | grep napcat\"</parameter>\n}}\n[/TOOL_CALL]";
+
+        let (text, calls) = parse_tool_calls(response);
+        assert_eq!(calls.len(), 1, "expected 1 tool call, text was: {text:?}");
+        assert_eq!(calls[0].name, "shell");
+        assert_eq!(
+            calls[0].arguments.get("command").unwrap().as_str().unwrap(),
+            "ps aux | grep napcat"
+        );
+    }
+
 
     #[test]
     fn parse_tool_calls_recovers_unclosed_tool_call_with_json() {
