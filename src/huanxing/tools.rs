@@ -1531,18 +1531,14 @@ fn mask_phone(phone: &str) -> String {
 pub struct HxTts {
     tts_config: crate::config::TtsConfig,
     workspace_dir: std::path::PathBuf,
-    api: Option<crate::huanxing::ApiClient>,
-    db: crate::huanxing::TenantDb,
 }
 
 impl HxTts {
     pub fn new(
         tts_config: crate::config::TtsConfig,
         workspace_dir: std::path::PathBuf,
-        api: Option<crate::huanxing::ApiClient>,
-        db: crate::huanxing::TenantDb,
     ) -> Self {
-        Self { tts_config, workspace_dir, api, db }
+        Self { tts_config, workspace_dir }
     }
 }
 
@@ -1671,62 +1667,35 @@ impl Tool for HxTts {
         let ext = &self.tts_config.default_format;
         let filename = format!("voice_{}.{}", uuid::Uuid::new_v4().simple(), ext);
 
-        // 2. Safely proxy binary up to CDN explicitly if Huanxing API enabled
-        if let Some(api) = &self.api {
-            let agent_id = self.workspace_dir
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or_default()
-                .to_string();
-
-            let user_id = match self.db.find_by_agent_id(&agent_id).await {
-                Ok(Some(user)) => user.user_id,
-                _ => agent_id.clone(),
-            };
-
-            let part = reqwest::multipart::Part::bytes(audio_bytes.to_vec())
-                .file_name(filename.clone());
-            let form = reqwest::multipart::Form::new().part("file", part);
-
-            match api.agent_post_multipart("/api/v1/huanxing/agent/files/upload", form, &[("user_id", &user_id)]).await {
-                Ok(upload_resp) => {
-                    if let Some(url) = upload_resp["data"]["url"].as_str() {
-                        tracing::info!("hx_tts: uploaded audio to OSS successfully: {}", url);
-                        return Ok(ToolResult {
-                            success: true,
-                            output: format!("[VOICE:{}]", url),
-                            error: None,
-                        });
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("hx_tts: OSS upload failed ({e}), falling back to local file.");
-                }
-            }
-        }
-
-        // 3. Fallback: Save to tenant local cache directory if no API/CDN
+        // Save audio locally — each channel reads this file in its own native way
         let tts_dir = self.workspace_dir.join("tts_cache");
-        let _ = tokio::fs::create_dir_all(&tts_dir).await;
+        if let Err(e) = tokio::fs::create_dir_all(&tts_dir).await {
+            return Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some(format!("创建 tts_cache 目录失败: {e}")),
+            });
+        }
         let file_path = tts_dir.join(&filename);
 
         if let Err(e) = tokio::fs::write(&file_path, &audio_bytes).await {
             return Ok(ToolResult {
                 success: false,
                 output: String::new(),
-                error: Some(format!("写入本地音频文件失败: {e}")),
+                error: Some(format!("写入音频文件失败: {e}")),
             });
         }
 
         tracing::info!(
-            "hx_tts: synthesized {} bytes, saved to local fallback {}",
+            "hx_tts: synthesized {} bytes, saved to {}",
             audio_bytes.len(),
             file_path.display()
         );
 
+        // Return plain local absolute path — channel layer handles delivery
         Ok(ToolResult {
             success: true,
-            output: format!("[VOICE:file://{}]", file_path.display()),
+            output: format!("[VOICE:{}]", file_path.display()),
             error: None,
         })
     }

@@ -1308,8 +1308,6 @@ pub fn all_tools_with_runtime(
                         tool_arcs.push(Arc::new(crate::huanxing::tools::HxTts::new(
                             tts_config,
                             root_config.workspace_dir.clone(),
-                            hx_api_for_register.clone(),
-                            hx_db.clone(),
                         )));
                         tracing::info!("HuanXing TTS tool registered (hx_tts)");
                     }
