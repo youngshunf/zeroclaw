@@ -107,6 +107,29 @@ async fn compose_onebot_content(content: &str, reply_message_id: Option<&str>) -
         #[cfg(feature = "huanxing")]
         if let Some(voice_path) = trimmed.strip_prefix("[VOICE:").and_then(|v| v.strip_suffix(']')).map(str::trim) {
             if !voice_path.is_empty() {
+                // Case A: HTTPS/HTTP URL — download the audio bytes and encode as base64
+                if voice_path.starts_with("http://") || voice_path.starts_with("https://") {
+                    match reqwest::get(voice_path).await {
+                        Ok(resp) if resp.status().is_success() => {
+                            if let Ok(bytes) = resp.bytes().await {
+                                let b64 = general_purpose::STANDARD.encode(&bytes);
+                                parts.push(format!("[CQ:record,file=base64://{}]", b64));
+                                continue;
+                            }
+                        }
+                        Ok(resp) => {
+                            tracing::warn!("napcat voice: HTTP download failed (status {}): {}", resp.status(), voice_path);
+                        }
+                        Err(e) => {
+                            tracing::warn!("napcat voice: HTTP download error: {e}");
+                        }
+                    }
+                    // If download failed, try passing URL directly to NapCat as fallback
+                    parts.push(format!("[CQ:record,file={}]", voice_path));
+                    continue;
+                }
+
+                // Case B: Local file path — read and encode as base64
                 let clean_path = voice_path.strip_prefix("file://").unwrap_or(voice_path);
                 if let Ok(bytes) = tokio::fs::read(clean_path).await {
                     let b64 = general_purpose::STANDARD.encode(&bytes);
