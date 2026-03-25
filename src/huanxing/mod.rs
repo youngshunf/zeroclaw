@@ -39,6 +39,7 @@ pub mod hub_sync;
 pub mod multi_tenant_resolver;
 pub mod permissions;
 pub mod registry;
+pub mod register;
 pub mod router;
 pub mod secret_tools;
 pub mod skill_market_tools;

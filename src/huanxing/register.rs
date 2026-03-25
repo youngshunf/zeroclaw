@@ -1,0 +1,356 @@
+//! Centralized HuanXing tool registration.
+//!
+//! All HuanXing tool instantiation lives here, keeping `src/tools/mod.rs`
+//! free of `#[cfg(feature = "huanxing")]` blocks (per 唤星开发规范 Rule 1).
+
+use std::sync::Arc;
+
+use crate::config::Config;
+use crate::security::SecurityPolicy;
+use crate::tools::Tool;
+
+/// Build and return all HuanXing tools.
+///
+/// Called once from `src/tools/mod.rs` behind a single `#[cfg(feature = "huanxing")]` gate.
+/// Internally handles DB init, TenantRouter creation, Hub Registry loading,
+/// and every tool group's instantiation.
+pub fn huanxing_all_tools(
+    root_config: &Config,
+    security: Arc<SecurityPolicy>,
+    workspace_dir: &std::path::Path,
+) -> Vec<Arc<dyn Tool>> {
+    let mut tool_arcs: Vec<Arc<dyn Tool>> = Vec::new();
+
+    let hx_db_path = root_config
+        .huanxing
+        .resolve_db_path(&root_config.workspace_dir);
+
+    let hx_db = match super::TenantDb::open(&hx_db_path) {
+        Ok(db) => db,
+        Err(e) => {
+            tracing::warn!(
+                "HuanXing enabled but failed to open DB at {}: {e}",
+                hx_db_path.display()
+            );
+            return tool_arcs;
+        }
+    };
+
+    // ── DB-only tools (no API/router dependency) ─────────────────
+    tool_arcs.push(Arc::new(super::tools::HxLookupSender::new(hx_db.clone())));
+    tool_arcs.push(Arc::new(super::tools::HxGetUser::new(hx_db.clone())));
+    tool_arcs.push(Arc::new(super::tools::HxLocalFindUser::new(hx_db.clone())));
+    tool_arcs.push(Arc::new(super::tools::HxLocalStats::new(hx_db.clone())));
+
+    // ── Image generation tool ────────────────────────────────────
+    if root_config.huanxing.hx_image_gen.enabled {
+        let api_key = root_config
+            .huanxing
+            .hx_image_gen
+            .api_key
+            .clone()
+            .or_else(|| root_config.api_key.clone())
+            .unwrap_or_default();
+
+        let api_url = root_config
+            .huanxing
+            .hx_image_gen
+            .api_url
+            .clone()
+            .unwrap_or_else(|| {
+                root_config
+                    .api_url
+                    .clone()
+                    .map(|u| format!("{}/images/generations", u.trim_end_matches('/')))
+                    .unwrap_or_else(|| {
+                        "https://api.openai.com/v1/images/generations".to_string()
+                    })
+            });
+
+        tool_arcs.push(Arc::new(super::hx_image_gen::HxImageGenTool::new(
+            security.clone(),
+            workspace_dir.to_path_buf(),
+            root_config.huanxing.hx_image_gen.models.clone(),
+            api_url,
+            api_key,
+        )));
+    }
+
+    // ── API-dependent tools (SMS, quota, subscription, etc.) ─────
+    let hx_api = if let Some(ref key) = root_config.huanxing.agent_key {
+        let api = super::ApiClient::new(
+            root_config.huanxing.api_url(),
+            key,
+            &root_config.huanxing.server_id_or_hostname(),
+        );
+        tool_arcs.extend(super::tools::huanxing_api_tools(
+            api.clone(),
+            hx_db.clone(),
+            workspace_dir.to_path_buf(),
+        ));
+        tracing::info!(
+            "HuanXing API tools registered (sms, quota, subscription, usage, file_upload, website_deploy)"
+        );
+        Some(api)
+    } else {
+        tracing::info!("HuanXing agent_key not configured, API tools skipped");
+        None
+    };
+
+    let hx_api_for_register = hx_api.clone();
+
+    // ── TenantRouter + router-dependent tools ────────────────────
+    let hx_config = root_config.huanxing.clone();
+    let ws_dir: std::path::PathBuf = root_config.workspace_dir.clone();
+    let router_result = tokio::task::block_in_place(|| {
+        tokio::runtime::Handle::current().block_on(super::TenantRouter::new(
+            hx_config,
+            ws_dir,
+            Arc::new(root_config.clone()),
+        ))
+    });
+
+    let router = match router_result {
+        Ok(r) => Arc::new(r),
+        Err(e) => {
+            tracing::warn!("HuanXing router init failed, only lookup tools available: {e}");
+            return tool_arcs;
+        }
+    };
+
+    // Resolve common paths
+    let agents_dir = root_config
+        .huanxing
+        .resolve_agents_dir(
+            root_config
+                .config_path
+                .parent()
+                .unwrap_or(&root_config.workspace_dir),
+        );
+    let common_skills_dir = root_config
+        .huanxing
+        .resolve_common_skills_dir(&root_config.workspace_dir);
+    let templates_dir = root_config
+        .huanxing
+        .resolve_templates_dir(&root_config.workspace_dir);
+    let default_template = root_config
+        .huanxing
+        .default_template
+        .clone()
+        .unwrap_or_else(|| "finance".to_string());
+    let default_provider = root_config.huanxing.default_provider.clone();
+    let llm_base_url = root_config.huanxing.llm_base_url.clone();
+    let server_id = root_config
+        .huanxing
+        .server_id
+        .clone()
+        .unwrap_or_else(|| "local-dev".to_string());
+
+    // ── Hub Registry ─────────────────────────────────────────────
+    let hub_registry: Option<Arc<super::registry::RegistryLoader>> =
+        root_config.huanxing.resolve_hub_dir().and_then(|hub_dir| {
+            if hub_dir.exists() && hub_dir.join("registry.json").exists() {
+                let registry = Arc::new(super::registry::RegistryLoader::new(hub_dir));
+                let reg_clone = registry.clone();
+                let _ = tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(reg_clone.ensure_loaded())
+                });
+                Some(registry)
+            } else {
+                None
+            }
+        });
+
+    // ── Register user tool (with optional hub registry) ──────────
+    if let Some(ref api) = hx_api_for_register {
+        let register_tool = if let Some(ref registry) = hub_registry {
+            super::tools::HxRegisterUser::with_registry(
+                hx_db.clone(),
+                api.clone(),
+                agents_dir.clone(),
+                common_skills_dir.clone(),
+                templates_dir.clone(),
+                default_template.clone(),
+                default_provider.clone(),
+                llm_base_url.clone(),
+                server_id.clone(),
+                router.clone(),
+                registry.clone(),
+            )
+        } else {
+            super::tools::HxRegisterUser::new(
+                hx_db.clone(),
+                api.clone(),
+                agents_dir.clone(),
+                common_skills_dir.clone(),
+                templates_dir.clone(),
+                default_template.clone(),
+                default_provider.clone(),
+                llm_base_url.clone(),
+                server_id.clone(),
+                router.clone(),
+            )
+        };
+        tool_arcs.push(Arc::new(register_tool));
+    }
+
+    // ── Tenant management tools ──────────────────────────────────
+    tool_arcs.push(Arc::new(super::tools::HxLocalBindChannel::new(
+        hx_db.clone(),
+        router.clone(),
+    )));
+    tool_arcs.push(Arc::new(super::tools::HxLocalUpdateUser::new(
+        hx_db.clone(),
+        router.clone(),
+    )));
+    tool_arcs.push(Arc::new(super::tools::HxLocalListUsers::new(
+        hx_db.clone(),
+    )));
+    tool_arcs.push(Arc::new(super::tools::HxInvalidateCache::new(
+        router.clone(),
+    )));
+    tracing::info!("HuanXing tools registered (all P0+P1: 14 tools)");
+
+    // Server lifecycle: register + heartbeat
+    router.start_server_lifecycle();
+
+    // ── Document tools (11) ──────────────────────────────────────
+    if let Some(ref api) = hx_api {
+        tool_arcs.push(Arc::new(super::doc_tools::HxFolderTree::new(api.clone(), hx_db.clone())));
+        tool_arcs.push(Arc::new(super::doc_tools::HxFolderCreate::new(api.clone(), hx_db.clone())));
+        tool_arcs.push(Arc::new(super::doc_tools::HxFolderDelete::new(api.clone(), hx_db.clone())));
+        tool_arcs.push(Arc::new(super::doc_tools::HxFolderMove::new(api.clone(), hx_db.clone())));
+        tool_arcs.push(Arc::new(super::doc_tools::HxDocList::new(api.clone(), hx_db.clone())));
+        tool_arcs.push(Arc::new(super::doc_tools::HxDocGet::new(api.clone(), hx_db.clone())));
+        tool_arcs.push(Arc::new(super::doc_tools::HxDocCreate::new(api.clone(), hx_db.clone())));
+        tool_arcs.push(Arc::new(super::doc_tools::HxDocUpdate::new(api.clone(), hx_db.clone())));
+        tool_arcs.push(Arc::new(super::doc_tools::HxDocDelete::new(api.clone(), hx_db.clone())));
+        tool_arcs.push(Arc::new(super::doc_tools::HxDocMove::new(api.clone(), hx_db.clone())));
+        tool_arcs.push(Arc::new(super::doc_tools::HxDocShare::new(api.clone(), hx_db.clone())));
+        tracing::info!("HuanXing document tools registered (11 tools)");
+    }
+
+    // ── HASN social tools (5) ────────────────────────────────────
+    {
+        let hasn_url = root_config.huanxing.hasn_url().to_string();
+        let agents_dir_hasn = root_config.huanxing.resolve_agents_dir(
+            root_config
+                .config_path
+                .parent()
+                .unwrap_or(&root_config.workspace_dir),
+        );
+        tool_arcs.push(Arc::new(super::hasn_tools::HasnSend::new(
+            hx_api.clone().unwrap_or_else(|| {
+                super::ApiClient::new(
+                    root_config.huanxing.api_url(),
+                    "",
+                    &root_config.huanxing.server_id_or_hostname(),
+                )
+            }),
+            agents_dir_hasn.clone(),
+            hasn_url.clone(),
+        )));
+        tool_arcs.push(Arc::new(super::hasn_tools::HasnContacts::new(
+            agents_dir_hasn.clone(),
+            hasn_url.clone(),
+        )));
+        tool_arcs.push(Arc::new(super::hasn_tools::HasnAddFriend::new(
+            agents_dir_hasn.clone(),
+            hasn_url.clone(),
+        )));
+        tool_arcs.push(Arc::new(super::hasn_tools::HasnInbox::new(
+            agents_dir_hasn.clone(),
+            hasn_url.clone(),
+        )));
+        tool_arcs.push(Arc::new(super::hasn_tools::HasnRespondRequest::new(
+            agents_dir_hasn,
+            hasn_url,
+        )));
+        tracing::info!("HuanXing HASN social tools registered (5 tools)");
+    }
+
+    // ── Skill marketplace tools (6) ──────────────────────────────
+    if let Some(ref registry) = hub_registry {
+        let agents_dir_market = root_config.huanxing.resolve_agents_dir(
+            root_config
+                .config_path
+                .parent()
+                .unwrap_or(&root_config.workspace_dir),
+        );
+        let router_slot = super::skill_market_tools::new_router_slot();
+        // Inject TenantRouter into slot for cache invalidation after skill install/uninstall
+        let _ = router_slot.set(Arc::clone(&router));
+        tool_arcs.push(Arc::new(super::skill_market_tools::HxSkillSearch {
+            registry: registry.clone(),
+            workspace_dir: agents_dir_market.clone(),
+        }));
+        tool_arcs.push(Arc::new(super::skill_market_tools::HxSkillInfo {
+            registry: registry.clone(),
+            workspace_dir: agents_dir_market.clone(),
+        }));
+        tool_arcs.push(Arc::new(super::skill_market_tools::HxSkillInstall {
+            registry: registry.clone(),
+            workspace_dir: agents_dir_market.clone(),
+            router_slot: router_slot.clone(),
+        }));
+        tool_arcs.push(Arc::new(super::skill_market_tools::HxSkillUninstall {
+            workspace_dir: agents_dir_market.clone(),
+            router_slot: router_slot.clone(),
+        }));
+        tool_arcs.push(Arc::new(super::skill_market_tools::HxSkillList {
+            registry: registry.clone(),
+            workspace_dir: agents_dir_market.clone(),
+            common_skills_dir: if common_skills_dir.exists() {
+                Some(common_skills_dir.clone())
+            } else {
+                None
+            },
+        }));
+        tool_arcs.push(Arc::new(super::skill_market_tools::HxSkillUpdate {
+            registry: registry.clone(),
+            workspace_dir: agents_dir_market,
+            router_slot: router_slot.clone(),
+        }));
+        tracing::info!("HuanXing skill marketplace tools registered (6 tools)");
+    }
+
+    // ── Secret management tools (3) ──────────────────────────────
+    {
+        let agents_dir_secret = root_config.huanxing.resolve_agents_dir(
+            root_config
+                .config_path
+                .parent()
+                .unwrap_or(&root_config.workspace_dir),
+        );
+        tool_arcs.push(Arc::new(super::secret_tools::HxSetSecret {
+            workspace_dir: agents_dir_secret.clone(),
+        }));
+        tool_arcs.push(Arc::new(super::secret_tools::HxListSecrets {
+            workspace_dir: agents_dir_secret.clone(),
+        }));
+        tool_arcs.push(Arc::new(super::secret_tools::HxDeleteSecret {
+            workspace_dir: agents_dir_secret,
+        }));
+        tracing::info!("HuanXing secret management tools registered (3 tools)");
+    }
+
+    // ── TTS voice tool (1) ───────────────────────────────────────
+    if root_config.tts.enabled {
+        let mut tts_config = root_config.tts.clone();
+
+        // 多租户模式下，如果 TTS 未配置独立的 api_key，默认使用用户的 LLM 主 api_key
+        if let Some(ref mut generic) = tts_config.generic_openai {
+            if generic.api_key.as_deref().unwrap_or("").trim().is_empty() {
+                generic.api_key = root_config.api_key.clone();
+            }
+        }
+
+        tool_arcs.push(Arc::new(super::tools::HxTts::new(
+            tts_config,
+            root_config.workspace_dir.clone(),
+        )));
+        tracing::info!("HuanXing TTS tool registered (hx_tts)");
+    }
+
+    tool_arcs
+}
