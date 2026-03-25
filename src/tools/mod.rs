@@ -69,7 +69,6 @@ pub mod model_switch;
 pub mod node_tool;
 pub mod notion_tool;
 pub mod pdf_read;
-pub mod process;
 pub mod project_intel;
 pub mod proxy_config;
 pub mod pushover;
@@ -147,7 +146,6 @@ pub use model_switch::ModelSwitchTool;
 pub use node_tool::NodeTool;
 pub use notion_tool::NotionTool;
 pub use pdf_read::PdfReadTool;
-pub use process::ProcessTool;
 pub use project_intel::ProjectIntelTool;
 pub use proxy_config::ProxyConfigTool;
 pub use pushover::PushoverTool;
@@ -179,11 +177,37 @@ pub use workspace_tool::WorkspaceTool;
 use crate::config::{Config, DelegateAgentConfig};
 use crate::memory::Memory;
 use crate::runtime::{NativeRuntime, RuntimeAdapter};
-use crate::security::SecurityPolicy;
+use crate::security::{create_sandbox, SecurityPolicy};
 use async_trait::async_trait;
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
+
+// ── Per-request security policy override (task-local) ────────────
+//
+// During channel message processing, the orchestrator can inject a
+// per-tenant security policy via `with_active_security`.  Tool
+// implementations call `get_active_security()` to prefer this
+// request-scoped policy over the global one baked into the tool at
+// construction time.
+
+tokio::task_local! {
+    static ACTIVE_SECURITY: Arc<SecurityPolicy>;
+}
+
+/// Retrieve the per-request security policy, if one was injected.
+pub fn get_active_security() -> Option<Arc<SecurityPolicy>> {
+    ACTIVE_SECURITY.try_with(|s| s.clone()).ok()
+}
+
+/// Run a future with a per-request security policy injected into the
+/// task-local scope.
+pub async fn with_active_security<F, T>(policy: Arc<SecurityPolicy>, future: F) -> T
+where
+    F: std::future::Future<Output = T>,
+{
+    ACTIVE_SECURITY.scope(policy, future).await
+}
 
 /// Shared handle to the delegate tool's parent-tools list.
 /// Callers can push additional tools (e.g. MCP wrappers) after construction.
@@ -239,41 +263,6 @@ impl Tool for ArcDelegatingTool {
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         self.inner.execute(args).await
     }
-}
-
-// ── Per-request security policy override (task-local) ────────────
-//
-// During channel message processing, the orchestrator can inject a
-// per-tenant security policy via `with_active_security`.  Tool
-// implementations call `get_active_security()` to prefer this
-// request-scoped policy over the global one baked into the tool at
-// construction time.  This mechanism replaces the previous
-// `#[cfg(feature = "huanxing")]` branches in shell.rs / file_*.rs
-// and is useful for *any* per-request SecurityPolicy override
-// scenario, not just multi-tenant.
-
-tokio::task_local! {
-    static ACTIVE_SECURITY: Arc<SecurityPolicy>;
-}
-
-/// Retrieve the per-request security policy, if one was injected.
-///
-/// Tools should prefer this over their construction-time policy:
-/// ```ignore
-/// let security = get_active_security().unwrap_or_else(|| self.security.clone());
-/// ```
-pub fn get_active_security() -> Option<Arc<SecurityPolicy>> {
-    ACTIVE_SECURITY.try_with(|s| s.clone()).ok()
-}
-
-/// Run a future with a per-request security policy injected into the
-/// task-local scope.  Tools executed within this scope will see the
-/// overridden policy via [`get_active_security`].
-pub async fn with_active_security<F, T>(security: Arc<SecurityPolicy>, f: F) -> T
-where
-    F: std::future::Future<Output = T>,
-{
-    ACTIVE_SECURITY.scope(security, f).await
 }
 
 fn boxed_registry_from_arcs(tools: Vec<Arc<dyn Tool>>) -> Vec<Box<dyn Tool>> {
@@ -389,29 +378,12 @@ pub fn all_tools_with_runtime(
     Option<ChannelMapHandle>,
 ) {
     let has_shell_access = runtime.has_shell_access();
-
-    // 构造 SyscallAnomalyDetector（执行后被动分析 stderr）
-    let zeroclaw_dir = root_config
-        .config_path
-        .parent()
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| runtime.storage_path());
-    let syscall_detector = Arc::new(crate::security::SyscallAnomalyDetector::new(
-        root_config.security.syscall_anomaly.clone(),
-        &zeroclaw_dir,
-        root_config.security.audit.clone(),
-    ));
-
+    let sandbox = create_sandbox(&root_config.security);
     let mut tool_arcs: Vec<Arc<dyn Tool>> = vec![
-        Arc::new(ShellTool::new_with_syscall_detector(
-            security.clone(),
-            runtime.clone(),
-            Some(syscall_detector.clone()),
-        )),
-        Arc::new(ProcessTool::new_with_syscall_detector(
+        Arc::new(ShellTool::new_with_sandbox(
             security.clone(),
             runtime,
-            Some(syscall_detector),
+            sandbox,
         )),
         Arc::new(FileReadTool::new(security.clone())),
         Arc::new(FileWriteTool::new(security.clone())),
@@ -463,23 +435,12 @@ pub fn all_tools_with_runtime(
         root_config.skills.prompt_injection_mode,
         crate::config::SkillsPromptInjectionMode::Compact
     ) {
-        let mut read_skill = ReadSkillTool::new(
+        tool_arcs.push(Arc::new(ReadSkillTool::new(
             workspace_dir.to_path_buf(),
             root_config.skills.open_skills_enabled,
             root_config.skills.open_skills_dir.clone(),
-            root_config.skills.allow_scripts,
-        );
-        // 多租户模式：注入 common_skills_dir，让 agent 能 read_skill 读取公共技能
-        #[cfg(feature = "huanxing")]
-        {
-            let common_skills_dir = root_config
-                .huanxing
-                .resolve_common_skills_dir(&root_config.workspace_dir);
-            if common_skills_dir.exists() {
-                read_skill = read_skill.with_extra_skills_dir(common_skills_dir);
-            }
-        }
-        tool_arcs.push(Arc::new(read_skill));
+            false,
+        )));
     }
 
     if browser_config.enabled {
@@ -554,31 +515,14 @@ pub fn all_tools_with_runtime(
 
     // Web search tool (enabled by default for GLM and other models)
     if root_config.web_search.enabled {
-        tool_arcs.push(Arc::new(WebSearchTool::new_with_options(
-            security.clone(),
+        tool_arcs.push(Arc::new(WebSearchTool::new_with_config(
             root_config.web_search.provider.clone(),
-            root_config.web_search.api_key.clone(),
             root_config.web_search.brave_api_key.clone(),
-            root_config.web_search.perplexity_api_key.clone(),
-            root_config.web_search.exa_api_key.clone(),
-            root_config.web_search.jina_api_key.clone(),
             root_config.web_search.searxng_instance_url.clone(),
-            root_config.web_search.api_url.clone(),
             root_config.web_search.max_results,
             root_config.web_search.timeout_secs,
-            root_config.web_search.user_agent.clone(),
-            root_config.web_search.fallback_providers.clone(),
-            root_config.web_search.retries_per_provider,
-            root_config.web_search.retry_backoff_ms,
-            root_config.web_search.domain_filter.clone(),
-            root_config.web_search.language_filter.clone(),
-            root_config.web_search.country.clone(),
-            root_config.web_search.recency_filter.clone(),
-            root_config.web_search.max_tokens,
-            root_config.web_search.max_tokens_per_page,
-            root_config.web_search.exa_search_type.clone(),
-            root_config.web_search.exa_include_text,
-            root_config.web_search.jina_site_filters.clone(),
+            root_config.config_path.clone(),
+            root_config.secrets.encrypt,
         )));
     }
 
@@ -862,8 +806,7 @@ pub fn all_tools_with_runtime(
         .with_parent_tools(Arc::clone(&parent_tools))
         .with_multimodal_config(root_config.multimodal.clone())
         .with_delegate_config(root_config.delegate.clone())
-        .with_workspace_dir(workspace_dir.to_path_buf())
-        .with_allow_scripts(root_config.skills.allow_scripts);
+        .with_workspace_dir(workspace_dir.to_path_buf());
         tool_arcs.push(Arc::new(delegate_tool));
         Some(parent_tools)
     };
@@ -959,12 +902,18 @@ pub fn all_tools_with_runtime(
         }
     }
 
-    // ── HuanXing multi-tenant tools ────────────────────
+    // ── HuanXing tools (feature-gated) ───────────────────────────
     #[cfg(feature = "huanxing")]
-    if root_config.huanxing.enabled {
-        tool_arcs.extend(
-            crate::huanxing::register::huanxing_all_tools(root_config, security.clone(), workspace_dir)
+    {
+        let hx_tools = crate::huanxing::register::huanxing_all_tools(
+            root_config,
+            security.clone(),
+            root_config
+                .config_path
+                .parent()
+                .unwrap_or(std::path::Path::new(".")),
         );
+        tool_arcs.extend(hx_tools);
     }
 
     (

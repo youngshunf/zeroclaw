@@ -20,6 +20,7 @@ pub mod cli;
 pub mod context_resolver;
 pub mod dingtalk;
 pub mod discord;
+pub mod discord_history;
 pub mod email_channel;
 pub mod gmail_push;
 pub mod imessage;
@@ -52,6 +53,8 @@ pub mod traits;
 pub mod transcription;
 pub mod tts;
 pub mod twitter;
+#[cfg(feature = "voice-wake")]
+pub mod voice_wake;
 pub mod wati;
 pub mod webhook;
 pub mod wecom;
@@ -66,6 +69,7 @@ pub use clawdtalk::{ClawdTalkChannel, ClawdTalkConfig};
 pub use cli::CliChannel;
 pub use dingtalk::DingTalkChannel;
 pub use discord::DiscordChannel;
+pub use discord_history::DiscordHistoryChannel;
 pub use email_channel::EmailChannel;
 pub use gmail_push::GmailPushChannel;
 pub use imessage::IMessageChannel;
@@ -94,6 +98,8 @@ pub use traits::{Channel, SendMessage};
 #[allow(unused_imports)]
 pub use tts::{TtsManager, TtsProvider};
 pub use twitter::TwitterChannel;
+#[cfg(feature = "voice-wake")]
+pub use voice_wake::VoiceWakeChannel;
 pub use wati::WatiChannel;
 pub use webhook::WebhookChannel;
 pub use wecom::WeComChannel;
@@ -101,7 +107,10 @@ pub use whatsapp::WhatsAppChannel;
 #[cfg(feature = "whatsapp-web")]
 pub use whatsapp_web::WhatsAppWebChannel;
 
-use crate::agent::loop_::{build_tool_instructions, run_tool_call_loop, scrub_credentials};
+use crate::agent::loop_::{
+    build_tool_instructions, clear_model_switch_request, get_model_switch_state,
+    is_model_switch_requested, run_tool_call_loop, scrub_credentials,
+};
 use crate::approval::ApprovalManager;
 use crate::config::Config;
 use crate::identity;
@@ -539,7 +548,7 @@ fn conversation_history_key(msg: &traits::ChannelMessage) -> String {
     // NapCat (QQ) sets thread_ts to the per-message ID, which is unique
     // every time — skip it so conversations persist across messages.
     match &msg.thread_ts {
-        Some(tid) if msg.channel != "napcat" && msg.channel != "wechat_pad" => format!(
+        Some(tid) if msg.channel != "napcat" && msg.channel != "wechat_pad" && msg.channel != "qqbot" => format!(
             "{}_{}_{}_{}",
             msg.channel, msg.reply_target, tid, msg.sender
         ),
