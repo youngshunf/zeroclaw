@@ -443,6 +443,7 @@ impl WechatPadChannel {
             timestamp: payload.timestamp_val(),
             thread_ts: Some(message_id),
             interruption_scope_id: None,
+            attachments: vec![],
         })
     }
 }

@@ -431,6 +431,7 @@ impl NapcatChannel {
             // This is a message id for passive reply, not a thread id.
             thread_ts: Some(message_id),
             interruption_scope_id: None,
+            attachments: vec![],
         })
     }
 
