@@ -35,8 +35,6 @@ pub struct DelegateTool {
     delegate_config: DelegateToolConfig,
     /// Workspace directory inherited from the root agent context.
     workspace_dir: PathBuf,
-    /// Whether script-like files are allowed in skill directories.
-    allow_scripts: bool,
 }
 
 impl DelegateTool {
@@ -69,7 +67,6 @@ impl DelegateTool {
             multimodal_config: crate::config::MultimodalConfig::default(),
             delegate_config: DelegateToolConfig::default(),
             workspace_dir: PathBuf::new(),
-            allow_scripts: false,
         }
     }
 
@@ -108,7 +105,6 @@ impl DelegateTool {
             multimodal_config: crate::config::MultimodalConfig::default(),
             delegate_config: DelegateToolConfig::default(),
             workspace_dir: PathBuf::new(),
-            allow_scripts: false,
         }
     }
 
@@ -139,12 +135,6 @@ impl DelegateTool {
     /// Attach the workspace directory for system prompt enrichment.
     pub fn with_workspace_dir(mut self, workspace_dir: PathBuf) -> Self {
         self.workspace_dir = workspace_dir;
-        self
-    }
-
-    /// Set whether script-like files are allowed in skill directories.
-    pub fn with_allow_scripts(mut self, allow_scripts: bool) -> Self {
-        self.allow_scripts = allow_scripts;
         self
     }
 }
@@ -398,7 +388,7 @@ impl DelegateTool {
             .filter(|s| !s.trim().is_empty())
             .map(|dir| workspace_dir.join(dir))
             .unwrap_or_else(|| crate::skills::skills_dir(workspace_dir));
-        let skills = crate::skills::load_skills_from_directory(&skills_dir, self.allow_scripts);
+        let skills = crate::skills::load_skills_from_directory(&skills_dir, false);
 
         // Determine shell policy instructions when the `shell` tool is in the
         // effective tool list.

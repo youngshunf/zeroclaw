@@ -933,9 +933,16 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
 
     let inner = inner
         // ── SSE event stream ──
-        .route("/api/events", get(sse::handle_sse_events))
-        // ── WebSocket agent chat ──
-        .route("/ws/chat", get(ws::handle_ws_chat))
+        .route("/api/events", get(sse::handle_sse_events));
+
+    // ── WebSocket agent chat ──
+    // When huanxing feature is active, use independent multi-session WS handler
+    #[cfg(feature = "huanxing")]
+    let inner = inner.route("/ws/chat", get(crate::huanxing::hx_ws::handle_ws_chat));
+    #[cfg(not(feature = "huanxing"))]
+    let inner = inner.route("/ws/chat", get(ws::handle_ws_chat));
+
+    let inner = inner
         // ── WebSocket canvas updates ──
         .route("/ws/canvas/{id}", get(canvas::handle_ws_canvas))
         // ── WebSocket node discovery ──
