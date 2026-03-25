@@ -12,7 +12,7 @@ api_key = "sk-CBUn2XGX9ZGbPBbq8oXpSTKLcBmKmsKGrmfW5I6bHBHGAHkC"
 # ── Agent ─────────────────────────────────────────────────────
 [agent]
 compact_context = true           # 压缩上下文，减少 prompt tokens
-max_tool_iterations = 10
+max_tool_iterations = 30
 max_history_messages = 50        # Guardian 对话较短，50条够用
 
 [agent.session]
