@@ -1,0 +1,9 @@
+# HuanXing ZeroClaw Development Rules
+
+Always read and strictly follow the architecture isolation and development guidelines documented in `唤星开发规范.md` before writing or modifying any code in this project.
+
+**Core Principles:**
+1. **Zero Intrusion**: Do not modify upstream files heavily. Use `trait` injections (e.g., `MessageContextResolver`) rather than inline `#[cfg(feature = "huanxing")]` in core agent loops (`channels/mod.rs`, `loop_.rs`, etc.).
+2. **Isolation**: All HuanXing-specific logic, routers, tools, database interactions, and websocket handlers MUST be placed in `src/huanxing/`.
+3. **No Upstream WS/Tool Modifications**: Do not add HuanXing code to `gateway/ws.rs` or directly register complex agent tools in `tools/mod.rs` (use `src/huanxing/register.rs` and `hx_ws.rs`).
+4. **Validation**: Test your code with both `cargo check` and `cargo check --features huanxing` to ensure the upstream build is not broken. Always test with `cargo test --test huanxing_feature_coverage --features huanxing`.
