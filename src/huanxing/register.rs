@@ -352,5 +352,36 @@ pub fn huanxing_all_tools(
         tracing::info!("HuanXing TTS tool registered (hx_tts)");
     }
 
+    // ── Enhanced web search tool (replaces upstream WebSearchTool) ──
+    if root_config.web_search.enabled {
+        tool_arcs.push(Arc::new(super::hx_web_search::HxWebSearchTool::new_with_options(
+            security.clone(),
+            root_config.web_search.provider.clone(),
+            root_config.web_search.api_key.clone(),
+            root_config.web_search.brave_api_key.clone(),
+            root_config.web_search.perplexity_api_key.clone(),
+            root_config.web_search.exa_api_key.clone(),
+            root_config.web_search.jina_api_key.clone(),
+            root_config.web_search.searxng_instance_url.clone(),
+            root_config.web_search.api_url.clone(),
+            root_config.web_search.max_results,
+            root_config.web_search.timeout_secs,
+            root_config.web_search.user_agent.clone(),
+            root_config.web_search.fallback_providers.clone(),
+            root_config.web_search.retries_per_provider,
+            root_config.web_search.retry_backoff_ms,
+            root_config.web_search.domain_filter.clone(),
+            root_config.web_search.language_filter.clone(),
+            root_config.web_search.country.clone(),
+            root_config.web_search.recency_filter.clone(),
+            root_config.web_search.max_tokens,
+            root_config.web_search.max_tokens_per_page,
+            root_config.web_search.exa_search_type.clone(),
+            root_config.web_search.exa_include_text,
+            root_config.web_search.jina_site_filters.clone(),
+        )));
+        tracing::info!("HuanXing enhanced web search tool registered (firecrawl/tavily/multi-provider)");
+    }
+
     tool_arcs
 }
