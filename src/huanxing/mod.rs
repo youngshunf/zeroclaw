@@ -30,6 +30,7 @@
 pub mod api_agents;
 pub mod api_sessions;
 pub mod api_client;
+pub mod bootstrap;
 pub mod config;
 pub mod db;
 pub mod doc_tools;
@@ -52,6 +53,7 @@ pub mod tenant_heartbeat;
 pub mod tools;
 pub mod tts_dashscope;
 pub mod voice;
+pub mod voice_hook;
 pub mod ws_observer;
 
 pub use api_client::ApiClient;

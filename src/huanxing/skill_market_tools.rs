@@ -31,48 +31,10 @@ pub fn register_global_router(router: Arc<crate::huanxing::TenantRouter>) {
     let _ = GLOBAL_TENANT_ROUTER.set(router);
 }
 
-tokio::task_local! {
-    /// 当前正在处理消息的 tenant workspace 目录。
-    /// 在多租户消息处理路径中通过 `with_tenant_workspace` 注入，
-    /// 确保 skill 工具操作的是当前 tenant 的私有 skills/ 目录，
-    /// 而不是全局的 agents/ 根目录。
-    static CURRENT_TENANT_WORKSPACE: PathBuf;
-
-    /// 当前正在处理消息的 tenant 安全策略。
-    /// 在多租户消息处理路径中通过 `with_tenant_security` 注入，
-    /// 确保 shell/file 工具使用 agent 自己 config.toml 中的 [autonomy] 配置，
-    /// 而不是全局 config.toml 的空白 allowed_commands。
-    static CURRENT_TENANT_SECURITY: Arc<SecurityPolicy>;
-}
-
-/// 在当前 tokio task 范围内设置 tenant workspace，并执行 future。
-/// 多租户消息处理路径调用此函数，工具执行时通过 `tenant_workspace()` 读取。
-pub async fn with_tenant_workspace<F, T>(workspace: PathBuf, f: F) -> T
-where
-    F: std::future::Future<Output = T>,
-{
-    CURRENT_TENANT_WORKSPACE.scope(workspace, f).await
-}
-
-/// 在当前 tokio task 范围内同时设置 tenant workspace 和 tenant security，并执行 future。
-/// 工具执行时通过 `tenant_security()` 读取安全策略，覆盖工具本身持有的全局策略。
-pub async fn with_tenant_context<F, T>(
-    workspace: PathBuf,
-    security: Arc<SecurityPolicy>,
-    f: F,
-) -> T
-where
-    F: std::future::Future<Output = T>,
-{
-    CURRENT_TENANT_WORKSPACE
-        .scope(workspace, CURRENT_TENANT_SECURITY.scope(security, f))
-        .await
-}
-
 /// 获取当前 task 的 tenant 安全策略（若已注入）。
 /// shell/file 工具调用此函数，优先使用 tenant policy 覆盖全局 policy。
 pub fn tenant_security() -> Option<Arc<SecurityPolicy>> {
-    CURRENT_TENANT_SECURITY.try_with(|s| s.clone()).ok()
+    crate::tools::get_active_security()
 }
 
 /// Invalidate the tenant cache for the current user (best-effort).
@@ -92,12 +54,10 @@ fn invalidate_current_user(slot: &RouterSlot, fallback_ws: &Path) {
 }
 
 /// Get the effective workspace dir for the current tenant.
-/// 多租户模式下从 task-local CURRENT_TENANT_WORKSPACE 读取 per-tenant 目录；
+/// 多租户模式下从 task-local ACTIVE_WORKSPACE 读取 per-tenant 目录；
 /// 非多租户模式下（CLI/单机）回退到工具构建时传入的 workspace_dir（agents_dir）。
 fn tenant_workspace(fallback: &Path) -> PathBuf {
-    CURRENT_TENANT_WORKSPACE
-        .try_with(|ws| ws.clone())
-        .unwrap_or_else(|_| fallback.to_path_buf())
+    crate::tools::get_active_workspace().unwrap_or_else(|| fallback.to_path_buf())
 }
 
 /// Format a risk level with emoji.

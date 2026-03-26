@@ -224,11 +224,17 @@ use std::sync::Arc;
 
 tokio::task_local! {
     static ACTIVE_SECURITY: Arc<SecurityPolicy>;
+    static ACTIVE_WORKSPACE: std::path::PathBuf;
 }
 
 /// Retrieve the per-request security policy, if one was injected.
 pub fn get_active_security() -> Option<Arc<SecurityPolicy>> {
     ACTIVE_SECURITY.try_with(|s| s.clone()).ok()
+}
+
+/// Retrieve the per-request workspace directory, if one was injected.
+pub fn get_active_workspace() -> Option<std::path::PathBuf> {
+    ACTIVE_WORKSPACE.try_with(|w| w.clone()).ok()
 }
 
 /// Run a future with a per-request security policy injected into the
@@ -238,6 +244,15 @@ where
     F: std::future::Future<Output = T>,
 {
     ACTIVE_SECURITY.scope(policy, future).await
+}
+
+/// Run a future with a per-request workspace directory injected into the
+/// task-local scope.
+pub async fn with_active_workspace<F, T>(workspace: std::path::PathBuf, future: F) -> T
+where
+    F: std::future::Future<Output = T>,
+{
+    ACTIVE_WORKSPACE.scope(workspace, future).await
 }
 
 /// Shared handle to the delegate tool's parent-tools list.

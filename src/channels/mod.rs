@@ -257,8 +257,7 @@ fn register_live_channels(channels_by_name: &HashMap<String, Arc<dyn Channel>>) 
     }
 }
 
-#[cfg(feature = "huanxing")]
-pub(crate) fn get_live_channel(name: &str) -> Option<Arc<dyn Channel>> {
+pub fn get_live_channel(name: &str) -> Option<Arc<dyn Channel>> {
     live_channels_registry()
         .lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -374,11 +373,13 @@ struct ChannelRuntimeContext {
     tools_registry: Arc<Vec<Box<dyn Tool>>>,
     observer: Arc<dyn Observer>,
     system_prompt: Arc<String>,
-    model: Arc<String>,
-    temperature: f64,
-    auto_save_memory: bool,
-    max_tool_iterations: usize,
-    min_relevance_score: f64,
+    pub model: Arc<String>,
+    pub temperature: f64,
+    pub auto_save_memory: bool,
+    pub max_tool_iterations: usize,
+    pub max_history_messages: usize,
+    pub compact_context: bool,
+    pub min_relevance_score: f64,
     conversation_histories: ConversationHistoryMap,
     pending_new_sessions: PendingNewSessionSet,
     provider_cache: ProviderCacheMap,
@@ -413,9 +414,6 @@ struct ChannelRuntimeContext {
     /// with the `huanxing` feature it's a [`MultiTenantResolver`] backed by
     /// [`TenantRouter`].
     context_resolver: Arc<dyn crate::channels::context_resolver::MessageContextResolver>,
-    /// HuanXing: deferred router slot for skill market tools.
-    #[cfg(feature = "huanxing")]
-    skill_market_router_slot: Option<crate::huanxing::skill_market_tools::RouterSlot>,
 }
 
 #[derive(Clone)]
@@ -1315,7 +1313,7 @@ fn append_sender_turn(ctx: &ChannelRuntimeContext, sender_key: &str, turn: ChatM
         .unwrap_or_else(|e| e.into_inner());
     let turns = histories.entry(sender_key.to_string()).or_default();
     turns.push(turn);
-    while turns.len() > MAX_CHANNEL_HISTORY {
+    while turns.len() > ctx.max_history_messages {
         turns.remove(0);
     }
 }
@@ -2697,7 +2695,8 @@ async fn process_channel_message(
             .unwrap_or_else(|e| e.into_inner());
         let turns = histories.entry(history_key.clone()).or_default();
         turns.push(user_turn);
-        while turns.len() > MAX_CHANNEL_HISTORY {
+        let max_history = msg_ctx.max_history_messages.unwrap_or(ctx.max_history_messages);
+        while turns.len() > max_history {
             turns.remove(0);
         }
     } else {
@@ -2972,7 +2971,7 @@ async fn process_channel_message(
     let timeout_budget_secs =
         channel_message_timeout_budget_secs(
             msg_ctx.message_timeout_secs.unwrap_or(ctx.message_timeout_secs),
-            ctx.max_tool_iterations,
+            msg_ctx.max_tool_iterations.unwrap_or(ctx.max_tool_iterations),
         );
     let llm_call_start = Instant::now();
     #[allow(clippy::cast_possible_truncation)]
@@ -3025,7 +3024,7 @@ async fn process_channel_message(
                     msg.channel.as_str(),
                     Some(msg.reply_target.as_str()),
                     effective_multimodal,
-                    ctx.max_tool_iterations,
+                    msg_ctx.max_tool_iterations.unwrap_or(ctx.max_tool_iterations),
                     Some(cancellation_token.clone()),
                     delta_tx,
                     ctx.hooks.as_deref(),
@@ -3050,42 +3049,36 @@ async fn process_channel_message(
     // tools via `get_active_security()`), and also inject the tenant
     // workspace via the huanxing-specific `CURRENT_TENANT_WORKSPACE`
     // task-local (used by skill_market_tools).
-    let llm_result = match (tenant_workspace_for_scope, tenant_security_for_scope) {
-        #[cfg(feature = "huanxing")]
-        (Some(ws), Some(sec)) => {
-            // Both workspace and security override
+    let llm_result = if let Some(ws) = tenant_workspace_for_scope {
+        if let Some(sec) = tenant_security_for_scope {
             tokio::select! {
                 () = cancellation_token.cancelled() => LlmExecutionResult::Cancelled,
-                result = crate::huanxing::skill_market_tools::with_tenant_workspace(
+                result = crate::tools::with_active_workspace(
                     ws,
                     crate::tools::with_active_security(sec, run_tool_loop_future!()),
                 ) => LlmExecutionResult::Completed(result),
             }
-        }
-        #[cfg(feature = "huanxing")]
-        (Some(ws), None) => {
-            // Workspace only, no security override
+        } else {
             tokio::select! {
                 () = cancellation_token.cancelled() => LlmExecutionResult::Cancelled,
-                result = crate::huanxing::skill_market_tools::with_tenant_workspace(
+                result = crate::tools::with_active_workspace(
                     ws,
                     run_tool_loop_future!(),
                 ) => LlmExecutionResult::Completed(result),
             }
         }
-        (None, Some(sec)) => {
-            // Security only (unlikely but correct)
-            tokio::select! {
-                () = cancellation_token.cancelled() => LlmExecutionResult::Cancelled,
-                result = crate::tools::with_active_security(sec, run_tool_loop_future!()) => LlmExecutionResult::Completed(result),
-            }
+    } else if let Some(sec) = tenant_security_for_scope {
+        tokio::select! {
+            () = cancellation_token.cancelled() => LlmExecutionResult::Cancelled,
+            result = crate::tools::with_active_security(
+                sec,
+                run_tool_loop_future!(),
+            ) => LlmExecutionResult::Completed(result),
         }
-        _ => {
-            // No tenant overrides — global context only
-            tokio::select! {
-                () = cancellation_token.cancelled() => LlmExecutionResult::Cancelled,
-                result = run_tool_loop_future!() => LlmExecutionResult::Completed(result),
-            }
+    } else {
+        tokio::select! {
+            () = cancellation_token.cancelled() => LlmExecutionResult::Cancelled,
+            result = run_tool_loop_future!() => LlmExecutionResult::Completed(result),
         }
     };
 
@@ -3228,23 +3221,6 @@ async fn process_channel_message(
                 sanitized_response
             };
 
-            // HuanXing: auto-synthesize [VOICE:voice_name]text markers to audio files
-            // when the LLM outputs voice text instead of calling hx_tts tool.
-            #[cfg(feature = "huanxing")]
-            let delivered_response =
-                if let Some(voice_cfg) = crate::huanxing::voice::HxVoiceConfig::from_config(
-                    &ctx.prompt_config,
-                ) {
-                    crate::huanxing::voice::auto_synthesize_voice_markers(
-                        &delivered_response,
-                        &voice_cfg,
-                        &msg_ctx.workspace_dir,
-                    )
-                    .await
-                } else {
-                    delivered_response
-                };
-
             runtime_trace::record_event(
                 "channel_message_outbound",
                 Some(msg.channel.as_str()),
@@ -3283,7 +3259,8 @@ async fn process_channel_message(
                         .unwrap_or_else(|e| e.into_inner());
                     let turns = histories.entry(history_key.clone()).or_default();
                     turns.push(assistant_turn);
-                    while turns.len() > MAX_CHANNEL_HISTORY {
+                    let max_history = msg_ctx.max_history_messages.unwrap_or(ctx.max_history_messages);
+                    while turns.len() > max_history {
                         turns.remove(0);
                     }
                 } else {
@@ -3464,7 +3441,8 @@ async fn process_channel_message(
                                 .unwrap_or_else(|e| e.into_inner());
                             let turns = histories.entry(history_key.clone()).or_default();
                             turns.push(fail_turn.clone());
-                            while turns.len() > MAX_CHANNEL_HISTORY {
+                            let max_history = msg_ctx.max_history_messages.unwrap_or(ctx.max_history_messages);
+                            while turns.len() > max_history {
                                 turns.remove(0);
                             }
                         } else {
@@ -3523,7 +3501,8 @@ async fn process_channel_message(
                         .unwrap_or_else(|e| e.into_inner());
                     let turns = histories.entry(history_key.clone()).or_default();
                     turns.push(timeout_turn.clone());
-                    while turns.len() > MAX_CHANNEL_HISTORY {
+                    let max_history = msg_ctx.max_history_messages.unwrap_or(ctx.max_history_messages);
+                    while turns.len() > max_history {
                         turns.remove(0);
                     }
                 } else {
@@ -5253,8 +5232,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
             .map(|ch| (ch.name().to_string(), Arc::clone(ch)))
             .collect::<HashMap<_, _>>(),
     );
-    // HUANXING: register channels for tenant heartbeat delivery
-    #[cfg(feature = "huanxing")]
+    // Register channels in global registry for plugins/heartbeats
     register_live_channels(&channels_by_name);
 
     // Populate the reaction tool's channel map now that channels are initialized.
@@ -5307,6 +5285,69 @@ pub async fn start_channels(config: Config) -> Result<()> {
         .as_ref()
         .is_some_and(|mx| mx.interrupt_on_new_message);
 
+    let default_resolver = Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
+        crate::channels::context_resolver::MessageContext {
+            agent_id: "default".to_string(),
+            is_guardian: false,
+            nickname: None,
+            star_name: None,
+            model: Some(model.clone()),
+            provider: None,
+            api_key: config.api_key.clone(),
+            temperature: Some(temperature),
+            system_prompt: system_prompt.clone(),
+            memory: Arc::clone(&mem),
+            conversation_histories: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            session_manager: None,
+            workspace_dir: config.workspace_dir.clone(),
+            security: None,
+            non_cli_excluded_tools: None,
+            compact_context: None,
+            max_history_messages: None,
+            max_tool_iterations: None,
+            message_timeout_secs: None,
+            multimodal: None,
+            reliability: None,
+        },
+    )) as Arc<dyn crate::channels::context_resolver::MessageContextResolver>;
+
+    let context_resolver = {
+        #[cfg(feature = "huanxing")]
+        {
+            crate::huanxing::bootstrap::init_tenant_systems(&config)
+                .await
+                .unwrap_or_else(|| Arc::clone(&default_resolver))
+        }
+        #[cfg(not(feature = "huanxing"))]
+        {
+            Arc::clone(&default_resolver)
+        }
+    };
+
+    let hooks_opt = if config.hooks.enabled {
+        let mut runner = crate::hooks::HookRunner::new();
+        if config.hooks.builtin.command_logger {
+            runner.register(Box::new(crate::hooks::builtin::CommandLoggerHook::new()));
+        }
+        if config.hooks.builtin.webhook_audit.enabled {
+            runner.register(Box::new(crate::hooks::builtin::WebhookAuditHook::new(
+                config.hooks.builtin.webhook_audit.clone(),
+            )));
+        }
+        #[cfg(feature = "huanxing")]
+        {
+            if config.huanxing.enabled {
+                runner.register(Box::new(crate::huanxing::voice_hook::VoiceSynthesisHook::new(
+                    Arc::clone(&context_resolver),
+                    &config,
+                )));
+            }
+        }
+        Some(Arc::new(runner))
+    } else {
+        None
+    };
+
     let runtime_ctx = Arc::new(ChannelRuntimeContext {
         channels_by_name,
         provider: Arc::clone(&provider),
@@ -5320,6 +5361,8 @@ pub async fn start_channels(config: Config) -> Result<()> {
         temperature,
         auto_save_memory: config.memory.auto_save,
         max_tool_iterations: config.agent.max_tool_iterations,
+        max_history_messages: config.agent.max_history_messages,
+        compact_context: config.agent.compact_context,
         min_relevance_score: config.memory.min_relevance_score,
         conversation_histories: Arc::new(Mutex::new(HashMap::new())),
         pending_new_sessions: Arc::new(Mutex::new(HashSet::new())),
@@ -5341,20 +5384,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
         multimodal: config.multimodal.clone(),
         media_pipeline: config.media_pipeline.clone(),
         transcription_config: config.transcription.clone(),
-        hooks: if config.hooks.enabled {
-            let mut runner = crate::hooks::HookRunner::new();
-            if config.hooks.builtin.command_logger {
-                runner.register(Box::new(crate::hooks::builtin::CommandLoggerHook::new()));
-            }
-            if config.hooks.builtin.webhook_audit.enabled {
-                runner.register(Box::new(crate::hooks::builtin::WebhookAuditHook::new(
-                    config.hooks.builtin.webhook_audit.clone(),
-                )));
-            }
-            Some(Arc::new(runner))
-        } else {
-            None
-        },
+        hooks: hooks_opt,
         non_cli_excluded_tools: Arc::new(config.autonomy.non_cli_excluded_tools.clone()),
         autonomy_level: config.autonomy.level,
         tool_call_dedup_exempt: Arc::new(config.agent.tool_call_dedup_exempt.clone()),
@@ -5378,127 +5408,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
         },
         approval_manager: Arc::new(ApprovalManager::for_non_interactive(&config.autonomy)),
         activated_tools: ch_activated_handle,
-        context_resolver: {
-            #[cfg(feature = "huanxing")]
-            {
-                if config.huanxing.enabled {
-                    // Sync common skills from hub before loading tenant contexts
-                    if let Some(ref hub_dir) = config.huanxing.hub_dir {
-                        let common_skills_dir = config
-                            .huanxing
-                            .resolve_common_skills_dir(&config.workspace_dir);
-                        match crate::huanxing::sync::sync_common_skills(hub_dir, &common_skills_dir).await {
-                            Ok((added, updated, removed, skipped)) => {
-                                if added + updated + removed > 0 {
-                                    tracing::info!(
-                                        added,
-                                        updated,
-                                        removed,
-                                        skipped,
-                                        "Common skills synced from hub"
-                                    );
-                                }
-                            }
-                            Err(e) => {
-                                tracing::warn!("Common skills sync failed (non-fatal): {e}");
-                            }
-                        }
-                    }
-                    match crate::huanxing::TenantRouter::new(
-                        config.huanxing.clone(),
-                        config.workspace_dir.clone(),
-                        Arc::new(config.clone()),
-                    )
-                    .await
-                    {
-                        Ok(router) => {
-                            tracing::info!("HuanXing multi-tenant routing enabled");
-                            let router = Arc::new(router);
-                            // 注册全局 router 供 skill_market_tools 失效缓存使用
-                            crate::huanxing::skill_market_tools::register_global_router(Arc::clone(&router));
-                            Arc::new(crate::huanxing::MultiTenantResolver::new(router))
-                                as Arc<dyn crate::channels::context_resolver::MessageContextResolver>
-                        }
-                        Err(e) => {
-                            tracing::error!("Failed to initialize HuanXing tenant router: {e}; falling back to single-tenant");
-                            Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
-                                crate::channels::context_resolver::MessageContext {
-                                    agent_id: "default".to_string(),
-                                    is_guardian: false,
-                                    nickname: None,
-                                    star_name: None,
-                                    model: Some(model.clone()),
-                                    provider: None,
-                                    api_key: config.api_key.clone(),
-                                    temperature: Some(temperature),
-                                    system_prompt: system_prompt.clone(),
-                                    memory: Arc::clone(&mem),
-                                    conversation_histories: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-                                    session_manager: None,
-                                    workspace_dir: config.workspace_dir.clone(),
-                                    security: None,
-                                    non_cli_excluded_tools: None,
-                                    message_timeout_secs: None,
-                                    multimodal: None,
-                                    reliability: None,
-                                },
-                            )) as Arc<dyn crate::channels::context_resolver::MessageContextResolver>
-                        }
-                    }
-                } else {
-                    // huanxing feature enabled but config.huanxing.enabled = false
-                    Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
-                        crate::channels::context_resolver::MessageContext {
-                            agent_id: "default".to_string(),
-                            is_guardian: false,
-                            nickname: None,
-                            star_name: None,
-                            model: Some(model.clone()),
-                            provider: None,
-                            api_key: config.api_key.clone(),
-                            temperature: Some(temperature),
-                            system_prompt: system_prompt.clone(),
-                            memory: Arc::clone(&mem),
-                            conversation_histories: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-                            session_manager: None,
-                            workspace_dir: config.workspace_dir.clone(),
-                            security: None,
-                            non_cli_excluded_tools: None,
-                            message_timeout_secs: None,
-                            multimodal: None,
-                            reliability: None,
-                        },
-                    )) as Arc<dyn crate::channels::context_resolver::MessageContextResolver>
-                }
-            }
-            #[cfg(not(feature = "huanxing"))]
-            {
-                Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
-                    crate::channels::context_resolver::MessageContext {
-                        agent_id: "default".to_string(),
-                        is_guardian: false,
-                        nickname: None,
-                        star_name: None,
-                        model: Some(model.clone()),
-                        provider: None,
-                        api_key: config.api_key.clone(),
-                        temperature: Some(temperature),
-                        system_prompt: system_prompt.clone(),
-                        memory: Arc::clone(&mem),
-                        conversation_histories: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-                        session_manager: None,
-                        workspace_dir: config.workspace_dir.clone(),
-                        security: None,
-                        non_cli_excluded_tools: None,
-                        message_timeout_secs: None,
-                        multimodal: None,
-                        reliability: None,
-                    },
-                )) as Arc<dyn crate::channels::context_resolver::MessageContextResolver>
-            }
-        },
-        #[cfg(feature = "huanxing")]
-        skill_market_router_slot: None,
+        context_resolver,
     });
 
     // Hydrate in-memory conversation histories from persisted JSONL session files.
@@ -5801,6 +5711,8 @@ mod tests {
             temperature: 0.0,
             auto_save_memory: false,
             max_tool_iterations: 5,
+            compact_context: false,
+            max_history_messages: 50,
             min_relevance_score: 0.0,
             conversation_histories: Arc::new(Mutex::new(histories)),
             pending_new_sessions: Arc::new(Mutex::new(HashSet::new())),
@@ -5852,14 +5764,12 @@ mod tests {
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
-                    non_cli_excluded_tools: None,
+                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
                 },
             )),
-            #[cfg(feature = "huanxing")]
-            skill_market_router_slot: None,
         };
 
         assert!(compact_sender_history(&ctx, &sender));
@@ -5942,6 +5852,8 @@ mod tests {
             temperature: 0.0,
             auto_save_memory: false,
             max_tool_iterations: 5,
+            compact_context: false,
+            max_history_messages: 50,
             min_relevance_score: 0.0,
             conversation_histories: Arc::new(Mutex::new(HashMap::new())),
             pending_new_sessions: Arc::new(Mutex::new(HashSet::new())),
@@ -5993,14 +5905,12 @@ mod tests {
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
-                    non_cli_excluded_tools: None,
+                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
                 },
             )),
-            #[cfg(feature = "huanxing")]
-            skill_market_router_slot: None,
         };
 
         append_sender_turn(&ctx, &sender, ChatMessage::user("hello"));
@@ -6039,6 +5949,8 @@ mod tests {
             temperature: 0.0,
             auto_save_memory: false,
             max_tool_iterations: 5,
+            compact_context: false,
+            max_history_messages: 50,
             min_relevance_score: 0.0,
             conversation_histories: Arc::new(Mutex::new(histories)),
             pending_new_sessions: Arc::new(Mutex::new(HashSet::new())),
@@ -6090,14 +6002,12 @@ mod tests {
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
-                    non_cli_excluded_tools: None,
+                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
                 },
             )),
-            #[cfg(feature = "huanxing")]
-            skill_market_router_slot: None,
         };
 
         assert!(rollback_orphan_user_turn(&ctx, &sender, "pending"));
@@ -6155,6 +6065,8 @@ mod tests {
             temperature: 0.0,
             auto_save_memory: false,
             max_tool_iterations: 5,
+            compact_context: false,
+            max_history_messages: 50,
             min_relevance_score: 0.0,
             conversation_histories: Arc::new(Mutex::new(histories)),
             pending_new_sessions: Arc::new(Mutex::new(HashSet::new())),
@@ -6206,14 +6118,12 @@ mod tests {
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
-                    non_cli_excluded_tools: None,
+                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
                 },
             )),
-            #[cfg(feature = "huanxing")]
-            skill_market_router_slot: None,
         };
 
         assert!(rollback_orphan_user_turn(
@@ -6721,6 +6631,8 @@ BTC is currently around $65,000 based on latest tool output."#
             temperature: 0.0,
             auto_save_memory: false,
             max_tool_iterations: 10,
+            compact_context: false,
+            max_history_messages: 50,
             min_relevance_score: 0.0,
             conversation_histories: Arc::new(Mutex::new(HashMap::new())),
             pending_new_sessions: Arc::new(Mutex::new(HashSet::new())),
@@ -6772,14 +6684,12 @@ BTC is currently around $65,000 based on latest tool output."#
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
-                    non_cli_excluded_tools: None,
+                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
                 },
             )),
-            #[cfg(feature = "huanxing")]
-            skill_market_router_slot: None,
         });
 
         process_channel_message(
@@ -6828,6 +6738,8 @@ BTC is currently around $65,000 based on latest tool output."#
             temperature: 0.0,
             auto_save_memory: false,
             max_tool_iterations: 10,
+            compact_context: false,
+            max_history_messages: 50,
             min_relevance_score: 0.0,
             conversation_histories: Arc::new(Mutex::new(HashMap::new())),
             pending_new_sessions: Arc::new(Mutex::new(HashSet::new())),
@@ -6879,14 +6791,12 @@ BTC is currently around $65,000 based on latest tool output."#
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
-                    non_cli_excluded_tools: None,
+                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
                 },
             )),
-            #[cfg(feature = "huanxing")]
-            skill_market_router_slot: None,
         });
 
         process_channel_message(
@@ -6949,6 +6859,8 @@ BTC is currently around $65,000 based on latest tool output."#
             temperature: 0.0,
             auto_save_memory: false,
             max_tool_iterations: 10,
+            compact_context: false,
+            max_history_messages: 50,
             min_relevance_score: 0.0,
             conversation_histories: Arc::new(Mutex::new(HashMap::new())),
             pending_new_sessions: Arc::new(Mutex::new(HashSet::new())),
@@ -7000,14 +6912,12 @@ BTC is currently around $65,000 based on latest tool output."#
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
-                    non_cli_excluded_tools: None,
+                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
                 },
             )),
-            #[cfg(feature = "huanxing")]
-            skill_market_router_slot: None,
         });
 
         process_channel_message(
@@ -7055,6 +6965,8 @@ BTC is currently around $65,000 based on latest tool output."#
             temperature: 0.0,
             auto_save_memory: false,
             max_tool_iterations: 10,
+            compact_context: false,
+            max_history_messages: 50,
             min_relevance_score: 0.0,
             conversation_histories: Arc::new(Mutex::new(HashMap::new())),
             pending_new_sessions: Arc::new(Mutex::new(HashSet::new())),
@@ -7106,14 +7018,12 @@ BTC is currently around $65,000 based on latest tool output."#
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
-                    non_cli_excluded_tools: None,
+                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
                 },
             )),
-            #[cfg(feature = "huanxing")]
-            skill_market_router_slot: None,
         });
 
         process_channel_message(
@@ -7171,6 +7081,8 @@ BTC is currently around $65,000 based on latest tool output."#
             temperature: 0.0,
             auto_save_memory: false,
             max_tool_iterations: 5,
+            compact_context: false,
+            max_history_messages: 50,
             min_relevance_score: 0.0,
             conversation_histories: Arc::new(Mutex::new(HashMap::new())),
             pending_new_sessions: Arc::new(Mutex::new(HashSet::new())),
@@ -7222,14 +7134,12 @@ BTC is currently around $65,000 based on latest tool output."#
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
-                    non_cli_excluded_tools: None,
+                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
                 },
             )),
-            #[cfg(feature = "huanxing")]
-            skill_market_router_slot: None,
         });
 
         process_channel_message(
@@ -7308,6 +7218,8 @@ BTC is currently around $65,000 based on latest tool output."#
             temperature: 0.0,
             auto_save_memory: false,
             max_tool_iterations: 5,
+            compact_context: false,
+            max_history_messages: 50,
             min_relevance_score: 0.0,
             conversation_histories: Arc::new(Mutex::new(HashMap::new())),
             pending_new_sessions: Arc::new(Mutex::new(HashSet::new())),
@@ -7359,14 +7271,12 @@ BTC is currently around $65,000 based on latest tool output."#
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
-                    non_cli_excluded_tools: None,
+                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
                 },
             )),
-            #[cfg(feature = "huanxing")]
-            skill_market_router_slot: None,
         });
 
         process_channel_message(
@@ -7426,6 +7336,8 @@ BTC is currently around $65,000 based on latest tool output."#
             temperature: 0.0,
             auto_save_memory: false,
             max_tool_iterations: 5,
+            compact_context: false,
+            max_history_messages: 50,
             min_relevance_score: 0.0,
             conversation_histories: Arc::new(Mutex::new(HashMap::new())),
             pending_new_sessions: Arc::new(Mutex::new(HashSet::new())),
@@ -7477,14 +7389,12 @@ BTC is currently around $65,000 based on latest tool output."#
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
-                    non_cli_excluded_tools: None,
+                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
                 },
             )),
-            #[cfg(feature = "huanxing")]
-            skill_market_router_slot: None,
         });
 
         process_channel_message(
@@ -7556,6 +7466,8 @@ BTC is currently around $65,000 based on latest tool output."#
             temperature: 0.0,
             auto_save_memory: false,
             max_tool_iterations: 5,
+            compact_context: false,
+            max_history_messages: 50,
             min_relevance_score: 0.0,
             conversation_histories: Arc::new(Mutex::new(HashMap::new())),
             pending_new_sessions: Arc::new(Mutex::new(HashSet::new())),
@@ -7610,14 +7522,12 @@ BTC is currently around $65,000 based on latest tool output."#
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
-                    non_cli_excluded_tools: None,
+                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
                 },
             )),
-            #[cfg(feature = "huanxing")]
-            skill_market_router_slot: None,
         });
 
         process_channel_message(
@@ -7677,6 +7587,8 @@ BTC is currently around $65,000 based on latest tool output."#
             temperature: 0.0,
             auto_save_memory: false,
             max_tool_iterations: 12,
+            compact_context: false,
+            max_history_messages: 50,
             min_relevance_score: 0.0,
             conversation_histories: Arc::new(Mutex::new(HashMap::new())),
             pending_new_sessions: Arc::new(Mutex::new(HashSet::new())),
@@ -7728,19 +7640,12 @@ BTC is currently around $65,000 based on latest tool output."#
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
-                    non_cli_excluded_tools: None,
+                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
                 },
             )),
-            #[cfg(feature = "huanxing")]
-            skill_market_router_slot: None,
-            cost_tracking: None,
-            pacing: crate::config::PacingConfig {
-                loop_detection_enabled: false,
-                ..crate::config::PacingConfig::default()
-            },
         });
 
         process_channel_message(
@@ -7790,6 +7695,8 @@ BTC is currently around $65,000 based on latest tool output."#
             temperature: 0.0,
             auto_save_memory: false,
             max_tool_iterations: 3,
+            compact_context: false,
+            max_history_messages: 50,
             min_relevance_score: 0.0,
             conversation_histories: Arc::new(Mutex::new(HashMap::new())),
             pending_new_sessions: Arc::new(Mutex::new(HashSet::new())),
@@ -7841,19 +7748,12 @@ BTC is currently around $65,000 based on latest tool output."#
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
-                    non_cli_excluded_tools: None,
+                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
                 },
             )),
-            #[cfg(feature = "huanxing")]
-            skill_market_router_slot: None,
-            cost_tracking: None,
-            pacing: crate::config::PacingConfig {
-                loop_detection_enabled: false,
-                ..crate::config::PacingConfig::default()
-            },
         });
 
         process_channel_message(
@@ -8021,6 +7921,8 @@ BTC is currently around $65,000 based on latest tool output."#
             temperature: 0.0,
             auto_save_memory: false,
             max_tool_iterations: 10,
+            compact_context: false,
+            max_history_messages: 50,
             min_relevance_score: 0.0,
             conversation_histories: Arc::new(Mutex::new(HashMap::new())),
             pending_new_sessions: Arc::new(Mutex::new(HashSet::new())),
@@ -8072,14 +7974,12 @@ BTC is currently around $65,000 based on latest tool output."#
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
-                    non_cli_excluded_tools: None,
+                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
                 },
             )),
-            #[cfg(feature = "huanxing")]
-            skill_market_router_slot: None,
         });
 
         let (tx, rx) = tokio::sync::mpsc::channel::<traits::ChannelMessage>(4);
@@ -8150,6 +8050,8 @@ BTC is currently around $65,000 based on latest tool output."#
             temperature: 0.0,
             auto_save_memory: false,
             max_tool_iterations: 10,
+            compact_context: false,
+            max_history_messages: 50,
             min_relevance_score: 0.0,
             conversation_histories: Arc::new(Mutex::new(HashMap::new())),
             pending_new_sessions: Arc::new(Mutex::new(HashSet::new())),
@@ -8201,14 +8103,12 @@ BTC is currently around $65,000 based on latest tool output."#
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
-                    non_cli_excluded_tools: None,
+                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
                 },
             )),
-            #[cfg(feature = "huanxing")]
-            skill_market_router_slot: None,
         });
 
         let (tx, rx) = tokio::sync::mpsc::channel::<traits::ChannelMessage>(8);
@@ -8294,6 +8194,8 @@ BTC is currently around $65,000 based on latest tool output."#
             temperature: 0.0,
             auto_save_memory: false,
             max_tool_iterations: 10,
+            compact_context: false,
+            max_history_messages: 50,
             min_relevance_score: 0.0,
             conversation_histories: Arc::new(Mutex::new(HashMap::new())),
             pending_new_sessions: Arc::new(Mutex::new(HashSet::new())),
@@ -8345,14 +8247,12 @@ BTC is currently around $65,000 based on latest tool output."#
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
-                    non_cli_excluded_tools: None,
+                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
                 },
             )),
-            #[cfg(feature = "huanxing")]
-            skill_market_router_slot: None,
         });
 
         let (tx, rx) = tokio::sync::mpsc::channel::<traits::ChannelMessage>(8);
@@ -8435,6 +8335,8 @@ BTC is currently around $65,000 based on latest tool output."#
             temperature: 0.0,
             auto_save_memory: false,
             max_tool_iterations: 10,
+            compact_context: false,
+            max_history_messages: 50,
             min_relevance_score: 0.0,
             conversation_histories: Arc::new(Mutex::new(HashMap::new())),
             pending_new_sessions: Arc::new(Mutex::new(HashSet::new())),
@@ -8486,14 +8388,12 @@ BTC is currently around $65,000 based on latest tool output."#
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
-                    non_cli_excluded_tools: None,
+                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
                 },
             )),
-            #[cfg(feature = "huanxing")]
-            skill_market_router_slot: None,
         });
 
         let (tx, rx) = tokio::sync::mpsc::channel::<traits::ChannelMessage>(8);
@@ -8558,6 +8458,8 @@ BTC is currently around $65,000 based on latest tool output."#
             temperature: 0.0,
             auto_save_memory: false,
             max_tool_iterations: 10,
+            compact_context: false,
+            max_history_messages: 50,
             min_relevance_score: 0.0,
             conversation_histories: Arc::new(Mutex::new(HashMap::new())),
             pending_new_sessions: Arc::new(Mutex::new(HashSet::new())),
@@ -8609,14 +8511,12 @@ BTC is currently around $65,000 based on latest tool output."#
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
-                    non_cli_excluded_tools: None,
+                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
                 },
             )),
-            #[cfg(feature = "huanxing")]
-            skill_market_router_slot: None,
         });
 
         process_channel_message(
@@ -8664,6 +8564,8 @@ BTC is currently around $65,000 based on latest tool output."#
             temperature: 0.0,
             auto_save_memory: false,
             max_tool_iterations: 10,
+            compact_context: false,
+            max_history_messages: 50,
             min_relevance_score: 0.0,
             conversation_histories: Arc::new(Mutex::new(HashMap::new())),
             pending_new_sessions: Arc::new(Mutex::new(HashSet::new())),
@@ -8715,14 +8617,12 @@ BTC is currently around $65,000 based on latest tool output."#
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
-                    non_cli_excluded_tools: None,
+                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
                 },
             )),
-            #[cfg(feature = "huanxing")]
-            skill_market_router_slot: None,
         });
 
         process_channel_message(
@@ -9467,6 +9367,8 @@ BTC is currently around $65,000 based on latest tool output."#
             temperature: 0.0,
             auto_save_memory: false,
             max_tool_iterations: 5,
+            compact_context: false,
+            max_history_messages: 50,
             min_relevance_score: 0.0,
             conversation_histories: Arc::new(Mutex::new(HashMap::new())),
             pending_new_sessions: Arc::new(Mutex::new(HashSet::new())),
@@ -9518,14 +9420,12 @@ BTC is currently around $65,000 based on latest tool output."#
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
-                    non_cli_excluded_tools: None,
+                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
                 },
             )),
-            #[cfg(feature = "huanxing")]
-            skill_market_router_slot: None,
         });
 
         process_channel_message(
@@ -9625,6 +9525,8 @@ BTC is currently around $65,000 based on latest tool output."#
             temperature: 0.0,
             auto_save_memory: false,
             max_tool_iterations: 5,
+            compact_context: false,
+            max_history_messages: 50,
             min_relevance_score: 0.0,
             conversation_histories: Arc::new(Mutex::new(HashMap::new())),
             pending_new_sessions: Arc::new(Mutex::new(HashSet::new())),
@@ -9676,14 +9578,12 @@ BTC is currently around $65,000 based on latest tool output."#
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
-                    non_cli_excluded_tools: None,
+                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
                 },
             )),
-            #[cfg(feature = "huanxing")]
-            skill_market_router_slot: None,
         });
 
         process_channel_message(
@@ -9824,6 +9724,8 @@ BTC is currently around $65,000 based on latest tool output."#
             temperature: 0.0,
             auto_save_memory: false,
             max_tool_iterations: 5,
+            compact_context: false,
+            max_history_messages: 50,
             min_relevance_score: 0.0,
             conversation_histories: Arc::new(Mutex::new(HashMap::new())),
             pending_new_sessions: Arc::new(Mutex::new(HashSet::new())),
@@ -9875,14 +9777,12 @@ BTC is currently around $65,000 based on latest tool output."#
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
-                    non_cli_excluded_tools: None,
+                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
                 },
             )),
-            #[cfg(feature = "huanxing")]
-            skill_market_router_slot: None,
         });
 
         process_channel_message(
@@ -9958,6 +9858,8 @@ BTC is currently around $65,000 based on latest tool output."#
             temperature: 0.0,
             auto_save_memory: false,
             max_tool_iterations: 5,
+            compact_context: false,
+            max_history_messages: 50,
             min_relevance_score: 0.0,
             conversation_histories: Arc::new(Mutex::new(histories)),
             pending_new_sessions: Arc::new(Mutex::new(HashSet::new())),
@@ -10009,14 +9911,12 @@ BTC is currently around $65,000 based on latest tool output."#
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
-                    non_cli_excluded_tools: None,
+                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
                 },
             )),
-            #[cfg(feature = "huanxing")]
-            skill_market_router_slot: None,
         });
 
         process_channel_message(
@@ -10556,6 +10456,8 @@ This is an example JSON object for profile settings."#;
             temperature: 0.0,
             auto_save_memory: false,
             max_tool_iterations: 5,
+            compact_context: false,
+            max_history_messages: 50,
             min_relevance_score: 0.0,
             conversation_histories: Arc::new(Mutex::new(HashMap::new())),
             pending_new_sessions: Arc::new(Mutex::new(HashSet::new())),
@@ -10607,14 +10509,12 @@ This is an example JSON object for profile settings."#;
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
-                    non_cli_excluded_tools: None,
+                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
                 },
             )),
-            #[cfg(feature = "huanxing")]
-            skill_market_router_slot: None,
         });
 
         // Simulate a photo attachment message with [IMAGE:] marker.
@@ -10669,6 +10569,8 @@ This is an example JSON object for profile settings."#;
             temperature: 0.0,
             auto_save_memory: false,
             max_tool_iterations: 5,
+            compact_context: false,
+            max_history_messages: 50,
             min_relevance_score: 0.0,
             conversation_histories: Arc::new(Mutex::new(HashMap::new())),
             pending_new_sessions: Arc::new(Mutex::new(HashSet::new())),
@@ -10720,14 +10622,12 @@ This is an example JSON object for profile settings."#;
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
-                    non_cli_excluded_tools: None,
+                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
                 },
             )),
-            #[cfg(feature = "huanxing")]
-            skill_market_router_slot: None,
         });
 
         process_channel_message(
@@ -10858,6 +10758,8 @@ This is an example JSON object for profile settings."#;
             temperature: 0.0,
             auto_save_memory: false,
             max_tool_iterations: 5,
+            compact_context: false,
+            max_history_messages: 50,
             min_relevance_score: 0.0,
             conversation_histories: Arc::new(Mutex::new(HashMap::new())),
             pending_new_sessions: Arc::new(Mutex::new(HashSet::new())),
@@ -10909,14 +10811,12 @@ This is an example JSON object for profile settings."#;
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
-                    non_cli_excluded_tools: None,
+                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
                 },
             )),
-            #[cfg(feature = "huanxing")]
-            skill_market_router_slot: None,
         });
 
         process_channel_message(
@@ -10995,6 +10895,8 @@ This is an example JSON object for profile settings."#;
             temperature: 0.0,
             auto_save_memory: false,
             max_tool_iterations: 5,
+            compact_context: false,
+            max_history_messages: 50,
             min_relevance_score: 0.0,
             conversation_histories: Arc::new(Mutex::new(HashMap::new())),
             pending_new_sessions: Arc::new(Mutex::new(HashSet::new())),
@@ -11046,14 +10948,12 @@ This is an example JSON object for profile settings."#;
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
-                    non_cli_excluded_tools: None,
+                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
                 },
             )),
-            #[cfg(feature = "huanxing")]
-            skill_market_router_slot: None,
         });
 
         process_channel_message(
@@ -11124,6 +11024,8 @@ This is an example JSON object for profile settings."#;
             temperature: 0.0,
             auto_save_memory: false,
             max_tool_iterations: 5,
+            compact_context: false,
+            max_history_messages: 50,
             min_relevance_score: 0.0,
             conversation_histories: Arc::new(Mutex::new(HashMap::new())),
             pending_new_sessions: Arc::new(Mutex::new(HashSet::new())),
@@ -11175,14 +11077,12 @@ This is an example JSON object for profile settings."#;
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
-                    non_cli_excluded_tools: None,
+                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
                 },
             )),
-            #[cfg(feature = "huanxing")]
-            skill_market_router_slot: None,
         });
 
         process_channel_message(
@@ -11273,6 +11173,8 @@ This is an example JSON object for profile settings."#;
             temperature: 0.0,
             auto_save_memory: false,
             max_tool_iterations: 5,
+            compact_context: false,
+            max_history_messages: 50,
             min_relevance_score: 0.0,
             conversation_histories: Arc::new(Mutex::new(HashMap::new())),
             pending_new_sessions: Arc::new(Mutex::new(HashSet::new())),
@@ -11324,14 +11226,12 @@ This is an example JSON object for profile settings."#;
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
-                    non_cli_excluded_tools: None,
+                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
                 },
             )),
-            #[cfg(feature = "huanxing")]
-            skill_market_router_slot: None,
         });
 
         process_channel_message(
@@ -11563,6 +11463,8 @@ This is an example JSON object for profile settings."#;
             temperature: 0.0,
             auto_save_memory: false,
             max_tool_iterations: 10,
+            compact_context: false,
+            max_history_messages: 50,
             min_relevance_score: 0.0,
             conversation_histories: Arc::new(Mutex::new(HashMap::new())),
             pending_new_sessions: Arc::new(Mutex::new(HashSet::new())),
@@ -11614,14 +11516,12 @@ This is an example JSON object for profile settings."#;
                     session_manager: None,
                     workspace_dir: std::path::PathBuf::from("/tmp/test"),
                     security: None,
-                    non_cli_excluded_tools: None,
+                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
                 },
             )),
-            #[cfg(feature = "huanxing")]
-            skill_market_router_slot: None,
         });
 
         let (tx, rx) = tokio::sync::mpsc::channel::<traits::ChannelMessage>(8);

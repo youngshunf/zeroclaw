@@ -78,6 +78,15 @@ pub struct MessageContext {
     /// Tools excluded from non-CLI channels for this tenant.
     pub non_cli_excluded_tools: Option<Vec<String>>,
 
+    /// Override compact context config for this tenant.
+    pub compact_context: Option<bool>,
+
+    /// Override max tool iterations config for this tenant.
+    pub max_tool_iterations: Option<usize>,
+
+    /// Override max history messages config for this tenant.
+    pub max_history_messages: Option<usize>,
+
     /// Message timeout (seconds) for this tenant.
     pub message_timeout_secs: Option<u64>,
 

@@ -82,7 +82,10 @@ struct WorkspaceOverrides {
 #[serde(default)]
 struct AgentOverrides {
     session: Option<serde_json::Value>,
-    /// Catch-all for unknown fields (e.g. compact_context, max_tool_iterations).
+    compact_context: Option<bool>,
+    max_tool_iterations: Option<usize>,
+    max_history_messages: Option<usize>,
+    /// Catch-all for unknown fields.
     #[serde(flatten)]
     _extra: std::collections::HashMap<String, toml::Value>,
 }
@@ -138,6 +141,15 @@ pub struct TenantContext {
 
     /// Per-tenant temperature override (from workspace config.toml).
     pub temperature: Option<f64>,
+
+    /// Override compact context setting.
+    pub compact_context: Option<bool>,
+
+    /// Override max tool iterations setting.
+    pub max_tool_iterations: Option<usize>,
+
+    /// Override max history messages setting.
+    pub max_history_messages: Option<usize>,
 
     /// Per-tenant API key (from workspace config.toml, e.g. user-specific LLM token).
     pub api_key: Option<String>,
@@ -415,6 +427,9 @@ impl TenantContext {
             star_name,
             plan,
             temperature: effective_temperature,
+            compact_context: overrides.agent.compact_context,
+            max_tool_iterations: overrides.agent.max_tool_iterations,
+            max_history_messages: overrides.agent.max_history_messages,
             api_key: effective_api_key,
             is_guardian: false,
             memory: tenant_memory,
@@ -578,6 +593,9 @@ impl TenantContext {
             star_name: None,
             plan: None,
             temperature: overrides.default_temperature,
+            compact_context: overrides.agent.compact_context,
+            max_tool_iterations: overrides.agent.max_tool_iterations,
+            max_history_messages: overrides.agent.max_history_messages,
             api_key: effective_api_key,
             is_guardian: true,
             memory: guardian_memory,

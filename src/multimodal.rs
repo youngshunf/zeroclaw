@@ -21,9 +21,6 @@ pub struct PreparedMessages {
 
 #[derive(Debug, thiserror::Error)]
 pub enum MultimodalError {
-    #[error("multimodal image limit exceeded: max_images={max_images}, found={found}")]
-    TooManyImages { max_images: usize, found: usize },
-
     #[error("multimodal image size limit exceeded for '{input}': {size_bytes} bytes > {max_bytes} bytes")]
     ImageTooLarge {
         input: String,
@@ -120,13 +117,6 @@ pub async fn prepare_messages_for_provider(
     let max_bytes = max_image_size_mb.saturating_mul(1024 * 1024);
 
     let found_images = count_image_markers(messages);
-    if found_images > max_images {
-        return Err(MultimodalError::TooManyImages {
-            max_images,
-            found: found_images,
-        }
-        .into());
-    }
 
     if found_images == 0 {
         return Ok(PreparedMessages {
@@ -134,6 +124,9 @@ pub async fn prepare_messages_for_provider(
             contains_images: false,
         });
     }
+
+    let images_to_skip = found_images.saturating_sub(max_images);
+    let mut skipped_images = 0;
 
     let remote_client = build_runtime_proxy_client_with_timeouts("provider.ollama", 30, 10);
 
@@ -161,6 +154,12 @@ pub async fn prepare_messages_for_provider(
 
         let mut normalized_refs = Vec::with_capacity(refs.len());
         for reference in &refs {
+            if skipped_images < images_to_skip {
+                skipped_images += 1;
+                tracing::debug!("Skipping early image to satisfy max_images={max_images}");
+                continue;
+            }
+
             match normalize_image_reference(reference, config, max_bytes, &remote_client).await {
                 Ok(data_uri) => normalized_refs.push(data_uri),
                 Err(err) if is_current_turn => {
@@ -536,10 +535,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn prepare_messages_rejects_too_many_images() {
-        let messages = vec![ChatMessage::user(
-            "[IMAGE:/tmp/1.png]\n[IMAGE:/tmp/2.png]".to_string(),
-        )];
+    async fn prepare_messages_discards_early_images_when_over_limit() {
+        let temp = tempfile::tempdir().unwrap();
+        let img1 = temp.path().join("1.png");
+        let img2 = temp.path().join("2.png");
+        std::fs::write(&img1, [0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n']).unwrap();
+        std::fs::write(&img2, [0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n']).unwrap();
+
+        let messages = vec![ChatMessage::user(format!(
+            "[IMAGE:{}]\n[IMAGE:{}]",
+            img1.display(),
+            img2.display()
+        ))];
 
         let config = MultimodalConfig {
             max_images: 1,
@@ -548,13 +555,15 @@ mod tests {
             ..Default::default()
         };
 
-        let error = prepare_messages_for_provider(&messages, &config)
+        let prepared = prepare_messages_for_provider(&messages, &config)
             .await
-            .expect_err("should reject image count overflow");
+            .unwrap();
 
-        assert!(error
-            .to_string()
-            .contains("multimodal image limit exceeded"));
+        assert!(prepared.contains_images);
+        assert_eq!(prepared.messages.len(), 1);
+        
+        let found = count_image_markers(&prepared.messages);
+        assert_eq!(found, 1);
     }
 
     #[tokio::test]
