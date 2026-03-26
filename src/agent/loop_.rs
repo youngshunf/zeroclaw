@@ -1315,13 +1315,11 @@ fn parse_perl_style_tool_calls(response: &str) -> Vec<ParsedToolCall> {
             }
         }
 
-        if !arguments.is_empty() {
-            calls.push(ParsedToolCall {
-                name: map_tool_name_alias(tool_name).to_string(),
-                arguments: serde_json::Value::Object(arguments),
-                tool_call_id: None,
-            });
-        }
+        calls.push(ParsedToolCall {
+            name: map_tool_name_alias(tool_name).to_string(),
+            arguments: serde_json::Value::Object(arguments),
+            tool_call_id: None,
+        });
     }
 
     calls
@@ -7895,6 +7893,19 @@ Tail"#;
         );
     }
 
+    #[test]
+    fn parse_perl_style_handles_empty_args() {
+        // Production bug: tools like cron_list have no args.
+        // The parser was dropping these because `arguments.is_empty()`.
+        let response = "[TOOL_CALL]\n{tool => \"cron_list\", args => {\n}}\n[/TOOL_CALL]";
+
+        let (text, calls) = parse_tool_calls(response);
+        assert_eq!(calls.len(), 1, "expected 1 tool call with empty args, text was: {text:?}");
+        assert_eq!(calls[0].name, "cron_list");
+        assert!(calls[0].arguments.as_object().unwrap().is_empty());
+        // The TOOL_CALL block should be stripped from user-visible text
+        assert!(text.trim().is_empty(), "TOOL_CALL text should be stripped, got: {text:?}");
+    }
 
     #[test]
     fn parse_tool_calls_recovers_unclosed_tool_call_with_json() {

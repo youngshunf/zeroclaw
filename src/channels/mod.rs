@@ -11009,6 +11009,7 @@ This is an example JSON object for profile settings."#;
             )),
             activated_tools: None,
             cost_tracking: None,
+            pacing: crate::config::PacingConfig::default(),
             context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
                 crate::channels::context_resolver::MessageContext {
                     agent_id: "test".to_string(),
@@ -11147,6 +11148,7 @@ This is an example JSON object for profile settings."#;
             )),
             activated_tools: None,
             cost_tracking: None,
+            pacing: crate::config::PacingConfig::default(),
             context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
                 crate::channels::context_resolver::MessageContext {
                     agent_id: "test".to_string(),
@@ -11277,6 +11279,7 @@ This is an example JSON object for profile settings."#;
             )),
             activated_tools: None,
             cost_tracking: None,
+            pacing: crate::config::PacingConfig::default(),
             context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
                 crate::channels::context_resolver::MessageContext {
                     agent_id: "test".to_string(),
@@ -11427,6 +11430,7 @@ This is an example JSON object for profile settings."#;
             )),
             activated_tools: None,
             cost_tracking: None,
+            pacing: crate::config::PacingConfig::default(),
             context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
                 crate::channels::context_resolver::MessageContext {
                     agent_id: "test".to_string(),
