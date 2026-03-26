@@ -72,6 +72,7 @@ pub use clawdtalk::{ClawdTalkChannel, ClawdTalkConfig};
 pub use cli::CliChannel;
 pub use dingtalk::DingTalkChannel;
 pub use discord::DiscordChannel;
+#[allow(unused_imports)]
 pub use discord_history::DiscordHistoryChannel;
 pub use email_channel::EmailChannel;
 pub use gmail_push::GmailPushChannel;

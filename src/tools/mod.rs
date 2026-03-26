@@ -208,6 +208,7 @@ pub use traits::{ToolResult, ToolSpec};
 pub use verifiable_intent::VerifiableIntentTool;
 pub use weather_tool::WeatherTool;
 pub use web_fetch::WebFetchTool;
+#[allow(unused_imports)]
 pub use web_search_tool::WebSearchTool;
 pub use workspace_tool::WorkspaceTool;
 
