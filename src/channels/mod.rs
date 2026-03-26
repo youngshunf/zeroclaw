@@ -3069,9 +3069,7 @@ async fn process_channel_message(
                             Some(cancellation_token.clone()),
                             delta_tx.clone(),
                             ctx.hooks.as_deref(),
-                            if msg.channel == "cli"
-                                || ctx.autonomy_level == AutonomyLevel::Full
-                            {
+                            if msg.channel == "cli" {
                                 &[]
                             } else {
                                 effective_excluded_tools
