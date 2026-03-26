@@ -123,6 +123,7 @@ use crate::memory::{self, Memory};
 use crate::channels::session_backend::SessionBackend;
 use crate::observability::traits::{ObserverEvent, ObserverMetric};
 use crate::observability::{self, runtime_trace, Observer};
+use crate::providers::reliable::{scope_provider_fallback, take_last_provider_fallback};
 use crate::providers::{self, ChatMessage, Provider};
 use crate::runtime;
 use crate::security::{AutonomyLevel, SecurityPolicy};
@@ -364,6 +365,12 @@ impl InterruptOnNewMessageConfig {
 }
 
 #[derive(Clone)]
+struct ChannelCostTrackingState {
+    tracker: Arc<crate::cost::CostTracker>,
+    prices: Arc<HashMap<String, crate::config::schema::ModelPricing>>,
+}
+
+#[derive(Clone)]
 struct ChannelRuntimeContext {
     channels_by_name: Arc<HashMap<String, Arc<dyn Channel>>>,
     provider: Arc<dyn Provider>,
@@ -400,6 +407,7 @@ struct ChannelRuntimeContext {
     tool_call_dedup_exempt: Arc<Vec<String>>,
     model_routes: Arc<Vec<crate::config::ModelRouteConfig>>,
     query_classification: crate::config::QueryClassificationConfig,
+    pacing: crate::config::PacingConfig,
     ack_reactions: bool,
     show_tool_calls: bool,
     session_store: Option<Arc<session_store::SessionStore>>,
@@ -409,6 +417,7 @@ struct ChannelRuntimeContext {
     /// approval since no operator is present on channel runs.
     approval_manager: Arc<ApprovalManager>,
     activated_tools: Option<std::sync::Arc<std::sync::Mutex<crate::tools::ActivatedToolSet>>>,
+    cost_tracking: Option<ChannelCostTrackingState>,
     /// Message context resolver — abstracts single-tenant vs multi-tenant
     /// context lookup.  In single-tenant mode this is a [`DefaultContextResolver`];
     /// with the `huanxing` feature it's a [`MultiTenantResolver`] backed by
@@ -1910,7 +1919,7 @@ async fn build_memory_context(
         }
 
         if included > 0 {
-            context.push('\n');
+            context.push_str("[/Memory context]\n\n");
         }
     }
 
@@ -2018,8 +2027,9 @@ fn sanitize_channel_response(response: &str, tools: &[Box<dyn Tool>]) -> String 
         .map(|tool| tool.name().to_ascii_lowercase())
         .collect();
     // Strip any [Used tools: ...] prefix that the LLM may have echoed from
-    // history context (#4400).
-    let stripped_summary = strip_tool_summary_prefix(response);
+    // history context (#4400). Trim first to handle leading/trailing whitespace.
+    let trimmed_response = response.trim();
+    let stripped_summary = strip_tool_summary_prefix(trimmed_response);
     // Strip XML-style tool-call tags (e.g. <tool_call>...</tool_call>)
     let stripped_xml = strip_tool_call_tags(&stripped_summary);
     // Strip isolated tool-call JSON artifacts
@@ -2516,7 +2526,7 @@ async fn process_channel_message(
     let mut runtime_defaults = runtime_defaults_snapshot(ctx.as_ref());
 
     // ── Override model/provider/temperature/api_key from resolved context ────
-    let route = {
+    let mut route = {
         let provider = msg_ctx
             .provider
             .as_deref()
@@ -2537,7 +2547,7 @@ async fn process_channel_message(
     };
 
     // ── Create per-request provider (with tenant api_key if set) ────
-    let active_provider = if let Some(ref tenant_api_key) = msg_ctx.api_key {
+    let mut active_provider = if let Some(ref tenant_api_key) = msg_ctx.api_key {
         match create_resilient_provider_nonblocking(
             &route.provider,
             Some(tenant_api_key.clone()),
@@ -2830,26 +2840,27 @@ async fn process_channel_message(
     }
     let mut history = vec![ChatMessage::system(system_prompt)];
     history.extend(prior_turns);
-    let use_streaming = target_channel
+    let use_draft_streaming = target_channel
         .as_ref()
         .is_some_and(|ch| ch.supports_draft_updates());
 
     tracing::debug!(
         channel = %msg.channel,
         has_target_channel = target_channel.is_some(),
-        use_streaming,
-        supports_draft = target_channel.as_ref().map_or(false, |ch| ch.supports_draft_updates()),
-        "Draft streaming decision"
+        use_draft_streaming,
+        "Streaming decision"
     );
 
-    let (delta_tx, delta_rx) = if use_streaming {
+    // Partial mode: delta channel for draft updates (progress + text).
+    let (delta_tx, delta_rx) = if use_draft_streaming {
         let (tx, rx) = tokio::sync::mpsc::channel::<crate::agent::loop_::DraftEvent>(64);
         (Some(tx), Some(rx))
     } else {
         (None, None)
     };
 
-    let draft_message_id = if use_streaming {
+    // Partial mode: send an initial draft message for progressive editing.
+    let draft_message_id = if use_draft_streaming {
         if let Some(channel) = target_channel.as_ref() {
             match channel
                 .send_draft(
@@ -2870,42 +2881,48 @@ async fn process_channel_message(
         None
     };
 
-    let draft_updater = if let (Some(mut rx), Some(draft_id_ref), Some(channel_ref)) = (
-        delta_rx,
-        draft_message_id.as_deref(),
-        target_channel.as_ref(),
-    ) {
-        let channel = Arc::clone(channel_ref);
-        let reply_target = msg.reply_target.clone();
-        let draft_id = draft_id_ref.to_string();
-        Some(tokio::spawn(async move {
-            use crate::agent::loop_::DraftEvent;
-            let mut accumulated = String::new();
-            while let Some(event) = rx.recv().await {
-                match event {
-                    DraftEvent::Clear => {
-                        accumulated.clear();
-                    }
-                    DraftEvent::Progress(text) => {
-                        if let Err(e) = channel
-                            .update_draft_progress(&reply_target, &draft_id, &text)
-                            .await
-                        {
-                            tracing::debug!("Draft progress update failed: {e}");
+    // Spawn the appropriate handler for the delta channel.
+    let draft_updater = if use_draft_streaming {
+        // Partial: accumulate text and edit a single draft message.
+        if let (Some(mut rx), Some(draft_id_ref), Some(channel_ref)) = (
+            delta_rx,
+            draft_message_id.as_deref(),
+            target_channel.as_ref(),
+        ) {
+            let channel = Arc::clone(channel_ref);
+            let reply_target = msg.reply_target.clone();
+            let draft_id = draft_id_ref.to_string();
+            Some(tokio::spawn(async move {
+                use crate::agent::loop_::DraftEvent;
+                let mut accumulated = String::new();
+                while let Some(event) = rx.recv().await {
+                    match event {
+                        DraftEvent::Clear => {
+                            accumulated.clear();
                         }
-                    }
-                    DraftEvent::Content(text) => {
-                        accumulated.push_str(&text);
-                        if let Err(e) = channel
-                            .update_draft(&reply_target, &draft_id, &accumulated)
-                            .await
-                        {
-                            tracing::debug!("Draft update failed: {e}");
+                        DraftEvent::Progress(text) => {
+                            if let Err(e) = channel
+                                .update_draft_progress(&reply_target, &draft_id, &text)
+                                .await
+                            {
+                                tracing::debug!("Draft progress update failed: {e}");
+                            }
+                        }
+                        DraftEvent::Content(text) => {
+                            accumulated.push_str(&text);
+                            if let Err(e) = channel
+                                .update_draft(&reply_target, &draft_id, &accumulated)
+                                .await
+                            {
+                                tracing::debug!("Draft update failed: {e}");
+                            }
                         }
                     }
                 }
-            }
-        }))
+            }))
+        } else {
+            None
+        }
     } else {
         None
     };
@@ -2922,7 +2939,16 @@ async fn process_channel_message(
         }
     }
 
-    let typing_cancellation = target_channel.as_ref().map(|_| CancellationToken::new());
+    // Skip typing only for Partial mode — the draft message itself provides
+    // visual feedback. MultiMessage and Off both keep typing active.
+    let is_partial_draft = target_channel
+        .as_ref()
+        .is_some_and(|ch| ch.supports_draft_updates() && !ch.supports_multi_message_streaming());
+    let typing_cancellation = if is_partial_draft {
+        None
+    } else {
+        target_channel.as_ref().map(|_| CancellationToken::new())
+    };
     let typing_task = match (target_channel.as_ref(), typing_cancellation.as_ref()) {
         (Some(channel), Some(token)) => Some(spawn_scoped_typing_task(
             Arc::clone(channel),
@@ -2993,8 +3019,6 @@ async fn process_channel_message(
         None
     };
 
-    let default_pacing: crate::config::PacingConfig = Default::default();
-
     // Effective multimodal config: tenant override or global
     let effective_multimodal = msg_ctx.multimodal.as_ref().unwrap_or(&ctx.multimodal);
 
@@ -3007,84 +3031,131 @@ async fn process_channel_message(
         ctx.non_cli_excluded_tools.as_ref()
     };
 
-    macro_rules! run_tool_loop_future {
-        () => {
-            tokio::time::timeout(
-                Duration::from_secs(timeout_budget_secs),
-                run_tool_call_loop(
-                    active_provider.as_ref(),
-                    &mut history,
-                    ctx.tools_registry.as_ref(),
-                    notify_observer.as_ref() as &dyn Observer,
-                    route.provider.as_str(),
-                    route.model.as_str(),
-                    runtime_defaults.temperature,
-                    true,
-                    Some(&*ctx.approval_manager),
-                    msg.channel.as_str(),
-                    Some(msg.reply_target.as_str()),
-                    effective_multimodal,
-                    msg_ctx.max_tool_iterations.unwrap_or(ctx.max_tool_iterations),
-                    Some(cancellation_token.clone()),
-                    delta_tx,
-                    ctx.hooks.as_deref(),
-                    if msg.channel == "cli" {
-                        &[]
-                    } else {
-                        effective_excluded_tools
-                    },
-                    ctx.tool_call_dedup_exempt.as_ref(),
-                    ctx.activated_tools.as_ref(),
-                    None,
-                    &default_pacing,
-                ),
-            )
-        };
-    }
+    let effective_max_tool_iterations = msg_ctx.max_tool_iterations.unwrap_or(ctx.max_tool_iterations);
 
-    // Run the LLM tool loop, optionally scoped to tenant workspace + security.
-    //
-    // When multi-tenant is active we inject the per-tenant security policy
-    // into the generic `ACTIVE_SECURITY` task-local (used by shell/file_*
-    // tools via `get_active_security()`), and also inject the tenant
-    // workspace via the huanxing-specific `CURRENT_TENANT_WORKSPACE`
-    // task-local (used by skill_market_tools).
-    let llm_result = if let Some(ws) = tenant_workspace_for_scope {
-        if let Some(sec) = tenant_security_for_scope {
-            tokio::select! {
-                () = cancellation_token.cancelled() => LlmExecutionResult::Cancelled,
-                result = crate::tools::with_active_workspace(
-                    ws,
-                    crate::tools::with_active_security(sec, run_tool_loop_future!()),
-                ) => LlmExecutionResult::Completed(result),
-            }
-        } else {
-            tokio::select! {
-                () = cancellation_token.cancelled() => LlmExecutionResult::Cancelled,
-                result = crate::tools::with_active_workspace(
-                    ws,
-                    run_tool_loop_future!(),
-                ) => LlmExecutionResult::Completed(result),
-            }
-        }
-    } else if let Some(sec) = tenant_security_for_scope {
-        tokio::select! {
-            () = cancellation_token.cancelled() => LlmExecutionResult::Cancelled,
-            result = crate::tools::with_active_security(
-                sec,
-                run_tool_loop_future!(),
-            ) => LlmExecutionResult::Completed(result),
-        }
-    } else {
-        tokio::select! {
-            () = cancellation_token.cancelled() => LlmExecutionResult::Cancelled,
-            result = run_tool_loop_future!() => LlmExecutionResult::Completed(result),
-        }
+    // Build the cost tracking context for upstream cost accounting
+    let cost_tracking_context = ctx.cost_tracking.clone().map(|state| {
+        crate::agent::loop_::ToolLoopCostTrackingContext::new(state.tracker, state.prices)
+    });
+
+    // Model switch callback for dynamic runtime model switching
+    let model_switch_callback = get_model_switch_state();
+
+    // Core LLM execution future — wraps upstream's provider fallback + model switch loop
+    // with our multi-tenant workspace/security scoping.
+    let run_llm_future = async {
+        let (llm_result, fallback_info) = scope_provider_fallback(async {
+            let llm_result = loop {
+                let loop_result = tokio::select! {
+                    () = cancellation_token.cancelled() => LlmExecutionResult::Cancelled,
+                    result = tokio::time::timeout(
+                        Duration::from_secs(timeout_budget_secs),
+                        crate::agent::loop_::TOOL_LOOP_COST_TRACKING_CONTEXT.scope(
+                            cost_tracking_context.clone(),
+                        run_tool_call_loop(
+                            active_provider.as_ref(),
+                            &mut history,
+                            ctx.tools_registry.as_ref(),
+                            notify_observer.as_ref() as &dyn Observer,
+                            route.provider.as_str(),
+                            route.model.as_str(),
+                            runtime_defaults.temperature,
+                            true,
+                            Some(&*ctx.approval_manager),
+                            msg.channel.as_str(),
+                            Some(msg.reply_target.as_str()),
+                            effective_multimodal,
+                            effective_max_tool_iterations,
+                            Some(cancellation_token.clone()),
+                            delta_tx.clone(),
+                            ctx.hooks.as_deref(),
+                            if msg.channel == "cli"
+                                || ctx.autonomy_level == AutonomyLevel::Full
+                            {
+                                &[]
+                            } else {
+                                effective_excluded_tools
+                            },
+                            ctx.tool_call_dedup_exempt.as_ref(),
+                            ctx.activated_tools.as_ref(),
+                            Some(model_switch_callback.clone()),
+                            &ctx.pacing,
+                        ),
+                        ),
+                    ) => LlmExecutionResult::Completed(result),
+                };
+
+                // Handle model switch: re-create the provider and retry
+                if let LlmExecutionResult::Completed(Ok(Err(ref e))) = loop_result {
+                    if let Some((new_provider, new_model)) = is_model_switch_requested(e) {
+                        tracing::info!(
+                            "Model switch requested, switching from {} {} to {} {}",
+                            route.provider,
+                            route.model,
+                            new_provider,
+                            new_model
+                        );
+
+                        match create_resilient_provider_nonblocking(
+                            &new_provider,
+                            ctx.api_key.clone(),
+                            ctx.api_url.clone(),
+                            ctx.reliability.as_ref().clone(),
+                            ctx.provider_runtime_options.clone(),
+                        )
+                        .await
+                        {
+                            Ok(new_prov) => {
+                                active_provider = Arc::from(new_prov);
+                                route.provider = new_provider;
+                                route.model = new_model;
+                                clear_model_switch_request();
+
+                                ctx.observer.record_event(&ObserverEvent::AgentStart {
+                                    provider: route.provider.clone(),
+                                    model: route.model.clone(),
+                                });
+
+                                continue;
+                            }
+                            Err(err) => {
+                                tracing::error!("Failed to create provider after model switch: {err}");
+                                clear_model_switch_request();
+                                // Fall through with the original error
+                            }
+                        }
+                    }
+                }
+
+                break loop_result;
+            };
+            let fb = take_last_provider_fallback();
+            (llm_result, fb)
+        })
+        .await;
+        (llm_result, fallback_info)
     };
 
-    // The delta_tx sender has been consumed by run_tool_call_loop via the macro,
-    // so it is dropped when the loop future completes, unblocking the receiver.
-    tracing::debug!("Post-loop: awaiting draft updater");
+    // Run the LLM tool loop, optionally scoped to tenant workspace + security.
+    let (llm_result, fallback_info) = if let Some(ws) = tenant_workspace_for_scope {
+        if let Some(sec) = tenant_security_for_scope {
+            crate::tools::with_active_workspace(
+                ws,
+                crate::tools::with_active_security(sec, run_llm_future),
+            )
+            .await
+        } else {
+            crate::tools::with_active_workspace(ws, run_llm_future).await
+        }
+    } else if let Some(sec) = tenant_security_for_scope {
+        crate::tools::with_active_security(sec, run_llm_future).await
+    } else {
+        run_llm_future.await
+    };
+
+    // Drop all senders so updater tasks can exit (rx.recv() returns None).
+    tracing::debug!("Post-loop: dropping delta_tx and awaiting draft updater");
+    drop(delta_tx);
     if let Some(handle) = draft_updater {
         let _ = handle.await;
     }
@@ -3213,13 +3284,32 @@ async fn process_channel_message(
 
             let sanitized_response =
                 sanitize_channel_response(&outbound_response, ctx.tools_registry.as_ref());
-            let delivered_response = if sanitized_response.is_empty()
+            let mut delivered_response = if sanitized_response.is_empty()
                 && !outbound_response.trim().is_empty()
             {
                 "I encountered malformed tool-call output and could not produce a safe reply. Please try again.".to_string()
             } else {
                 sanitized_response
             };
+
+            // Append a footer when the response was served by a different provider family.
+            // Intra-family fallbacks (e.g. minimax → minimax-cn) are suppressed.
+            if let Some(fb) = fallback_info.as_ref() {
+                let req_base = fb.requested_provider.split(':').next().unwrap_or("");
+                let act_base = fb.actual_provider.split(':').next().unwrap_or("");
+                let same_family = req_base == act_base
+                    || req_base.starts_with(act_base)
+                    || act_base.starts_with(req_base);
+                if !same_family {
+                    use std::fmt::Write as _;
+                    write!(
+                        delivered_response,
+                        "\n\n---\n\u{26A1} `{}` unavailable \u{2014} response from **{}** (`{}`)\nSwitch model: /models",
+                        fb.requested_provider, fb.actual_provider, fb.actual_model,
+                    )
+                    .ok();
+                }
+            }
 
             runtime_trace::record_event(
                 "channel_message_outbound",
@@ -3327,7 +3417,8 @@ async fn process_channel_message(
                 } else if let Err(e) = channel
                     .send(
                         &SendMessage::new(&delivered_response, &msg.reply_target)
-                            .in_thread(msg.thread_ts.clone()),
+                            .in_thread(msg.thread_ts.clone())
+                            .with_cancellation(cancellation_token.clone()),
                     )
                     .await
                 {
@@ -4278,6 +4369,11 @@ fn build_channel_by_id(config: &Config, channel_id: &str) -> Result<Arc<dyn Chan
                     dc.listen_to_bots,
                     dc.mention_only,
                 )
+                .with_streaming(
+                    dc.stream_mode,
+                    dc.draft_update_interval_ms,
+                    dc.multi_message_delay_ms,
+                )
                 .with_transcription(config.transcription.clone()),
             ))
         }
@@ -4383,6 +4479,11 @@ fn collect_configured_channels(
                     dc.listen_to_bots,
                     dc.mention_only,
                 )
+                .with_streaming(
+                    dc.stream_mode,
+                    dc.draft_update_interval_ms,
+                    dc.multi_message_delay_ms,
+                )
                 .with_proxy_url(dc.proxy_url.clone())
                 .with_transcription(config.transcription.clone()),
             ),
@@ -4451,6 +4552,11 @@ fn collect_configured_channels(
                     mx.device_id.clone(),
                     config.config_path.parent().map(|path| path.to_path_buf()),
                 )
+                .with_streaming(
+                    mx.stream_mode,
+                    mx.draft_update_interval_ms,
+                    mx.multi_message_delay_ms,
+                )
                 .with_transcription(config.transcription.clone()),
             ),
         });
@@ -4491,12 +4597,17 @@ fn collect_configured_channels(
                 if wa.is_cloud_config() {
                     channels.push(ConfiguredChannel {
                         display_name: "WhatsApp",
-                        channel: Arc::new(WhatsAppChannel::new(
-                            wa.access_token.clone().unwrap_or_default(),
-                            wa.phone_number_id.clone().unwrap_or_default(),
-                            wa.verify_token.clone().unwrap_or_default(),
-                            wa.allowed_numbers.clone(),
-                        )),
+                        channel: Arc::new(
+                            WhatsAppChannel::new(
+                                wa.access_token.clone().unwrap_or_default(),
+                                wa.phone_number_id.clone().unwrap_or_default(),
+                                wa.verify_token.clone().unwrap_or_default(),
+                                wa.allowed_numbers.clone(),
+                            )
+                            .with_proxy_url(wa.proxy_url.clone())
+                            .with_dm_mention_patterns(wa.dm_mention_patterns.clone())
+                            .with_group_mention_patterns(wa.group_mention_patterns.clone()),
+                        ),
                     });
                 } else {
                     tracing::warn!("WhatsApp Cloud API configured but missing required fields (phone_number_id, access_token, verify_token)");
@@ -4516,7 +4627,9 @@ fn collect_configured_channels(
                                 wa.allowed_numbers.clone(),
                             )
                             .with_transcription(config.transcription.clone())
-                            .with_tts(config.tts.clone()),
+                            .with_tts(config.tts.clone())
+                            .with_dm_mention_patterns(wa.dm_mention_patterns.clone())
+                            .with_group_mention_patterns(wa.group_mention_patterns.clone()),
                         ),
                     });
                 } else {
@@ -4945,6 +5058,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
         reaction_handle_ch,
         _channel_map_handle,
         ask_user_handle_ch,
+        escalate_handle_ch,
     ) = tools::all_tools_with_runtime(
         Arc::new(config.clone()),
         &security,
@@ -5251,6 +5365,14 @@ pub async fn start_channels(config: Config) -> Result<()> {
         }
     }
 
+    // Populate the escalate_to_human tool's channel map now that channels are initialized.
+    if let Some(ref handle) = escalate_handle_ch {
+        let mut map = handle.write();
+        for (name, ch) in channels_by_name.as_ref() {
+            map.insert(name.clone(), Arc::clone(ch));
+        }
+    }
+
     let max_in_flight_messages = compute_max_in_flight_messages(channels.len());
 
     println!("  🚦 In-flight message limit: {max_in_flight_messages}");
@@ -5390,6 +5512,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
         tool_call_dedup_exempt: Arc::new(config.agent.tool_call_dedup_exempt.clone()),
         model_routes: Arc::new(config.model_routes.clone()),
         query_classification: config.query_classification.clone(),
+        pacing: config.pacing.clone(),
         ack_reactions: config.channels_config.ack_reactions,
         show_tool_calls: config.channels_config.show_tool_calls,
         session_store: if config.channels_config.session_persistence {
@@ -5408,24 +5531,46 @@ pub async fn start_channels(config: Config) -> Result<()> {
         },
         approval_manager: Arc::new(ApprovalManager::for_non_interactive(&config.autonomy)),
         activated_tools: ch_activated_handle,
+        cost_tracking: crate::cost::CostTracker::get_or_init_global(
+            config.cost.clone(),
+            &config.workspace_dir,
+        )
+        .map(|tracker| ChannelCostTrackingState {
+            tracker,
+            prices: Arc::new(config.cost.prices.clone()),
+        }),
         context_resolver,
     });
 
     // Hydrate in-memory conversation histories from persisted JSONL session files.
     // Multi-tenant mode: guardian uses global session_store;
     // registered users hydrate on-demand from tenant.session_manager.
+    // If the last persisted turn is a user message (orphan from a crash mid-query),
+    // close it with a marker so the LLM doesn't try to continue the old request.
     if let Some(ref store) = runtime_ctx.session_store {
         let mut hydrated = 0usize;
+        let mut orphans_closed = 0usize;
         let mut histories = runtime_ctx
             .conversation_histories
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         for key in store.list_sessions() {
-            let msgs = store.load(&key);
-            if !msgs.is_empty() {
-                hydrated += 1;
-                histories.insert(key, msgs);
+            let mut msgs = store.load(&key);
+            if msgs.is_empty() {
+                continue;
             }
+            // Close orphaned user turns from crashed sessions.
+            if msgs.last().is_some_and(|m| m.role == "user") {
+                let closure =
+                    ChatMessage::assistant("[Session interrupted — not continuing this request]");
+                if let Err(e) = store.append(&key, &closure) {
+                    tracing::debug!("Failed to persist orphan closure for {key}: {e}");
+                }
+                msgs.push(closure);
+                orphans_closed += 1;
+            }
+            hydrated += 1;
+            histories.insert(key, msgs);
         }
         drop(histories);
         if hydrated > 0 {
@@ -5434,6 +5579,11 @@ pub async fn start_channels(config: Config) -> Result<()> {
             } else {
                 tracing::info!("📂 Restored {hydrated} session(s) from disk");
             }
+        }
+        if orphans_closed > 0 {
+            tracing::info!(
+                "🔒 Closed {orphans_closed} orphaned session turn(s) from previous crash"
+            );
         }
     }
 
@@ -5614,6 +5764,18 @@ mod tests {
     }
 
     #[test]
+    fn sanitize_channel_response_strips_used_tools_with_leading_whitespace() {
+        let tools: Vec<Box<dyn Tool>> = Vec::new();
+        // Issue #4478: response with leading whitespace before [Used tools: ...]
+        let input = "  [Used tools: web_search_tool]\nHere is the search result.";
+
+        let result = sanitize_channel_response(input, &tools);
+
+        assert!(!result.contains("[Used tools:"));
+        assert!(result.contains("Here is the search result."));
+    }
+
+    #[test]
     fn normalize_cached_channel_turns_merges_consecutive_user_turns() {
         let turns = vec![
             ChatMessage::user("forwarded content"),
@@ -5741,6 +5903,7 @@ mod tests {
             tool_call_dedup_exempt: Arc::new(Vec::new()),
             model_routes: Arc::new(Vec::new()),
             query_classification: crate::config::QueryClassificationConfig::default(),
+            pacing: crate::config::PacingConfig::default(),
             ack_reactions: true,
             show_tool_calls: true,
             session_store: None,
@@ -5748,6 +5911,7 @@ mod tests {
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            cost_tracking: None,
             context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
                 crate::channels::context_resolver::MessageContext {
                     agent_id: "test".to_string(),
@@ -5882,6 +6046,7 @@ mod tests {
             tool_call_dedup_exempt: Arc::new(Vec::new()),
             model_routes: Arc::new(Vec::new()),
             query_classification: crate::config::QueryClassificationConfig::default(),
+            pacing: crate::config::PacingConfig::default(),
             ack_reactions: true,
             show_tool_calls: true,
             session_store: None,
@@ -5889,6 +6054,7 @@ mod tests {
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            cost_tracking: None,
             context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
                 crate::channels::context_resolver::MessageContext {
                     agent_id: "test".to_string(),
@@ -5979,6 +6145,7 @@ mod tests {
             tool_call_dedup_exempt: Arc::new(Vec::new()),
             model_routes: Arc::new(Vec::new()),
             query_classification: crate::config::QueryClassificationConfig::default(),
+            pacing: crate::config::PacingConfig::default(),
             ack_reactions: true,
             show_tool_calls: true,
             session_store: None,
@@ -5986,6 +6153,7 @@ mod tests {
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            cost_tracking: None,
             context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
                 crate::channels::context_resolver::MessageContext {
                     agent_id: "test".to_string(),
@@ -6095,6 +6263,7 @@ mod tests {
             tool_call_dedup_exempt: Arc::new(Vec::new()),
             model_routes: Arc::new(Vec::new()),
             query_classification: crate::config::QueryClassificationConfig::default(),
+            pacing: crate::config::PacingConfig::default(),
             ack_reactions: true,
             show_tool_calls: true,
             session_store: Some(Arc::clone(&store)),
@@ -6102,6 +6271,7 @@ mod tests {
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            cost_tracking: None,
             context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
                 crate::channels::context_resolver::MessageContext {
                     agent_id: "test".to_string(),
@@ -6661,6 +6831,7 @@ BTC is currently around $65,000 based on latest tool output."#
             hooks: None,
             model_routes: Arc::new(Vec::new()),
             query_classification: crate::config::QueryClassificationConfig::default(),
+            pacing: crate::config::PacingConfig::default(),
             ack_reactions: true,
             show_tool_calls: true,
             session_store: None,
@@ -6668,6 +6839,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            cost_tracking: None,
             context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
                 crate::channels::context_resolver::MessageContext {
                     agent_id: "test".to_string(),
@@ -6768,6 +6940,7 @@ BTC is currently around $65,000 based on latest tool output."#
             hooks: None,
             model_routes: Arc::new(Vec::new()),
             query_classification: crate::config::QueryClassificationConfig::default(),
+            pacing: crate::config::PacingConfig::default(),
             ack_reactions: true,
             show_tool_calls: true,
             session_store: None,
@@ -6775,6 +6948,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            cost_tracking: None,
             context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
                 crate::channels::context_resolver::MessageContext {
                     agent_id: "test".to_string(),
@@ -6889,6 +7063,7 @@ BTC is currently around $65,000 based on latest tool output."#
             tool_call_dedup_exempt: Arc::new(Vec::new()),
             model_routes: Arc::new(Vec::new()),
             query_classification: crate::config::QueryClassificationConfig::default(),
+            pacing: crate::config::PacingConfig::default(),
             ack_reactions: true,
             show_tool_calls: true,
             session_store: None,
@@ -6896,6 +7071,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            cost_tracking: None,
             context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
                 crate::channels::context_resolver::MessageContext {
                     agent_id: "test".to_string(),
@@ -6995,6 +7171,7 @@ BTC is currently around $65,000 based on latest tool output."#
             tool_call_dedup_exempt: Arc::new(Vec::new()),
             model_routes: Arc::new(Vec::new()),
             query_classification: crate::config::QueryClassificationConfig::default(),
+            pacing: crate::config::PacingConfig::default(),
             ack_reactions: true,
             show_tool_calls: true,
             session_store: None,
@@ -7002,6 +7179,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            cost_tracking: None,
             context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
                 crate::channels::context_resolver::MessageContext {
                     agent_id: "test".to_string(),
@@ -7111,6 +7289,7 @@ BTC is currently around $65,000 based on latest tool output."#
             tool_call_dedup_exempt: Arc::new(Vec::new()),
             model_routes: Arc::new(Vec::new()),
             query_classification: crate::config::QueryClassificationConfig::default(),
+            pacing: crate::config::PacingConfig::default(),
             ack_reactions: true,
             show_tool_calls: true,
             session_store: None,
@@ -7118,6 +7297,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            cost_tracking: None,
             context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
                 crate::channels::context_resolver::MessageContext {
                     agent_id: "test".to_string(),
@@ -7248,6 +7428,7 @@ BTC is currently around $65,000 based on latest tool output."#
             tool_call_dedup_exempt: Arc::new(Vec::new()),
             model_routes: Arc::new(Vec::new()),
             query_classification: crate::config::QueryClassificationConfig::default(),
+            pacing: crate::config::PacingConfig::default(),
             ack_reactions: true,
             show_tool_calls: true,
             session_store: None,
@@ -7255,6 +7436,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            cost_tracking: None,
             context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
                 crate::channels::context_resolver::MessageContext {
                     agent_id: "test".to_string(),
@@ -7366,6 +7548,7 @@ BTC is currently around $65,000 based on latest tool output."#
             tool_call_dedup_exempt: Arc::new(Vec::new()),
             model_routes: Arc::new(Vec::new()),
             query_classification: crate::config::QueryClassificationConfig::default(),
+            pacing: crate::config::PacingConfig::default(),
             ack_reactions: true,
             show_tool_calls: true,
             session_store: None,
@@ -7373,6 +7556,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            cost_tracking: None,
             context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
                 crate::channels::context_resolver::MessageContext {
                     agent_id: "test".to_string(),
@@ -7499,6 +7683,7 @@ BTC is currently around $65,000 based on latest tool output."#
             tool_call_dedup_exempt: Arc::new(Vec::new()),
             model_routes: Arc::new(Vec::new()),
             query_classification: crate::config::QueryClassificationConfig::default(),
+            pacing: crate::config::PacingConfig::default(),
             ack_reactions: true,
             show_tool_calls: true,
             session_store: None,
@@ -7506,6 +7691,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            cost_tracking: None,
             context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
                 crate::channels::context_resolver::MessageContext {
                     agent_id: "test".to_string(),
@@ -7617,6 +7803,7 @@ BTC is currently around $65,000 based on latest tool output."#
             tool_call_dedup_exempt: Arc::new(Vec::new()),
             model_routes: Arc::new(Vec::new()),
             query_classification: crate::config::QueryClassificationConfig::default(),
+            pacing: crate::config::PacingConfig::default(),
             ack_reactions: true,
             show_tool_calls: true,
             session_store: None,
@@ -7624,6 +7811,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            cost_tracking: None,
             context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
                 crate::channels::context_resolver::MessageContext {
                     agent_id: "test".to_string(),
@@ -7725,6 +7913,7 @@ BTC is currently around $65,000 based on latest tool output."#
             tool_call_dedup_exempt: Arc::new(Vec::new()),
             model_routes: Arc::new(Vec::new()),
             query_classification: crate::config::QueryClassificationConfig::default(),
+            pacing: crate::config::PacingConfig::default(),
             ack_reactions: true,
             show_tool_calls: true,
             session_store: None,
@@ -7732,6 +7921,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            cost_tracking: None,
             context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
                 crate::channels::context_resolver::MessageContext {
                     agent_id: "test".to_string(),
@@ -7951,6 +8141,7 @@ BTC is currently around $65,000 based on latest tool output."#
             tool_call_dedup_exempt: Arc::new(Vec::new()),
             model_routes: Arc::new(Vec::new()),
             query_classification: crate::config::QueryClassificationConfig::default(),
+            pacing: crate::config::PacingConfig::default(),
             ack_reactions: true,
             show_tool_calls: true,
             session_store: None,
@@ -7958,6 +8149,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            cost_tracking: None,
             context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
                 crate::channels::context_resolver::MessageContext {
                     agent_id: "test".to_string(),
@@ -8080,6 +8272,7 @@ BTC is currently around $65,000 based on latest tool output."#
             tool_call_dedup_exempt: Arc::new(Vec::new()),
             model_routes: Arc::new(Vec::new()),
             query_classification: crate::config::QueryClassificationConfig::default(),
+            pacing: crate::config::PacingConfig::default(),
             ack_reactions: true,
             show_tool_calls: true,
             session_store: None,
@@ -8087,6 +8280,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            cost_tracking: None,
             context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
                 crate::channels::context_resolver::MessageContext {
                     agent_id: "test".to_string(),
@@ -8230,7 +8424,9 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            cost_tracking: None,
             query_classification: crate::config::QueryClassificationConfig::default(),
+            pacing: crate::config::PacingConfig::default(),
             context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
                 crate::channels::context_resolver::MessageContext {
                     agent_id: "test".to_string(),
@@ -8365,6 +8561,7 @@ BTC is currently around $65,000 based on latest tool output."#
             tool_call_dedup_exempt: Arc::new(Vec::new()),
             model_routes: Arc::new(Vec::new()),
             query_classification: crate::config::QueryClassificationConfig::default(),
+            pacing: crate::config::PacingConfig::default(),
             ack_reactions: true,
             show_tool_calls: true,
             session_store: None,
@@ -8372,6 +8569,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            cost_tracking: None,
             context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
                 crate::channels::context_resolver::MessageContext {
                     agent_id: "test".to_string(),
@@ -8488,6 +8686,7 @@ BTC is currently around $65,000 based on latest tool output."#
             tool_call_dedup_exempt: Arc::new(Vec::new()),
             model_routes: Arc::new(Vec::new()),
             query_classification: crate::config::QueryClassificationConfig::default(),
+            pacing: crate::config::PacingConfig::default(),
             ack_reactions: true,
             show_tool_calls: true,
             session_store: None,
@@ -8495,6 +8694,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            cost_tracking: None,
             context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
                 crate::channels::context_resolver::MessageContext {
                     agent_id: "test".to_string(),
@@ -8594,6 +8794,7 @@ BTC is currently around $65,000 based on latest tool output."#
             tool_call_dedup_exempt: Arc::new(Vec::new()),
             model_routes: Arc::new(Vec::new()),
             query_classification: crate::config::QueryClassificationConfig::default(),
+            pacing: crate::config::PacingConfig::default(),
             ack_reactions: true,
             show_tool_calls: true,
             session_store: None,
@@ -8601,6 +8802,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            cost_tracking: None,
             context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
                 crate::channels::context_resolver::MessageContext {
                     agent_id: "test".to_string(),
@@ -9397,6 +9599,7 @@ BTC is currently around $65,000 based on latest tool output."#
             tool_call_dedup_exempt: Arc::new(Vec::new()),
             model_routes: Arc::new(Vec::new()),
             query_classification: crate::config::QueryClassificationConfig::default(),
+            pacing: crate::config::PacingConfig::default(),
             ack_reactions: true,
             show_tool_calls: true,
             session_store: None,
@@ -9404,6 +9607,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            cost_tracking: None,
             context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
                 crate::channels::context_resolver::MessageContext {
                     agent_id: "test".to_string(),
@@ -9555,6 +9759,7 @@ BTC is currently around $65,000 based on latest tool output."#
             tool_call_dedup_exempt: Arc::new(Vec::new()),
             model_routes: Arc::new(Vec::new()),
             query_classification: crate::config::QueryClassificationConfig::default(),
+            pacing: crate::config::PacingConfig::default(),
             ack_reactions: true,
             show_tool_calls: true,
             session_store: None,
@@ -9562,6 +9767,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            cost_tracking: None,
             context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
                 crate::channels::context_resolver::MessageContext {
                     agent_id: "test".to_string(),
@@ -9754,6 +9960,7 @@ BTC is currently around $65,000 based on latest tool output."#
             tool_call_dedup_exempt: Arc::new(Vec::new()),
             model_routes: Arc::new(Vec::new()),
             query_classification: crate::config::QueryClassificationConfig::default(),
+            pacing: crate::config::PacingConfig::default(),
             ack_reactions: true,
             show_tool_calls: true,
             session_store: None,
@@ -9761,6 +9968,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            cost_tracking: None,
             context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
                 crate::channels::context_resolver::MessageContext {
                     agent_id: "test".to_string(),
@@ -9888,6 +10096,7 @@ BTC is currently around $65,000 based on latest tool output."#
             tool_call_dedup_exempt: Arc::new(Vec::new()),
             model_routes: Arc::new(Vec::new()),
             query_classification: crate::config::QueryClassificationConfig::default(),
+            pacing: crate::config::PacingConfig::default(),
             ack_reactions: true,
             show_tool_calls: true,
             session_store: None,
@@ -9895,6 +10104,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            cost_tracking: None,
             context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
                 crate::channels::context_resolver::MessageContext {
                     agent_id: "test".to_string(),
@@ -10486,6 +10696,7 @@ This is an example JSON object for profile settings."#;
             tool_call_dedup_exempt: Arc::new(Vec::new()),
             model_routes: Arc::new(Vec::new()),
             query_classification: crate::config::QueryClassificationConfig::default(),
+            pacing: crate::config::PacingConfig::default(),
             ack_reactions: true,
             show_tool_calls: true,
             session_store: None,
@@ -10493,6 +10704,7 @@ This is an example JSON object for profile settings."#;
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            cost_tracking: None,
             context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
                 crate::channels::context_resolver::MessageContext {
                     agent_id: "test".to_string(),
@@ -10599,6 +10811,7 @@ This is an example JSON object for profile settings."#;
             tool_call_dedup_exempt: Arc::new(Vec::new()),
             model_routes: Arc::new(Vec::new()),
             query_classification: crate::config::QueryClassificationConfig::default(),
+            pacing: crate::config::PacingConfig::default(),
             ack_reactions: true,
             show_tool_calls: true,
             session_store: None,
@@ -10606,6 +10819,7 @@ This is an example JSON object for profile settings."#;
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            cost_tracking: None,
             context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
                 crate::channels::context_resolver::MessageContext {
                     agent_id: "test".to_string(),
@@ -10795,6 +11009,7 @@ This is an example JSON object for profile settings."#;
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            cost_tracking: None,
             context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
                 crate::channels::context_resolver::MessageContext {
                     agent_id: "test".to_string(),
@@ -10932,6 +11147,7 @@ This is an example JSON object for profile settings."#;
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            cost_tracking: None,
             context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
                 crate::channels::context_resolver::MessageContext {
                     agent_id: "test".to_string(),
@@ -11061,6 +11277,7 @@ This is an example JSON object for profile settings."#;
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            cost_tracking: None,
             context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
                 crate::channels::context_resolver::MessageContext {
                     agent_id: "test".to_string(),
@@ -11210,6 +11427,7 @@ This is an example JSON object for profile settings."#;
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            cost_tracking: None,
             context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
                 crate::channels::context_resolver::MessageContext {
                     agent_id: "test".to_string(),
@@ -11493,6 +11711,7 @@ This is an example JSON object for profile settings."#;
             tool_call_dedup_exempt: Arc::new(Vec::new()),
             model_routes: Arc::new(Vec::new()),
             query_classification: crate::config::QueryClassificationConfig::default(),
+            pacing: crate::config::PacingConfig::default(),
             ack_reactions: true,
             show_tool_calls: true,
             session_store: None,
@@ -11500,6 +11719,7 @@ This is an example JSON object for profile settings."#;
                 &crate::config::AutonomyConfig::default(),
             )),
             activated_tools: None,
+            cost_tracking: None,
             context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
                 crate::channels::context_resolver::MessageContext {
                     agent_id: "test".to_string(),
