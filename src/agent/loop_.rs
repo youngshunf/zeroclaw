@@ -1351,9 +1351,14 @@ fn parse_perl_style_tool_calls(response: &str) -> Vec<ParsedToolCall> {
     static ARGS_BLOCK_RE: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"(?s)args\s*=>\s*\{(.+?)(?:\}|$)").unwrap());
 
-    // Regex to find --key "value" or --key 'value' pairs
-    static ARGS_RE: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r#"--(\w+)\s+(?:"([^"]+)"|'([^']+)')"#).unwrap());
+    // Regex to find --key ... (value) up to the next --key or end.
+    // Models often hallucinate XML tags (`--key">VALUE</parameter>`) or drop quotes.
+    // We match: --key followed by separator chars, then capture everything
+    // up to (but not including) the next \n--key boundary.  Because the
+    // regex crate does not support lookahead, we use an alternation that
+    // explicitly consumes up to a newline-prefixed `--` or end of string.
+    static ARGS_FLEXIBLE_RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?m)--([a-zA-Z_]\w*)[=\s:`>\x22\x27]*?([^\n]*)").unwrap());
 
     // Strip stray XML tags (e.g. </parameter>) that some models mix into
     // the Perl-style format.  These interfere with arg extraction but carry
@@ -1401,14 +1406,26 @@ fn parse_perl_style_tool_calls(response: &str) -> Vec<ParsedToolCall> {
 
         let mut arguments = serde_json::Map::new();
 
-        for arg_cap in ARGS_RE.captures_iter(&args_search_region) {
+        for arg_cap in ARGS_FLEXIBLE_RE.captures_iter(&args_search_region) {
             let key = arg_cap.get(1).map(|m| m.as_str()).unwrap_or("");
-            let value = arg_cap.get(2).or_else(|| arg_cap.get(3)).map(|m| m.as_str()).unwrap_or("");
+            let mut value = arg_cap.get(2).map(|m| m.as_str()).unwrap_or("").trim();
+            
+            // Further clean up trailing `"` or `'` if the model missed the opening quote
+            // but included a closing quote (or vice versa).
+            if value.starts_with('"') || value.starts_with('\'') {
+                value = &value[1..];
+            }
+            if value.ends_with('"') || value.ends_with('\'') {
+                value = &value[..value.len().saturating_sub(1)];
+            }
+            
+            // Clean up any double-quote escapes \" that might have lived inside
+            let unescaped_val = value.replace("\\\"", "\"");
 
             if !key.is_empty() {
                 arguments.insert(
                     key.to_string(),
-                    serde_json::Value::String(value.to_string()),
+                    serde_json::Value::String(unescaped_val),
                 );
             }
         }
