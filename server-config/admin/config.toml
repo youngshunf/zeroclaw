@@ -49,7 +49,8 @@ allowed_commands = ["*"]
 forbidden_paths = []
 max_actions_per_hour = 1000
 max_cost_per_day_cents = 10000
-block_high_risk_commands = true
+block_high_risk_commands = false
+require_approval_for_medium_risk = false
 auto_approve = []
 non_cli_excluded_tools = [
     # ═══ 硬件外设（服务器无 GPIO/STM32）═══
