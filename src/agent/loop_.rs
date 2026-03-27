@@ -1358,7 +1358,7 @@ fn parse_perl_style_tool_calls(response: &str) -> Vec<ParsedToolCall> {
     // regex crate does not support lookahead, we use an alternation that
     // explicitly consumes up to a newline-prefixed `--` or end of string.
     static ARGS_FLEXIBLE_RE: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"(?m)--([a-zA-Z_]\w*)[=\s:`>\x22\x27]*?([^\n]*)").unwrap());
+        LazyLock::new(|| Regex::new(r"(?m)--([a-zA-Z_]\w*)[=\s:`>\x22\x27]*([^\n]*)").unwrap());
 
     // Strip stray XML tags (e.g. </parameter>) that some models mix into
     // the Perl-style format.  These interfere with arg extraction but carry
