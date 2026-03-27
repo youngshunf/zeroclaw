@@ -107,7 +107,7 @@ do_sync_config() {
     if [ -f "$CONFIG_DIR/config.toml" ]; then
         log "  处理 config.toml（替换本地路径 → 远程路径）..."
         local tmp_config
-        tmp_config=$(mktemp /tmp/zeroclaw-config.XXXXXX.toml)
+        tmp_config=$(mktemp /tmp/zeroclaw-config-XXXXXX) && mv "$tmp_config" "${tmp_config}.toml" && tmp_config="${tmp_config}.toml"
 
         # 复制并替换路径，同时替换 server_id 为 115 服务器的环境标识
         sed \

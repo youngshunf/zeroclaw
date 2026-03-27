@@ -348,7 +348,6 @@ pub fn try_load_registry_sync(hub_dir: &Path) -> Option<Registry> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
     use tempfile::TempDir;
 
     fn sample_registry_json() -> &'static str {

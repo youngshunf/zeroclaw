@@ -420,8 +420,7 @@ agent_key = "test-key-123"
     fn register_module_exists() {
         // SecurityPolicy is pub(crate), so we verify the module is importable
         // rather than checking the full function signature.
-        use zeroclaw::huanxing::register;
-        let _ = std::any::type_name::<fn()>();
+        let _ = zeroclaw::huanxing::register::huanxing_all_tools as usize;
         // The actual function `huanxing_all_tools` is tested via cargo check
         // --features huanxing, which verifies it compiles within the crate.
     }
