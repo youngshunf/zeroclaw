@@ -45,11 +45,14 @@ min_relevance_score = 0.4
 [autonomy]
 level = "full"
 workspace_only = false
-allowed_commands = ["*"]
+# 基础命令通配放行，监控类的高危/敏感命令在这里显式白名单放行
+allowed_commands = ["*", "netstat", "ps", "pm2", "systemctl", "bash", "sh", "top", "free", "df"]
 forbidden_paths = []
 max_actions_per_hour = 1000
 max_cost_per_day_cents = 10000
-block_high_risk_commands = false
+# 保持对未知破坏性命令（如 rm -rf 等）的高危拦截
+block_high_risk_commands = true
+# 允许中风险（如 mv、copy、npm）后台静默执行
 require_approval_for_medium_risk = false
 auto_approve = []
 non_cli_excluded_tools = [
