@@ -161,7 +161,7 @@ export function useHasnMessages(conversationId: string | null) {
     return unsub;
   }, []);
 
-  const send = useCallback(async (content: string) => {
+  const send = useCallback(async (content: string, replyToId?: number) => {
     if (!conversationId) return;
     // 乐观插入
     const tempMsg: Message = {
@@ -175,11 +175,12 @@ export function useHasnMessages(conversationId: string | null) {
       status: 0,
       send_status: "sending",
       created_at: new Date().toISOString(),
+      reply_to_id: replyToId,
     };
     setMessages((prev) => [...prev, tempMsg]);
 
     try {
-      const sent = await hasnApi.sendMessage(conversationId, content);
+      const sent = await hasnApi.sendMessage(conversationId, content, replyToId);
       setMessages((prev) =>
         prev.map((m) => (m.local_id === tempMsg.local_id ? { ...sent, send_status: "sent" } : m)),
       );

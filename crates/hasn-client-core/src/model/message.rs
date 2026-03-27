@@ -106,6 +106,7 @@ impl HasnMessage {
         from_id: &str,
         content: &str,
         content_type: i32,
+        reply_to: Option<i64>,
     ) -> Self {
         Self {
             id: 0,
@@ -117,7 +118,7 @@ impl HasnMessage {
             content: content.to_string(),
             content_type,
             metadata: None,
-            reply_to: None,
+            reply_to,
             status: 1,
             send_status: SendStatus::Sending,
             created_at: Some(chrono::Utc::now().to_rfc3339()),

@@ -117,6 +117,7 @@ pub fn run() {
             hasn::respond_friend_request,
             // HASN Agent
             hasn::get_my_agents,
+            hasn::set_hasn_sidecar_port,
             // ZeroClaw sidecar
             zeroclaw::start_zeroclaw,
             zeroclaw::stop_zeroclaw,

@@ -1015,6 +1015,13 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
     #[cfg(feature = "huanxing")]
     let inner = inner.merge(crate::huanxing::hub_sync::hub_routes());
 
+    // ── HASN Agent 同步调用端点（桌面端 Sidecar 用）──
+    #[cfg(feature = "huanxing")]
+    let inner = inner.route(
+        "/api/v1/agent/hasn-invoke",
+        axum::routing::post(crate::huanxing::hasn_invoke::hasn_invoke),
+    );
+
     let inner = inner
         // ── SSE event stream ──
         .route("/api/events", get(sse::handle_sse_events));

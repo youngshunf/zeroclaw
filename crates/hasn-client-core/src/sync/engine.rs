@@ -81,6 +81,7 @@ impl SyncEngine {
         to_star_id: &str,
         content: &str,
         content_type: i32,
+        reply_to: Option<i64>,
     ) -> Result<HasnMessage, HasnError> {
         let hasn_id = self
             .current_hasn_id()
@@ -88,7 +89,7 @@ impl SyncEngine {
             .ok_or_else(|| HasnError::Auth("未登录".to_string()))?;
 
         // 1. 创建本地消息 (状态=sending)
-        let local_msg = HasnMessage::new_outgoing("pending", &hasn_id, content, content_type);
+        let local_msg = HasnMessage::new_outgoing("pending", &hasn_id, content, content_type, reply_to);
         let local_id = local_msg.local_id.clone();
 
         self.db

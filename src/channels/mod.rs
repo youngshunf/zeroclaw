@@ -260,6 +260,7 @@ fn register_live_channels(channels_by_name: &HashMap<String, Arc<dyn Channel>>) 
     }
 }
 
+#[cfg(feature = "huanxing")]
 pub fn get_live_channel(name: &str) -> Option<Arc<dyn Channel>> {
     live_channels_registry()
         .lock()
@@ -5532,6 +5533,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
             .collect::<HashMap<_, _>>(),
     );
     // Register channels in global registry for plugins/heartbeats
+    #[cfg(feature = "huanxing")]
     register_live_channels(&channels_by_name);
 
     // Populate the reaction tool's channel map now that channels are initialized.

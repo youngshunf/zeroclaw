@@ -27,6 +27,7 @@
 //! serves all tenants. Only the agent context (prompt, memory, workspace)
 //! is per-tenant.
 
+pub mod agent_bridge;
 pub mod api_agents;
 pub mod api_sessions;
 pub mod api_client;
@@ -34,6 +35,7 @@ pub mod bootstrap;
 pub mod config;
 pub mod db;
 pub mod doc_tools;
+pub mod hasn_invoke;
 pub mod hasn_tools;
 pub mod hx_image_gen;
 pub mod hx_web_search;

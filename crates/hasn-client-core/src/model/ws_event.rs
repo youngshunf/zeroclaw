@@ -209,6 +209,9 @@ pub enum WsCommand {
         msg_type: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         local_id: Option<String>,
+        /// 回复的消息 ID（可选，用于消息引用/回复）
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reply_to_id: Option<i64>,
     },
 
     /// 标记已读

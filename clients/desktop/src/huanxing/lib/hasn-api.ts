@@ -28,6 +28,7 @@ export interface Message {
   status: number;
   send_status: string;
   created_at?: string;
+  reply_to_id?: number;
 }
 
 export interface Contact {
@@ -139,10 +140,10 @@ export async function getMessages(
   return httpGet<Message[]>(`/conversations/${conversationId}/messages?${params}`);
 }
 
-export async function sendMessage(to: string, content: string): Promise<Message> {
+export async function sendMessage(to: string, content: string, replyToId?: number): Promise<Message> {
   const invoke = getTauriInvoke();
-  if (invoke) return invoke("send_message", { to, content }) as Promise<Message>;
-  return httpPost<Message>("/messages/send", { to, content: { text: content }, content_type: 1 });
+  if (invoke) return invoke("send_message", { to, content, replyToId: replyToId ?? null }) as Promise<Message>;
+  return httpPost<Message>("/messages/send", { to, content: { text: content }, content_type: 1, reply_to_id: replyToId });
 }
 
 export async function markConversationRead(conversationId: string, lastMsgId?: number): Promise<void> {

@@ -33,6 +33,8 @@ pub struct HasnClientState {
     pub client_jwt: RwLock<Option<String>>,
     /// 当前客户端管理的 Agent hasn_id 集合
     pub local_agents: RwLock<HashSet<String>>,
+    /// Sidecar 端口（用于 HASN 消息转发到本地 Agent）
+    pub sidecar_port: RwLock<Option<u16>>,
 }
 
 impl HasnClientState {
@@ -53,6 +55,7 @@ impl HasnClientState {
             client_id: RwLock::new(None),
             client_jwt: RwLock::new(None),
             local_agents: RwLock::new(HashSet::new()),
+            sidecar_port: RwLock::new(None),
         })
     }
 }
@@ -144,12 +147,12 @@ pub async fn hasn_connect(
     // 5. 建立 WebSocket 连接
     let ws_url = state.api.ws_client_url(&token_resp.client_jwt);
     let app_handle = app.clone();
-    let sync = state.sync_engine.clone();
+    let hasn_state = state.inner().clone();
 
     state
         .ws
         .connect(&ws_url, move |event| {
-            handle_ws_event(event, &app_handle, &sync);
+            handle_ws_event(event, &app_handle, &hasn_state);
         })
         .await
         .map_err(|e| format!("WebSocket 连接失败: {}", e))?;
@@ -283,6 +286,7 @@ pub async fn get_messages(
 pub async fn send_message(
     to: String,
     content: String,
+    reply_to_id: Option<i64>,
     state: State<'_, Arc<HasnClientState>>,
 ) -> Result<Message, String> {
     let hasn_id = state
@@ -302,7 +306,7 @@ pub async fn send_message(
 
     // 本地优先：先写入本地 DB
     let local_msg =
-        hasn_client_core::model::message::HasnMessage::new_outgoing("pending", &hasn_id, &content, 1);
+        hasn_client_core::model::message::HasnMessage::new_outgoing("pending", &hasn_id, &content, 1, reply_to_id);
     let local_id_copy = local_msg.local_id.clone();
     let _ = state.db.insert_message(&local_msg);
 
@@ -315,6 +319,7 @@ pub async fn send_message(
         content_type: Some(1),
         msg_type: Some("message".to_string()),
         local_id: Some(local_id_copy.clone()),
+        reply_to_id,
     };
 
     state
@@ -454,9 +459,67 @@ pub async fn get_my_agents(
         .collect())
 }
 
+// ─── Sidecar 端口设置 ───
+
+#[tauri::command]
+pub async fn set_hasn_sidecar_port(
+    port: u16,
+    state: State<'_, Arc<HasnClientState>>,
+) -> Result<(), String> {
+    *state.sidecar_port.write().await = Some(port);
+    tracing::info!("[HASN] Sidecar 端口设置为 {}", port);
+    Ok(())
+}
+
+// ─── HASN → 本地 Agent 调用 ───
+
+/// 通过 HTTP 调用本地 Sidecar 的 hasn-invoke 端点
+async fn invoke_sidecar_agent(
+    port: u16,
+    hasn_id: &str,
+    session_id: &str,
+    from_id: &str,
+    message: &str,
+) -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+        .map_err(|e| format!("创建 HTTP 客户端失败: {e}"))?;
+
+    let resp = client
+        .post(format!("http://127.0.0.1:{port}/api/v1/agent/hasn-invoke"))
+        .json(&serde_json::json!({
+            "hasn_id": hasn_id,
+            "session_id": session_id,
+            "from_id": from_id,
+            "message": message,
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("Sidecar 调用失败: {e}"))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Sidecar 返回 {status}: {body}"));
+    }
+
+    let result: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("解析 Sidecar 响应失败: {e}"))?;
+
+    result
+        .get("reply")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| "Sidecar 响应缺少 reply 字段".to_string())
+}
+
 // ─── WebSocket 事件处理（本地路由，对齐 29 文档 §6.1）───
 
-fn handle_ws_event(event: WsEvent, app: &AppHandle, sync: &Arc<SyncEngine>) {
+fn handle_ws_event(event: WsEvent, app: &AppHandle, state: &Arc<HasnClientState>) {
+    let sync = &state.sync_engine;
     match event {
         WsEvent::Connected {
             user_hasn_id,
@@ -483,19 +546,91 @@ fn handle_ws_event(event: WsEvent, app: &AppHandle, sync: &Arc<SyncEngine>) {
         }
 
         WsEvent::Message { to_id, message } => {
-            if let Ok(msg) = sync.handle_incoming_message(message) {
-                let _ = app.emit("hasn:message", serde_json::json!({
-                    "id": msg.id,
-                    "local_id": msg.local_id,
-                    "conversation_id": msg.conversation_id,
-                    "from_id": msg.from_id,
-                    "from_type": msg.from_type,
-                    "content": msg.content,
-                    "content_type": msg.content_type,
-                    "status": msg.status,
-                    "created_at": msg.created_at,
-                    "to_id": to_id,
-                }));
+            // 1. 先写入本地 DB
+            let msg = match sync.handle_incoming_message(message) {
+                Ok(m) => m,
+                Err(e) => {
+                    tracing::error!("[HASN] 处理入站消息失败: {e}");
+                    return;
+                }
+            };
+
+            // 2. 通知前端显示
+            let _ = app.emit("hasn:message", serde_json::json!({
+                "id": msg.id,
+                "local_id": msg.local_id,
+                "conversation_id": msg.conversation_id,
+                "from_id": msg.from_id,
+                "from_type": msg.from_type,
+                "content": msg.content,
+                "content_type": msg.content_type,
+                "status": msg.status,
+                "created_at": msg.created_at,
+                "to_id": to_id,
+                "reply_to_id": msg.reply_to,
+            }));
+
+            // 3. 路由判断：to_id 是否是本地 Agent？
+            if let Some(ref target_id) = to_id {
+                let state = state.clone();
+                let target = target_id.clone();
+                let from = msg.from_id.clone();
+                let conv_id = msg.conversation_id.clone();
+                let content = msg.content.clone();
+                let ws = state.ws.clone();
+
+                tokio::spawn(async move {
+                    let is_local = state.local_agents.read().await.contains(&target);
+                    if !is_local {
+                        return; // 不是本地 Agent，仅显示，不转发
+                    }
+
+                    let port = match *state.sidecar_port.read().await {
+                        Some(p) => p,
+                        None => {
+                            tracing::warn!("[HASN] 本地 Agent 消息但 sidecar_port 未设置");
+                            return;
+                        }
+                    };
+
+                    // 发送 TYPING 状态
+                    let typing_cmd = WsCommand::Typing {
+                        conversation_id: conv_id.clone(),
+                        to_id: from.clone(),
+                    };
+                    let _ = ws.send_command(&typing_cmd).await;
+
+                    // 调用 Sidecar Agent
+                    tracing::info!(
+                        "[HASN] 转发消息到本地 Agent: {} -> {} (port={})",
+                        from, target, port
+                    );
+                    match invoke_sidecar_agent(
+                        port, &target, &conv_id, &from, &content,
+                    ).await {
+                        Ok(reply) => {
+                            // 通过 HASN WS 回复
+                            let reply_json = serde_json::json!({"text": &reply});
+                            let send_cmd = WsCommand::Send {
+                                from_id: Some(target.clone()),
+                                to: from.clone(),
+                                content: reply_json,
+                                content_type: Some(1),
+                                msg_type: Some("message".to_string()),
+                                local_id: Some(format!("agent_{}", chrono::Utc::now().timestamp_millis())),
+                                reply_to_id: None,
+                            };
+                            if let Err(e) = ws.send_command(&send_cmd).await {
+                                tracing::error!("[HASN] Agent 回复发送失败: {e}");
+                            } else {
+                                tracing::info!("[HASN] Agent 回复已发送 ({} 字符)", reply.len());
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("[HASN] Sidecar 调用失败: {e}");
+                        }
+                    }
+                });
             }
         }
 

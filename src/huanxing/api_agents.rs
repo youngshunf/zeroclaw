@@ -32,10 +32,12 @@ use crate::huanxing::templates::{TemplateEngine, UserInfo, WorkspaceVariant};
 /// 单个 Agent 信息
 #[derive(Debug, Serialize)]
 pub struct AgentInfo {
-    /// Agent 目录名（即 agent_id）
+    /// Agent 目录名（即 agent_name，支持中文）
     pub name: String,
     /// 显示名称（从 config.toml 的 display_name 读取，没有则为空）
     pub display_name: Option<String>,
+    /// HASN 身份 ID（从 config.toml 的 hasn_id 读取，未注册时为空）
+    pub hasn_id: Option<String>,
     /// 工作区路径
     pub config_dir: String,
     /// 使用的模型
@@ -82,6 +84,7 @@ pub struct CreateAgentResponse {
 #[serde(default)]
 struct WorkspaceConfig {
     pub display_name: Option<String>,
+    pub hasn_id: Option<String>,
     pub default_model: Option<String>,
     pub default_provider: Option<String>,
     pub default_temperature: Option<f64>,
@@ -132,6 +135,7 @@ async fn list_agents(State(state): State<AppState>) -> impl IntoResponse {
                     config_dir: path.to_string_lossy().to_string(),
                     model: ws_cfg.default_model,
                     display_name: ws_cfg.display_name,
+                    hasn_id: ws_cfg.hasn_id,
                     active: true,
                     is_default: false,
                     name,
@@ -370,12 +374,14 @@ async fn write_file(
 // ── 辅助函数 ──────────────────────────────────────────────
 
 /// 校验 agent name：允许中文、字母、数字、下划线、连字符，长度 ≤ 32 字符（UTF-8）
+/// 禁止：空名、以 . 开头、包含 / \ \0
 fn is_valid_agent_name(name: &str) -> bool {
     !name.is_empty()
         && name.chars().count() <= 32
-        && name
-            .chars()
-            .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+        && !name.starts_with('.')
+        && !name.contains('/')
+        && !name.contains('\\')
+        && !name.contains('\0')
 }
 
 /// 从工作区目录加载 config.toml 的部分字段
