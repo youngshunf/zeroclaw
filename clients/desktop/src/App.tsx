@@ -78,54 +78,62 @@ function AppContent() {
     }
   }, [isAuthenticated]);
 
-  // 唤星桌面端：监听配置修复事件
-  // 当 ~/.huanxing/config.toml 不存在或不含有效唤星配置时触发
+  // 唤星桌面端：主动检查配置有效性
+  // 解决 localStorage 有 session 但 ~/.huanxing 被删除的情况
+  const [configChecked, setConfigChecked] = useState(false);
+
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    // 非 Tauri 环境或未登录：跳过检查
     const internals = (window as any).__TAURI_INTERNALS__;
-    if (!internals) return;
+    if (!internals?.invoke || !isAuthenticated) {
+      setConfigChecked(true);
+      return;
+    }
 
     let cancelled = false;
 
-    // 动态 import Tauri event API
-    import('@tauri-apps/api/event').then(({ listen }) => {
-      listen<{ config_dir: string; has_any_config: boolean }>('huanxing:needs-repair', async (event) => {
+    (async () => {
+      try {
+        const valid: boolean = await internals.invoke('check_huanxing_config');
         if (cancelled) return;
-        console.log('[huanxing] 收到配置修复事件:', event.payload);
 
-        // 检查 localStorage 是否有 session
-        try {
-          const raw = localStorage.getItem('huanxing_session');
-          if (raw) {
-            const session = JSON.parse(raw);
-            if (session?.llmToken && session?.user) {
-              console.log('[huanxing] localStorage 有 session，自动修复配置...');
-              // 动态导入 onboard
-              const { autoOnboard } = await import('./huanxing/onboard');
-              const result = await autoOnboard(session);
-              console.log('[huanxing] 自动修复结果:', result);
-              if (result.success) {
-                return; // 修复成功，sidecar 已启动
-              }
-            }
-          }
-        } catch (err) {
-          console.warn('[huanxing] 自动修复失败:', err);
+        if (valid) {
+          console.log('[huanxing] 配置有效');
+          setConfigChecked(true);
+          return;
         }
 
-        // 没有 session 或修复失败 → 清除登录态，回到登录页
-        console.log('[huanxing] 无法自动修复，清除登录态');
+        // 配置无效 — 尝试用 localStorage session 自动修复
+        console.log('[huanxing] 配置无效，尝试自动修复...');
+        const raw = localStorage.getItem('huanxing_session');
+        if (raw) {
+          const session = JSON.parse(raw);
+          if (session?.llmToken && session?.user) {
+            const { autoOnboard } = await import('./huanxing/onboard');
+            const result = await autoOnboard(session);
+            console.log('[huanxing] 自动修复结果:', result);
+            if (result.success) {
+              setConfigChecked(true);
+              return;
+            }
+          }
+        }
+
+        // 无 session 或修复失败 → 清除登录态
+        console.log('[huanxing] 无法修复，清除登录态');
         localStorage.removeItem('huanxing_session');
         logout();
-      });
-    }).catch(() => {
-      // @tauri-apps/api 不可用，忽略
-    });
+      } catch (err) {
+        console.warn('[huanxing] 配置检查失败:', err);
+        // 检查失败不阻塞，让用户继续使用
+      }
+      if (!cancelled) setConfigChecked(true);
+    })();
 
     return () => { cancelled = true; };
-  }, [logout]);
+  }, [isAuthenticated, logout]);
 
-  if (loading) {
+  if (loading || (isAuthenticated && !configChecked)) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#050b1a]">
         <div className="flex flex-col items-center gap-3">

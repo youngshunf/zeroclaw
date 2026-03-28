@@ -7,22 +7,22 @@
 
 export const HUANXING_CONFIG = {
   /** 唤星后端服务基地址 */
-  backendBaseUrl: 'https://api.huanxing.dcfuture.cn',
+  backendBaseUrl: 'http://127.0.0.1:8020',
 
   /** 唤星云服务基地址（线上） */
-  cloudBaseUrl: 'https://api.huanxing.dcfuture.cn',
+  cloudBaseUrl: 'http://127.0.0.1:8020',
 
   /** LLM 网关基地址 */
-  llmGatewayUrl: 'https://llm.dcfuture.cn',
+  llmGatewayUrl: 'http://127.0.0.1:3180',
 
   /** LLM 网关 v1 路径（用于 ZeroClaw openai_compat provider） */
-  llmGatewayV1: 'https://llm.dcfuture.cn/v1',
+  llmGatewayV1: 'http://127.0.0.1:3180/v1',
 
   /** 默认 LLM 模型 */
   defaultModel: 'claude-sonnet-4-6',
 
   /** 默认 LLM provider 名称 */
-  defaultProvider: 'custom:https://llm.dcfuture.cn',
+  defaultProvider: 'custom:http://127.0.0.1:3180',
 
   /** 默认温度 */
   defaultTemperature: 0.7,

@@ -135,6 +135,8 @@ pub fn run() {
             zeroclaw::update_zeroclaw_config,
             // Onboard（登录后创建配置+启动）
             zeroclaw::onboard_zeroclaw,
+            // 配置有效性检查
+            zeroclaw::check_huanxing_config,
         ])
         .build(tauri::generate_context!())
         .expect("error while building huanxing desktop");

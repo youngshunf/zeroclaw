@@ -86,3 +86,12 @@ pub async fn onboard_zeroclaw(
 ) -> Result<OnboardResult, String> {
     state.onboard(request, app).await
 }
+
+/// 检查唤星配置是否有效（config.toml 存在且包含 [huanxing] enabled = true）
+/// 前端在 Auth 初始化时调用，避免 localStorage 有 session 但文件系统被删的情况
+#[tauri::command]
+pub async fn check_huanxing_config(
+    state: State<'_, Arc<SidecarManager>>,
+) -> Result<bool, String> {
+    Ok(state.has_valid_huanxing_config())
+}

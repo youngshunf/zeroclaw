@@ -857,6 +857,8 @@ pub struct OnboardRequest {
     pub user_nickname: Option<String>,
     pub user_uuid: Option<String>,
     pub api_base_url: Option<String>,
+    /// LLM 网关地址（含 /v1 后缀），如 http://127.0.0.1:3180/v1
+    pub llm_gateway_url: Option<String>,
 }
 
 /// Onboard 结果
@@ -905,7 +907,17 @@ impl SidecarManager {
             .api_base_url
             .as_deref()
             .unwrap_or("http://127.0.0.1:8020");
-        let llm_gateway = format!("{api_base}/api/v1/llm/proxy/v1");
+        // LLM 网关：优先使用前端传入的完整地址，否则从 api_base 派生
+        let llm_gateway = req
+            .llm_gateway_url
+            .as_deref()
+            .unwrap_or_else(|| "")
+            .to_string();
+        let llm_gateway = if llm_gateway.is_empty() {
+            format!("{api_base}/api/v1/llm/proxy/v1")
+        } else {
+            llm_gateway
+        };
 
         let config_content = generate_config_toml(
             &app,
@@ -922,12 +934,25 @@ impl SidecarManager {
         result.config_created = true;
         tracing::info!("Config created: {}", config_path.display());
 
-        // 3. 创建默认 agent
+        // 3. 创建默认 agent 配置
         let agent_dir = self.config_dir.join("agents").join("default");
         std::fs::create_dir_all(&agent_dir).ok();
-
-        result.agent_created = true;
-        tracing::info!("Default agent dir created: {}", agent_dir.display());
+        // 写入 agent 级别的 config.toml
+        let agent_config = format!(
+            r#"# 默认 Agent 配置 — 唤星桌面端自动生成
+[agent]
+name = "default"
+template = "assistant"
+display_name = "{star_name}"
+hasn_id = ""
+"#,
+            star_name = star_name,
+        );
+        let agent_config_path = agent_dir.join("config.toml");
+        if !agent_config_path.exists() {
+            std::fs::write(&agent_config_path, &agent_config).ok();
+            tracing::info!("Agent config created: {}", agent_config_path.display());
+        }
 
         // 4. 创建完整 workspace — 从 workspace-scaffold/ 模板复制 + 占位符替换
         let now = chrono_now_pretty();

@@ -71,6 +71,7 @@ async function tauriOnboard(session: HuanxingSession): Promise<OnboardResult> {
         user_nickname: session.user.nickname || null,
         user_uuid: session.user.uuid || null,
         api_base_url: HUANXING_CONFIG.backendBaseUrl,
+        llm_gateway_url: HUANXING_CONFIG.llmGatewayV1,
       },
     });
 
