@@ -8730,7 +8730,7 @@ impl Default for Config {
         let zeroclaw_dir = home.join(".zeroclaw");
 
         Self {
-            workspace_dir: zeroclaw_dir.join("workspace"),
+            workspace_dir: zeroclaw_dir.join(default_workspace_subdir()),
             config_path: zeroclaw_dir.join("config.toml"),
             api_key: None,
             api_url: None,
@@ -8818,9 +8818,22 @@ impl Default for Config {
     }
 }
 
+/// 唤星模式下，默认 workspace 子目录为 agents/default（对应桌面端唯一的默认 Agent）；
+/// 上游 ZeroClaw 使用 workspace/。
+/// 通过编译时 feature flag 区分，零运行时开销。
+#[cfg(feature = "huanxing")]
+fn default_workspace_subdir() -> &'static str {
+    "agents/default"
+}
+
+#[cfg(not(feature = "huanxing"))]
+fn default_workspace_subdir() -> &'static str {
+    "workspace"
+}
+
 fn default_config_and_workspace_dirs() -> Result<(PathBuf, PathBuf)> {
     let config_dir = default_config_dir()?;
-    Ok((config_dir.clone(), config_dir.join("workspace")))
+    Ok((config_dir.clone(), config_dir.join(default_workspace_subdir())))
 }
 
 const ACTIVE_WORKSPACE_STATE_FILE: &str = "active_workspace.toml";
@@ -8901,7 +8914,7 @@ async fn load_persisted_workspace_dirs(
     } else {
         default_config_dir.join(parsed_dir)
     };
-    Ok(Some((config_dir.clone(), config_dir.join("workspace"))))
+    Ok(Some((config_dir.clone(), config_dir.join(default_workspace_subdir()))))
 }
 
 pub(crate) async fn persist_active_workspace_config_dir(config_dir: &Path) -> Result<()> {
@@ -8984,7 +8997,7 @@ pub(crate) fn resolve_config_dir_for_workspace(workspace_dir: &Path) -> (PathBuf
     if workspace_config_dir.join("config.toml").exists() {
         return (
             workspace_config_dir.clone(),
-            workspace_config_dir.join("workspace"),
+            workspace_config_dir.join(default_workspace_subdir()),
         );
     }
 
@@ -9006,7 +9019,7 @@ pub(crate) fn resolve_config_dir_for_workspace(workspace_dir: &Path) -> (PathBuf
 
     (
         workspace_config_dir.clone(),
-        workspace_config_dir.join("workspace"),
+        workspace_config_dir.join(default_workspace_subdir()),
     )
 }
 
@@ -9079,7 +9092,7 @@ async fn resolve_runtime_config_dirs(
             let zeroclaw_dir = expand_tilde_path(custom_config_dir);
             return Ok((
                 zeroclaw_dir.clone(),
-                zeroclaw_dir.join("workspace"),
+                zeroclaw_dir.join(default_workspace_subdir()),
                 ConfigResolutionSource::EnvConfigDir,
             ));
         }
@@ -9316,18 +9329,11 @@ impl Config {
         fs::create_dir_all(&zeroclaw_dir)
             .await
             .with_context(|| config_dir_creation_error(&zeroclaw_dir))?;
+        fs::create_dir_all(&workspace_dir)
+            .await
+            .context("Failed to create workspace directory")?;
 
-        // 唤星模式：不自动创建 config_dir/workspace/ 目录。
-        // 桌面端由 Tauri onboard 创建 agents/default/，
-        // 云端由多租户系统创建 per-tenant workspace。
-        // 上游默认行为：自动创建 workspace/ + 写入 IDENTITY.md/SOUL.md。
-        #[cfg(not(feature = "huanxing"))]
-        {
-            fs::create_dir_all(&workspace_dir)
-                .await
-                .context("Failed to create workspace directory")?;
-            ensure_bootstrap_files(&workspace_dir).await?;
-        }
+        ensure_bootstrap_files(&workspace_dir).await?;
 
         if config_path.exists() {
             // Warn if config file is world-readable (may contain API keys)
