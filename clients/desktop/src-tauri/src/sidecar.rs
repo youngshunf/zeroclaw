@@ -846,6 +846,19 @@ impl SidecarManager {
     pub fn has_config(&self) -> bool {
         self.config_dir.join("config.toml").exists()
     }
+
+    /// 检查配置状态：(config_exists, config_valid)
+    /// - (true, true): config.toml 存在且有效 → 可自动修复 sidecar
+    /// - (true, false): config.toml 存在但无效 → 需重新登录
+    /// - (false, false): 目录/文件不存在 → 需重新登录
+    pub fn check_config_status(&self) -> (bool, bool) {
+        let config_path = self.config_dir.join("config.toml");
+        if !config_path.exists() {
+            return (false, false);
+        }
+        let valid = self.has_valid_huanxing_config();
+        (true, valid)
+    }
 }
 
 // ── Onboard：登录后初始化 ─────────────────────────────────

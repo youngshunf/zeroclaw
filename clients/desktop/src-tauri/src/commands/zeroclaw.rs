@@ -87,11 +87,26 @@ pub async fn onboard_zeroclaw(
     state.onboard(request, app).await
 }
 
-/// 检查唤星配置是否有效（config.toml 存在且包含 [huanxing] enabled = true）
-/// 前端在 Auth 初始化时调用，避免 localStorage 有 session 但文件系统被删的情况
+/// 配置检查结果
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ConfigCheckResult {
+    /// config.toml 文件是否存在
+    pub config_exists: bool,
+    /// config.toml 存在且包含有效的 [huanxing] enabled = true
+    pub config_valid: bool,
+}
+
+/// 检查唤星配置状态
+/// - config_valid=true: 配置完好，可自动修复 sidecar
+/// - config_exists=true, config_valid=false: 配置损坏，需重新登录
+/// - config_exists=false: 目录被删，需重新登录
 #[tauri::command]
 pub async fn check_huanxing_config(
     state: State<'_, Arc<SidecarManager>>,
-) -> Result<bool, String> {
-    Ok(state.has_valid_huanxing_config())
+) -> Result<ConfigCheckResult, String> {
+    let (exists, valid) = state.check_config_status();
+    Ok(ConfigCheckResult {
+        config_exists: exists,
+        config_valid: valid,
+    })
 }

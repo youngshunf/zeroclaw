@@ -810,7 +810,7 @@ impl Agent {
                 None
             };
 
-            if let (Some(ref cache), Some(ref key)) = (&self.response_cache, &cache_key) {
+            if let (Some(cache), Some(key)) = (&self.response_cache, &cache_key) {
                 if let Ok(Some(cached)) = cache.get(key) {
                     self.observer.record_event(&ObserverEvent::CacheHit {
                         cache_type: "response".into(),
@@ -857,7 +857,7 @@ impl Agent {
                 };
 
                 // Store in response cache (text-only, no tool calls)
-                if let (Some(ref cache), Some(ref key)) = (&self.response_cache, &cache_key) {
+                if let (Some(cache), Some(key)) = (&self.response_cache, &cache_key) {
                     let token_count = response
                         .usage
                         .as_ref()
@@ -985,7 +985,7 @@ impl Agent {
                 None
             };
 
-            if let (Some(ref cache), Some(ref key)) = (&self.response_cache, &cache_key) {
+            if let (Some(cache), Some(key)) = (&self.response_cache, &cache_key) {
                 if let Ok(Some(cached)) = cache.get(key) {
                     self.observer.record_event(&ObserverEvent::CacheHit {
                         cache_type: "response".into(),
@@ -1123,7 +1123,7 @@ impl Agent {
                 };
 
                 // Store in response cache
-                if let (Some(ref cache), Some(ref key)) = (&self.response_cache, &cache_key) {
+                if let (Some(cache), Some(key)) = (&self.response_cache, &cache_key) {
                     let token_count = response
                         .usage
                         .as_ref()
@@ -1467,10 +1467,12 @@ mod tests {
 
         let response = agent.turn("hi").await.unwrap();
         assert_eq!(response, "done");
-        assert!(agent
-            .history()
-            .iter()
-            .any(|msg| matches!(msg, ConversationMessage::ToolResults(_))));
+        assert!(
+            agent
+                .history()
+                .iter()
+                .any(|msg| matches!(msg, ConversationMessage::ToolResults(_)))
+        );
     }
 
     #[tokio::test]
@@ -1529,7 +1531,7 @@ mod tests {
 
     #[tokio::test]
     async fn from_config_passes_extra_headers_to_custom_provider() {
-        use axum::{http::HeaderMap, routing::post, Json, Router};
+        use axum::{Json, Router, http::HeaderMap, routing::post};
         use tempfile::TempDir;
         use tokio::net::TcpListener;
 

@@ -79,7 +79,8 @@ function AppContent() {
   }, [isAuthenticated]);
 
   // 唤星桌面端：主动检查配置有效性
-  // 解决 localStorage 有 session 但 ~/.huanxing 被删除的情况
+  // config 有效 → 自动修复（启动 sidecar）
+  // config 不存在 / 无效 → 强制退出登录
   const [configChecked, setConfigChecked] = useState(false);
 
   useEffect(() => {
@@ -94,33 +95,29 @@ function AppContent() {
 
     (async () => {
       try {
-        const valid: boolean = await internals.invoke('check_huanxing_config');
+        const status: { config_exists: boolean; config_valid: boolean } =
+          await internals.invoke('check_huanxing_config');
         if (cancelled) return;
 
-        if (valid) {
-          console.log('[huanxing] 配置有效');
+        if (status.config_valid) {
+          // 配置有效 → 自动修复（确保 sidecar 启动）
+          console.log('[huanxing] 配置有效，检查 sidecar 状态...');
+          try {
+            const sidecarStatus = await internals.invoke('get_zeroclaw_status');
+            if (!sidecarStatus?.running) {
+              console.log('[huanxing] sidecar 未运行，自动启动...');
+              await internals.invoke('start_zeroclaw');
+            }
+          } catch (e) {
+            console.warn('[huanxing] sidecar 自动修复失败:', e);
+          }
           setConfigChecked(true);
           return;
         }
 
-        // 配置无效 — 尝试用 localStorage session 自动修复
-        console.log('[huanxing] 配置无效，尝试自动修复...');
-        const raw = localStorage.getItem('huanxing_session');
-        if (raw) {
-          const session = JSON.parse(raw);
-          if (session?.llmToken && session?.user) {
-            const { autoOnboard } = await import('./huanxing/onboard');
-            const result = await autoOnboard(session);
-            console.log('[huanxing] 自动修复结果:', result);
-            if (result.success) {
-              setConfigChecked(true);
-              return;
-            }
-          }
-        }
-
-        // 无 session 或修复失败 → 清除登录态
-        console.log('[huanxing] 无法修复，清除登录态');
+        // 配置不存在或无效 → 强制退出登录
+        console.log('[huanxing] 配置无效或不存在，强制退出登录',
+          `(exists=${status.config_exists}, valid=${status.config_valid})`);
         localStorage.removeItem('huanxing_session');
         logout();
       } catch (err) {
