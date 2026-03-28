@@ -27,7 +27,7 @@ export default defineConfig({
     proxy: {
       // 唤星后端 API → 生产服务器（浏览器开发模式用，Tauri 模式直连）
       "/api/v1": {
-        target: "https://api.huanxing.dcfuture.cn",
+        target: "http://127.0.0.1:8020",
         changeOrigin: true,
       },
       // ZeroClaw sidecar
