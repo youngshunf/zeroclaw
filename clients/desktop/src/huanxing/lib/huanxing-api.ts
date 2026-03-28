@@ -18,7 +18,8 @@ import { HUANXING_CONFIG, type HuanxingLoginData } from '../config';
  */
 function baseUrl(): string {
   const isDesktop =
-    typeof window !== 'undefined' && !!(window as any).__TAURI__;
+    typeof window !== 'undefined' &&
+    (!!((window as any).__TAURI_INTERNALS__) || !!((window as any).__TAURI__));
   return isDesktop ? HUANXING_CONFIG.backendBaseUrl : '';
 }
 

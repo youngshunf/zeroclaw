@@ -12,7 +12,7 @@
  */
 export function getWsBaseUrl(): string {
   // Check if running inside Tauri (desktop app with local Sidecar)
-  if (typeof window !== 'undefined' && '__TAURI__' in window) {
+  if (typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window)) {
     return 'ws://localhost:42620';
   }
 

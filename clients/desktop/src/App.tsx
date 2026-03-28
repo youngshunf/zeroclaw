@@ -79,8 +79,7 @@ function AppContent() {
   }, [isAuthenticated]);
 
   // 唤星桌面端：主动检查配置有效性
-  // config 有效 → 自动修复（启动 sidecar）
-  // config 不存在 / 无效 → 强制退出登录
+  // 如果 ~/.huanxing 被删除，强制退出登录，用户重新登录后重建
   const [configChecked, setConfigChecked] = useState(false);
 
   useEffect(() => {
@@ -95,29 +94,17 @@ function AppContent() {
 
     (async () => {
       try {
-        const status: { config_exists: boolean; config_valid: boolean } =
-          await internals.invoke('check_huanxing_config');
+        const valid: boolean = await internals.invoke('check_huanxing_config');
         if (cancelled) return;
 
-        if (status.config_valid) {
-          // 配置有效 → 自动修复（确保 sidecar 启动）
-          console.log('[huanxing] 配置有效，检查 sidecar 状态...');
-          try {
-            const sidecarStatus = await internals.invoke('get_zeroclaw_status');
-            if (!sidecarStatus?.running) {
-              console.log('[huanxing] sidecar 未运行，自动启动...');
-              await internals.invoke('start_zeroclaw');
-            }
-          } catch (e) {
-            console.warn('[huanxing] sidecar 自动修复失败:', e);
-          }
+        if (valid) {
+          console.log('[huanxing] 配置有效');
           setConfigChecked(true);
           return;
         }
 
-        // 配置不存在或无效 → 强制退出登录
-        console.log('[huanxing] 配置无效或不存在，强制退出登录',
-          `(exists=${status.config_exists}, valid=${status.config_valid})`);
+        // 配置无效 → 强制退出登录，用户重新登录后通过 onboard 重建
+        console.log('[huanxing] 配置无效，强制退出登录');
         localStorage.removeItem('huanxing_session');
         logout();
       } catch (err) {

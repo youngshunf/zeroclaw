@@ -398,12 +398,12 @@ agent_key = "test-key-123"
 
     #[test]
     fn napcat_channel_type_exists() {
-        let _ = std::any::type_name::<zeroclaw::channels::NapcatChannel>();
+        let _ = std::any::type_name::<zeroclaw::huanxing::channels::NapcatChannel>();
     }
 
     #[test]
     fn wechat_pad_channel_type_exists() {
-        let _ = std::any::type_name::<zeroclaw::channels::WechatPadChannel>();
+        let _ = std::any::type_name::<zeroclaw::huanxing::channels::WechatPadChannel>();
     }
 
     #[test]

@@ -190,6 +190,43 @@ static SENSITIVE_KEY_PATTERNS: LazyLock<RegexSet> = LazyLock::new(|| {
     .unwrap()
 });
 
+/// Detect "I'll do X" style deferred-action replies that often indicate a missing
+/// follow-up tool call in agentic flows.
+static DEFERRED_ACTION_WITHOUT_TOOL_CALL_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?ix)
+        \b(
+            i(?:'ll|\s+will)|
+            i\s+am\s+going\s+to|
+            let\s+me|
+            let(?:'s|\s+us)|
+            we(?:'ll|\s+will)
+        )\b
+        [^.!?\n]{0,160}
+        \b(
+            check|look|search|browse|open|read|write|run|execute|call|
+            inspect|analy(?:s|z)e|verify|list|fetch|try|see|continue
+        )\b",
+    )
+    .unwrap()
+});
+
+/// Detect common CJK deferred-action phrases (e.g., Chinese "让我…查看")
+/// that imply a follow-up tool call should occur.
+static CJK_DEFERRED_ACTION_CUE_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(让我|我来|我会|我们来|我们会|我先|先让我|马上|在做|要做|正在做|去做)").unwrap());
+
+/// Action verbs commonly used when promising to perform tool-backed work in CJK text.
+static CJK_DEFERRED_ACTION_VERB_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(查看|检查|搜索|查找|浏览|打开|读取|写入|运行|执行|调用|分析|验证|列出|获取|尝试|试试|继续|处理|修复|看看|看一看|看一下)").unwrap()
+});
+
+/// Fast check for CJK scripts (Han/Hiragana/Katakana/Hangul) so we only run
+/// additional regexes when non-Latin text is present.
+static CJK_SCRIPT_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]").unwrap()
+});
+
 static SENSITIVE_KV_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?i)(token|api[_-]?key|password|secret|user[_-]?key|bearer|credential)["']?\s*[:=]\s*(?:"([^"]{8,})"|'([^']{8,})'|([a-zA-Z0-9_\-\.]{8,}))"#).unwrap()
 });
@@ -245,6 +282,8 @@ pub(crate) fn scrub_credentials(input: &str) -> String {
 /// used when callers omit the parameter.
 /// Minimum interval between progress sends to avoid flooding the draft channel.
 pub(crate) const PROGRESS_MIN_INTERVAL_MS: u64 = 500;
+
+const MISSING_TOOL_CALL_RETRY_PROMPT: &str = "Internal correction: your last reply indicated you were about to take an action, but no valid tool call was emitted. If a tool is needed, emit it now using the required <tool_call>...</tool_call> format. If no tool is needed, provide the complete final answer now and do not defer action.";
 
 /// Structured event sent through the draft channel so channels can
 /// differentiate between status/progress updates and actual response content.
@@ -2177,6 +2216,21 @@ pub(crate) async fn agent_turn(
     .await
 }
 
+fn looks_like_deferred_action_without_tool_call(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    if DEFERRED_ACTION_WITHOUT_TOOL_CALL_REGEX.is_match(trimmed) {
+        return true;
+    }
+
+    CJK_SCRIPT_REGEX.is_match(trimmed)
+        && CJK_DEFERRED_ACTION_CUE_REGEX.is_match(trimmed)
+        && CJK_DEFERRED_ACTION_VERB_REGEX.is_match(trimmed)
+}
+
 fn maybe_inject_channel_delivery_defaults(
     tool_name: &str,
     tool_args: &mut serde_json::Value,
@@ -2336,6 +2390,9 @@ pub(crate) async fn run_tool_call_loop(
         },
     );
 
+    let mut missing_tool_call_retry_used = false;
+    let mut missing_tool_call_retry_prompt: Option<String> = None;
+
     for iteration in 0..max_iterations {
         let mut seen_tool_signatures: HashSet<(String, String)> = HashSet::new();
 
@@ -2492,6 +2549,10 @@ pub(crate) async fn run_tool_call_loop(
 
         let prepared_messages =
             multimodal::prepare_messages_for_provider(history, multimodal_config).await?;
+        let mut request_messages = prepared_messages.messages.clone();
+        if let Some(prompt) = missing_tool_call_retry_prompt.take() {
+            request_messages.push(ChatMessage::user(prompt));
+        }
 
         // ── Progress: LLM thinking ────────────────────────────
         if let Some(ref tx) = on_delta {
@@ -2566,7 +2627,7 @@ pub(crate) async fn run_tool_call_loop(
         let chat_result = if should_consume_provider_stream {
             match consume_provider_streaming_response(
                 active_provider,
-                &prepared_messages.messages,
+                &request_messages,
                 request_tools,
                 active_model,
                 temperature,
@@ -2610,7 +2671,7 @@ pub(crate) async fn run_tool_call_loop(
                     {
                         let chat_future = active_provider.chat(
                             ChatRequest {
-                                messages: &prepared_messages.messages,
+                                messages: &request_messages,
                                 tools: request_tools,
                             },
                             active_model,
@@ -2632,7 +2693,7 @@ pub(crate) async fn run_tool_call_loop(
             // pacing config to catch hung model responses.
             let chat_future = active_provider.chat(
                 ChatRequest {
-                    messages: &prepared_messages.messages,
+                    messages: &request_messages,
                     tools: request_tools,
                 },
                 active_model,
@@ -2682,7 +2743,7 @@ pub(crate) async fn run_tool_call_loop(
             tool_calls,
             assistant_history_content,
             native_tool_calls,
-            _parse_issue_detected,
+            parse_issue_detected,
             response_streamed_live,
         ) = match chat_result {
             Ok(resp) => {
@@ -2900,6 +2961,49 @@ pub(crate) async fn run_tool_call_loop(
                     )))
                     .await;
             }
+        }
+
+        // ── Deferred action follow-through check ─────────────────
+        // If the model said "I'll do X" but emitted zero tool calls, retry
+        // once with an explicit nudge to actually call the tool.
+        let missing_tool_call_followthrough = tool_calls.is_empty()
+            && !missing_tool_call_retry_used
+            && (parse_issue_detected
+                || looks_like_deferred_action_without_tool_call(&display_text));
+        if missing_tool_call_followthrough {
+            missing_tool_call_retry_used = true;
+            missing_tool_call_retry_prompt = Some(MISSING_TOOL_CALL_RETRY_PROMPT.to_string());
+            let retry_reason = if parse_issue_detected {
+                "parse_issue_detected"
+            } else {
+                "deferred_action_text_detected"
+            };
+
+            runtime_trace::record_event(
+                "tool_call_followthrough_retry",
+                Some(channel_name),
+                Some(provider_name),
+                Some(model),
+                Some(&turn_id),
+                Some(true),
+                Some("llm response implied follow-up action but emitted no tool call"),
+                serde_json::json!({
+                    "iteration": iteration + 1,
+                    "reason": retry_reason,
+                    "response_excerpt": truncate_with_ellipsis(&scrub_credentials(&display_text), 600),
+                }),
+            );
+
+            if let Some(ref tx) = on_delta {
+                let _ = tx
+                    .send(DraftEvent::Progress(
+                        "\u{21bb} Retrying: response deferred action without a tool call\n"
+                            .to_string(),
+                    ))
+                    .await;
+            }
+
+            continue;
         }
 
         if tool_calls.is_empty() {
@@ -9635,5 +9739,52 @@ Let me check the result."#;
         .expect("should succeed without cost scope");
 
         assert_eq!(result, "ok");
+    }
+
+    // ── Deferred-action detection tests ─────────────────────────
+    #[test]
+    fn deferred_action_en_detected() {
+        assert!(looks_like_deferred_action_without_tool_call(
+            "Let me check the file contents."
+        ));
+        assert!(looks_like_deferred_action_without_tool_call(
+            "I'll run the command now."
+        ));
+        assert!(looks_like_deferred_action_without_tool_call(
+            "I will try to read the configuration."
+        ));
+        assert!(looks_like_deferred_action_without_tool_call(
+            "It seems absolute paths are blocked. Let me try using a relative path."
+        ));
+    }
+
+    #[test]
+    fn deferred_action_cjk_detected() {
+        assert!(looks_like_deferred_action_without_tool_call(
+            "看起来绝对路径不可用，让我尝试使用当前目录的相对路径。"
+        ));
+        assert!(looks_like_deferred_action_without_tool_call(
+            "页面已打开，让我获取快照查看详细信息。"
+        ));
+        assert!(looks_like_deferred_action_without_tool_call(
+            "我来检查一下配置文件。"
+        ));
+        assert!(looks_like_deferred_action_without_tool_call(
+            "马上执行部署脚本。"
+        ));
+    }
+
+    #[test]
+    fn deferred_action_not_detected_for_final_answers() {
+        assert!(!looks_like_deferred_action_without_tool_call(
+            "The latest update is already shown above."
+        ));
+        assert!(!looks_like_deferred_action_without_tool_call(
+            "最新结果已经在上面整理完成。"
+        ));
+        assert!(!looks_like_deferred_action_without_tool_call(""));
+        assert!(!looks_like_deferred_action_without_tool_call(
+            "Here is the summary of the report."
+        ));
     }
 }

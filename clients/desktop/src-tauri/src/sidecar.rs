@@ -951,6 +951,7 @@ impl SidecarManager {
         let agent_dir = self.config_dir.join("agents").join("default");
         std::fs::create_dir_all(&agent_dir).ok();
         // 写入 agent 级别的 config.toml
+        // provider 和 api_key 继承全局配置，agent 可独立设置 model
         let agent_config = format!(
             r#"# 默认 Agent 配置 — 唤星桌面端自动生成
 [agent]
@@ -958,6 +959,10 @@ name = "default"
 template = "assistant"
 display_name = "{star_name}"
 hasn_id = ""
+
+# Agent 独立模型配置（继承全局 provider 和 api_key）
+default_model = "claude-sonnet-4-6"
+title_model = "claude-haiku-4-5"
 "#,
             star_name = star_name,
         );
@@ -966,6 +971,7 @@ hasn_id = ""
             std::fs::write(&agent_config_path, &agent_config).ok();
             tracing::info!("Agent config created: {}", agent_config_path.display());
         }
+        result.agent_created = true;
 
         // 4. 创建完整 workspace — 从 workspace-scaffold/ 模板复制 + 占位符替换
         let now = chrono_now_pretty();
