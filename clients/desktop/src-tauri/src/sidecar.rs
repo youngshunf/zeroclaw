@@ -833,7 +833,16 @@ impl SidecarManager {
         &self.config_dir
     }
 
-    /// 是否有配置文件（之前登录过）
+    /// 是否有有效的唤星配置文件（包含 [huanxing] enabled = true）
+    pub fn has_valid_huanxing_config(&self) -> bool {
+        let config_path = self.config_dir.join("config.toml");
+        if !config_path.exists() { return false; }
+        let content = std::fs::read_to_string(&config_path).unwrap_or_default();
+        // 必须同时有 [huanxing] 段且 enabled = true
+        content.contains("[huanxing]") && content.contains("enabled = true")
+    }
+
+    /// 是否有任何配置文件（兼容旧检查）
     pub fn has_config(&self) -> bool {
         self.config_dir.join("config.toml").exists()
     }
@@ -887,7 +896,8 @@ impl SidecarManager {
 
         // 1. 创建目录结构
         std::fs::create_dir_all(&self.config_dir).map_err(|e| format!("创建配置目录失败: {e}"))?;
-        let workspace_dir = self.config_dir.join("workspace");
+        let workspace_dir = self.config_dir.join("agents").join("default");
+        std::fs::create_dir_all(&workspace_dir).ok();
         std::fs::create_dir_all(self.config_dir.join("agents")).ok();
 
         // 2. 生成 config.toml
@@ -1120,6 +1130,10 @@ require_pairing = false
 [huanxing]
 enabled = true
 api_base_url = "{api_base}"
+
+[workspace]
+enabled = true
+workspaces_dir = "~/.huanxing/agents"
 
 [runtime]
 kind = "native"

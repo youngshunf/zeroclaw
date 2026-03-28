@@ -78,6 +78,53 @@ function AppContent() {
     }
   }, [isAuthenticated]);
 
+  // 唤星桌面端：监听配置修复事件
+  // 当 ~/.huanxing/config.toml 不存在或不含有效唤星配置时触发
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const internals = (window as any).__TAURI_INTERNALS__;
+    if (!internals) return;
+
+    let cancelled = false;
+
+    // 动态 import Tauri event API
+    import('@tauri-apps/api/event').then(({ listen }) => {
+      listen<{ config_dir: string; has_any_config: boolean }>('huanxing:needs-repair', async (event) => {
+        if (cancelled) return;
+        console.log('[huanxing] 收到配置修复事件:', event.payload);
+
+        // 检查 localStorage 是否有 session
+        try {
+          const raw = localStorage.getItem('huanxing_session');
+          if (raw) {
+            const session = JSON.parse(raw);
+            if (session?.llmToken && session?.user) {
+              console.log('[huanxing] localStorage 有 session，自动修复配置...');
+              // 动态导入 onboard
+              const { autoOnboard } = await import('./huanxing/onboard');
+              const result = await autoOnboard(session);
+              console.log('[huanxing] 自动修复结果:', result);
+              if (result.success) {
+                return; // 修复成功，sidecar 已启动
+              }
+            }
+          }
+        } catch (err) {
+          console.warn('[huanxing] 自动修复失败:', err);
+        }
+
+        // 没有 session 或修复失败 → 清除登录态，回到登录页
+        console.log('[huanxing] 无法自动修复，清除登录态');
+        localStorage.removeItem('huanxing_session');
+        logout();
+      });
+    }).catch(() => {
+      // @tauri-apps/api 不可用，忽略
+    });
+
+    return () => { cancelled = true; };
+  }, [logout]);
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#050b1a]">

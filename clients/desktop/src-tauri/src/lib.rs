@@ -48,12 +48,12 @@ pub fn run() {
             move |app| {
                 let handle = app.handle().clone();
 
-                // 后台检查是否有已在运行的唤星 sidecar
+                // 后台检查唤星配置完整性并启动 sidecar
                 tauri::async_runtime::spawn(async move {
                     let port = sidecar::HUANXING_PORT;
-                    eprintln!("[huanxing-desktop] setup: checking sidecar on port {port}...");
+                    eprintln!("[huanxing-desktop] setup: checking config and sidecar...");
 
-                    // 尝试连接已有的唤星 sidecar（上次 App 关闭后常驻的）
+                    // 1. 尝试连接已有的唤星 sidecar（上次 App 关闭后常驻的）
                     if mgr.adopt_existing(port).await {
                         eprintln!("[huanxing-desktop] Adopted existing sidecar on port {port}");
                         let _ = handle.emit(
@@ -66,15 +66,10 @@ pub fn run() {
                         return;
                     }
 
-                    eprintln!(
-                        "[huanxing-desktop] No existing sidecar. has_config={}",
-                        mgr.has_config()
-                    );
-
-                    // 检查是否有配置文件（说明之前登录过）
-                    if mgr.has_config() {
-                        eprintln!("[huanxing-desktop] Config found, starting sidecar...");
-                        match mgr.start(handle).await {
+                    // 2. 检查是否有有效的唤星配置
+                    if mgr.has_valid_huanxing_config() {
+                        eprintln!("[huanxing-desktop] Valid huanxing config found, starting sidecar...");
+                        match mgr.start(handle.clone()).await {
                             Ok(status) => {
                                 eprintln!(
                                     "[huanxing-desktop] Sidecar started: PID={:?}, port={}",
@@ -85,12 +80,24 @@ pub fn run() {
                                 eprintln!("[huanxing-desktop] Sidecar start FAILED: {e}");
                             }
                         }
-                    } else {
-                        eprintln!(
-                            "[huanxing-desktop] No config at {}, waiting for login",
-                            mgr.config_dir().display()
-                        );
+                        return;
                     }
+
+                    // 3. 配置无效或不存在 — 通知前端
+                    // 前端会检查 localStorage 中是否有 huanxing_session:
+                    //   - 有 session → 自动调用 onboard 修复（静默重建）
+                    //   - 无 session → 显示登录页面
+                    eprintln!(
+                        "[huanxing-desktop] No valid huanxing config at {}, notifying frontend",
+                        mgr.config_dir().display()
+                    );
+                    let _ = handle.emit(
+                        "huanxing:needs-repair",
+                        serde_json::json!({
+                            "config_dir": mgr.config_dir().to_string_lossy(),
+                            "has_any_config": mgr.has_config(),
+                        }),
+                    );
                 });
 
                 Ok(())

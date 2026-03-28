@@ -15,8 +15,8 @@ default_temperature = 0.7
 
 # ── Agent 核心设置 ────────────────────────────────────────────
 [agent]
-compact_context = false          # 用大模型，不需要压缩模式
-max_tool_iterations = 15
+compact_context = true          # 用大模型，不需要压缩模式
+max_tool_iterations = 100
 max_history_messages = 100       # 100条后才触发压缩
 
 [agent.session]
@@ -186,6 +186,12 @@ provider_retries = 2
 
 [runtime]
 kind = "native"
+
+[workspace]
+enabled = true
+workspaces_dir = "~/.huanxing/agents"
+isolate_memory = true
+isolate_secrets = true
 
 [observability]
 backend = "none"

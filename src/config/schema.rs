@@ -9316,11 +9316,18 @@ impl Config {
         fs::create_dir_all(&zeroclaw_dir)
             .await
             .with_context(|| config_dir_creation_error(&zeroclaw_dir))?;
-        fs::create_dir_all(&workspace_dir)
-            .await
-            .context("Failed to create workspace directory")?;
 
-        ensure_bootstrap_files(&workspace_dir).await?;
+        // 唤星模式：不自动创建 config_dir/workspace/ 目录。
+        // 桌面端由 Tauri onboard 创建 agents/default/，
+        // 云端由多租户系统创建 per-tenant workspace。
+        // 上游默认行为：自动创建 workspace/ + 写入 IDENTITY.md/SOUL.md。
+        #[cfg(not(feature = "huanxing"))]
+        {
+            fs::create_dir_all(&workspace_dir)
+                .await
+                .context("Failed to create workspace directory")?;
+            ensure_bootstrap_files(&workspace_dir).await?;
+        }
 
         if config_path.exists() {
             // Warn if config file is world-readable (may contain API keys)
