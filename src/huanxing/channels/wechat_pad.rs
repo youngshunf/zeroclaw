@@ -1,4 +1,4 @@
-use super::traits::{Channel, ChannelMessage, SendMessage};
+use crate::channels::traits::{Channel, ChannelMessage, SendMessage};
 use crate::huanxing::config::WechatPadConfig;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;

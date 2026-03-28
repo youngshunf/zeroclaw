@@ -28,6 +28,8 @@
 //! is per-tenant.
 
 pub mod agent_bridge;
+pub mod channel_registry;
+pub mod channels;
 pub mod api_agents;
 pub mod api_sessions;
 pub mod api_client;

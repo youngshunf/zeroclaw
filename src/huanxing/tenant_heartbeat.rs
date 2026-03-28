@@ -16,7 +16,7 @@ use tokio::sync::Semaphore;
 use tokio::time::{self, Duration};
 use tracing::{error, info, warn};
 
-use crate::channels::get_live_channel;
+use crate::huanxing::channel_registry::get_live_channel;
 use crate::channels::traits::SendMessage;
 use crate::config::Config;
 use crate::huanxing::config::TenantHeartbeatConfig;

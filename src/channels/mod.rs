@@ -36,10 +36,6 @@ pub mod matrix;
 pub mod mattermost;
 pub mod media_pipeline;
 pub mod mochat;
-#[cfg(feature = "huanxing")]
-pub mod napcat;
-#[cfg(feature = "huanxing")]
-pub mod wechat_pad;
 pub mod nextcloud_talk;
 #[cfg(feature = "channel-nostr")]
 pub mod nostr;
@@ -86,10 +82,6 @@ pub use linq::LinqChannel;
 pub use matrix::MatrixChannel;
 pub use mattermost::MattermostChannel;
 pub use mochat::MochatChannel;
-#[cfg(feature = "huanxing")]
-pub use napcat::NapcatChannel;
-#[cfg(feature = "huanxing")]
-pub use wechat_pad::WechatPadChannel;
 pub use nextcloud_talk::NextcloudTalkChannel;
 #[cfg(feature = "channel-nostr")]
 pub use nostr::NostrChannel;
@@ -242,32 +234,6 @@ const CHANNEL_HOOK_MAX_OUTBOUND_CHARS: usize = 20_000;
 type ProviderCacheMap = Arc<Mutex<HashMap<String, Arc<dyn Provider>>>>;
 type RouteSelectionMap = Arc<Mutex<HashMap<String, ChannelRouteSelection>>>;
 
-// HUANXING: global channel registry for tenant heartbeat delivery
-#[cfg(feature = "huanxing")]
-fn live_channels_registry() -> &'static Mutex<HashMap<String, Arc<dyn Channel>>> {
-    static REGISTRY: OnceLock<Mutex<HashMap<String, Arc<dyn Channel>>>> = OnceLock::new();
-    REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-#[cfg(feature = "huanxing")]
-fn register_live_channels(channels_by_name: &HashMap<String, Arc<dyn Channel>>) {
-    let mut guard = live_channels_registry()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    guard.clear();
-    for (name, channel) in channels_by_name {
-        guard.insert(name.to_ascii_lowercase(), Arc::clone(channel));
-    }
-}
-
-#[cfg(feature = "huanxing")]
-pub fn get_live_channel(name: &str) -> Option<Arc<dyn Channel>> {
-    live_channels_registry()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .get(&name.to_ascii_lowercase())
-        .cloned()
-}
 fn effective_channel_message_timeout_secs(configured: u64) -> u64 {
     configured.max(MIN_CHANNEL_MESSAGE_TIMEOUT_SECS)
 }
@@ -5144,7 +5110,7 @@ fn collect_configured_channels(
 
     #[cfg(feature = "huanxing")]
     if let Some(ref napcat_cfg) = config.channels_config.napcat {
-        match NapcatChannel::from_config_with_workspace(
+        match crate::huanxing::channels::NapcatChannel::from_config_with_workspace(
             napcat_cfg.clone(),
             Some(&config.workspace_dir),
             Some(config.transcription.clone()),
@@ -5159,7 +5125,7 @@ fn collect_configured_channels(
 
     #[cfg(feature = "huanxing")]
     if let Some(ref wechat_pad_cfg) = config.channels_config.wechat_pad {
-        match WechatPadChannel::from_config(wechat_pad_cfg.clone()) {
+        match crate::huanxing::channels::WechatPadChannel::from_config(wechat_pad_cfg.clone()) {
             Ok(channel) => channels.push(ConfiguredChannel {
                 display_name: "WeChatPad",
                 channel: Arc::new(channel),
@@ -5674,7 +5640,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
     );
     // Register channels in global registry for plugins/heartbeats
     #[cfg(feature = "huanxing")]
-    register_live_channels(&channels_by_name);
+    crate::huanxing::channel_registry::register_live_channels(&channels_by_name);
 
     // Populate the reaction tool's channel map now that channels are initialized.
     if let Some(ref handle) = reaction_handle_ch {
