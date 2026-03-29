@@ -7,14 +7,19 @@
  * 所有会话通过帧中的 session_id 路由，后台会话持续接收消息并产生未读提醒。
  */
 
-import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react';
 import { wsMultiplexer } from '@/lib/ws';
 import type { WsMessage } from '@/types/api';
 import { useActiveAgent } from '@/hooks/useActiveAgent';
 import { listAgents, switchAgent, type AgentInfo } from '@/huanxing/lib/agent-api';
 import { listSessions, getSessionMessages, generateSessionTitle, type SessionInfo } from '@/lib/session-api';
-import { Search, Plus, Bot, Send, Paperclip, Smile } from 'lucide-react';
+import { Search, Plus, Bot } from 'lucide-react';
+import { HxChatInput } from '@/huanxing/components/chat/input';
+import { HUANXING_SLASH_SECTIONS } from '@/huanxing/components/chat/input/HxSlashMenu';
+import { useHasnContacts } from '@/huanxing/hooks/useHasnContacts';
+import { useAgentSkills } from '@/huanxing/hooks/useAgentSkills';
 import { Markdown } from '@/huanxing/components/markdown';
+import { HxImageMessage, containsImageMarkers } from '@/huanxing/components/chat/HxImageMessage';
 import { StreamingBubble } from '@/huanxing/components/chat/StreamingBubble';
 
 const SessionList = lazy(() => import('@/huanxing/components/chat/SessionList'));
@@ -44,9 +49,7 @@ export default function ChatLayout() {
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [, setGlobalAgent] = useActiveAgent();
   const [reloadKey, setReloadKey] = useState(0);
-  const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const setActiveAgent = useCallback((name: string | null) => {
     setActiveAgentLocal(name);
@@ -67,6 +70,28 @@ export default function ChatLayout() {
   }, [setActiveAgent]);
 
   useEffect(() => { loadAgents(); }, [loadAgents]);
+
+  // ── HASN 联系人 + Agent 技能数据（提供给 HxChatInput 菜单）────────
+  const hasnContacts = useHasnContacts();
+  const agentSkills = useAgentSkills();
+
+  // 构建 @ 提及菜单分组：联系人 + 技能
+  const mentionSections = useMemo(() => {
+    const sections = [...hasnContacts.sections];
+    if (agentSkills.asMentionItems.length > 0) {
+      sections.push({ id: 'skills', label: '技能', items: agentSkills.asMentionItems });
+    }
+    return sections;
+  }, [hasnContacts.sections, agentSkills.asMentionItems]);
+
+  // 构建 / 斜杠命令菜单分组：标准命令 + 技能子菜单
+  const slashSections = useMemo(() => {
+    const sections = [...HUANXING_SLASH_SECTIONS];
+    if (agentSkills.asSlashItems.length > 0) {
+      sections.push({ id: 'skills', label: '可用技能', items: agentSkills.asSlashItems });
+    }
+    return sections;
+  }, [agentSkills.asSlashItems]);
 
   // 切换 Agent
   const handleSwitchAgent = useCallback(async (name: string) => {
@@ -459,8 +484,8 @@ export default function ChatLayout() {
     if (activeSessionIdRef.current === sessionId) setActiveSessionId(null);
   }, [disconnectSession]);
 
-  const handleSendMessage = useCallback(() => {
-    const trimmed = input.trim();
+  const handleSendMessage = useCallback((content: string) => {
+    const trimmed = content.trim();
     const sid = activeSessionIdRef.current;
     if (!trimmed || !sid) return;
     if (!wsMultiplexer.connected) return;
@@ -478,9 +503,7 @@ export default function ChatLayout() {
     setLastMessages(prev => new Map(prev).set(sid, trimmed));
     // 通过 multiplexer 发送，帧中携带 session_id
     wsMultiplexer.send(sid, trimmed, activeAgent ?? undefined);
-    setInput('');
-    textareaRef.current?.focus();
-  }, [input, activeAgent]);
+  }, [activeAgent]);
 
   // ── SSE: Agent 切换 + 会话标题更新 ─────────────────────────
   useEffect(() => {
@@ -512,12 +535,7 @@ export default function ChatLayout() {
     };
   }, [disconnectAll]);
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSendMessage();
-    }
-  };
+  // handleKeyDown is now managed internally by HxChatInput
 
   // ── 上拉加载更多历史（ref callback for scroll container） ──
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -619,7 +637,14 @@ export default function ChatLayout() {
               <div className="hx-msg-content">
                 <div className="hx-msg-bubble">
                   {msg.role === 'user' ? (
-                    <p style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{msg.content}</p>
+                    containsImageMarkers(msg.content) ? (
+                      <HxImageMessage
+                        content={msg.content}
+                        renderText={(text) => <p style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{text}</p>}
+                      />
+                    ) : (
+                      <p style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{msg.content}</p>
+                    )
                   ) : (
                     <Markdown mode="minimal">{msg.content}</Markdown>
                   )}
@@ -650,39 +675,19 @@ export default function ChatLayout() {
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Input area */}
-        <div className="hx-chat-input-area">
-          <div className="hx-chat-input-wrapper">
-            <textarea
-              ref={textareaRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={
-                !activeSessionId ? '请先选择或创建一个对话' :
-                currentConnected ? '输入消息... (Enter 发送)' : '连接中...'
-              }
-              disabled={!currentConnected || !activeSessionId}
-              rows={1}
-            />
-            <div className="hx-chat-input-actions">
-              <button title="附件"><Paperclip size={18} /></button>
-              <button title="表情"><Smile size={18} /></button>
-              <button
-                className="hx-send-btn"
-                onClick={handleSendMessage}
-                disabled={!currentConnected || !input.trim() || !activeSessionId}
-                title="发送"
-              >
-                <Send size={18} />
-              </button>
-            </div>
-          </div>
-          <div className="hx-input-hint">
-            <span className="dot" style={{ background: currentConnected ? 'var(--hx-green)' : activeSessionId ? 'var(--hx-amber)' : 'var(--hx-red)' }} />
-            {currentConnected ? `${activeAgentDisplayName} · 已连接` : activeSessionId ? '连接中...' : '未选择对话'}
-          </div>
-        </div>
+        {/* Input area — v2 with slash & mention */}
+        <HxChatInput
+          onSend={handleSendMessage}
+          disabled={!currentConnected || !activeSessionId}
+          isGenerating={currentTyping}
+          connected={currentConnected}
+          agentName={activeAgentDisplayName}
+          placeholder={
+            !activeSessionId ? '请先选择或创建一个对话' : undefined
+          }
+          mentionSections={mentionSections}
+          slashSections={slashSections}
+        />
       </div>
     </>
   );

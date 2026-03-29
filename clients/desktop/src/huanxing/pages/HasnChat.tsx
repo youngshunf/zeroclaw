@@ -2,26 +2,29 @@
  * HasnChat.tsx — HASN 社交聊天页面
  *
  * 接入真实 HASN API + WS 实时事件
+ * 使用 HxChatInput 组件（含 /命令、@提及、文件上传）
  */
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import {
   Search,
   Plus,
-  Send,
-  Paperclip,
-  Smile,
   MessageSquare,
   Users,
   Loader2,
   ChevronUp,
 } from 'lucide-react';
 import { Markdown } from '@/huanxing/components/markdown';
+import { HxImageMessage, containsImageMarkers } from '@/huanxing/components/chat/HxImageMessage';
 import { getHuanxingSession } from '@/huanxing/config';
 import {
   useHasnConnection,
   useHasnConversations,
   useHasnMessages,
 } from '@/huanxing/hooks/useHasn';
+import { useHasnContacts } from '@/huanxing/hooks/useHasnContacts';
+import { useAgentSkills } from '@/huanxing/hooks/useAgentSkills';
+import { HxChatInput } from '@/huanxing/components/chat/input';
+import { HUANXING_SLASH_SECTIONS } from '@/huanxing/components/chat/input/HxSlashMenu';
 import * as hasnApi from '@/huanxing/lib/hasn-api';
 
 function getInitial(name: string): string {
@@ -63,11 +66,29 @@ export default function HasnChat() {
 
   // 消息
   const { messages, loading: msgsLoading, send, loadMore } = useHasnMessages(activeConvId);
-  const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const activeConv = conversations.find((c) => c.id === activeConvId);
+
+  // ── HASN 联系人 + Agent 技能（提供给 HxChatInput） ──────────
+  const hasnContacts = useHasnContacts();
+  const agentSkills = useAgentSkills();
+
+  const mentionSections = useMemo(() => {
+    const sections = [...hasnContacts.sections];
+    if (agentSkills.asMentionItems.length > 0) {
+      sections.push({ id: 'skills', label: '技能', items: agentSkills.asMentionItems });
+    }
+    return sections;
+  }, [hasnContacts.sections, agentSkills.asMentionItems]);
+
+  const slashSections = useMemo(() => {
+    const sections = [...HUANXING_SLASH_SECTIONS];
+    if (agentSkills.asSlashItems.length > 0) {
+      sections.push({ id: 'skills', label: '可用技能', items: agentSkills.asSlashItems });
+    }
+    return sections;
+  }, [agentSkills.asSlashItems]);
 
   // 自动滚动到底部
   useEffect(() => {
@@ -85,21 +106,11 @@ export default function HasnChat() {
     hasnApi.markConversationRead(id).catch(() => {});
   }, [setConversations]);
 
-  // 发送消息
-  const handleSendMessage = useCallback(() => {
-    const trimmed = input.trim();
-    if (!trimmed || !activeConvId) return;
-    send(trimmed);
-    setInput('');
-    textareaRef.current?.focus();
-  }, [input, activeConvId, send]);
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSendMessage();
-    }
-  };
+  // 发送消息（通过 HxChatInput）
+  const handleSendMessage = useCallback((content: string) => {
+    if (!content || !activeConvId) return;
+    send(content);
+  }, [activeConvId, send]);
 
   // 过滤会话
   const filteredConversations = searchQuery
@@ -308,7 +319,14 @@ export default function HasnChat() {
                     </div>
                     <div className="hx-msg-content">
                       <div className="hx-msg-bubble">
-                        <Markdown mode="minimal">{msg.content}</Markdown>
+                        {containsImageMarkers(msg.content) ? (
+                          <HxImageMessage
+                            content={msg.content}
+                            renderText={(text) => <Markdown mode="minimal">{text}</Markdown>}
+                          />
+                        ) : (
+                          <Markdown mode="minimal">{msg.content}</Markdown>
+                        )}
                       </div>
                       <span className="hx-msg-time">
                         {msg.created_at
@@ -329,51 +347,20 @@ export default function HasnChat() {
           <div ref={messagesEndRef} />
         </div>
 
-        {/* 输入区 */}
-        <div className="hx-chat-input-area">
-          <div className="hx-chat-input-wrapper">
-            <textarea
-              ref={textareaRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={
-                !activeConvId
-                  ? '请先选择一个聊天'
-                  : '输入消息... (Enter 发送)'
-              }
-              disabled={!activeConvId}
-              rows={1}
-            />
-            <div className="hx-chat-input-actions">
-              <button title="附件">
-                <Paperclip size={18} />
-              </button>
-              <button title="表情">
-                <Smile size={18} />
-              </button>
-              <button
-                className="hx-send-btn"
-                onClick={handleSendMessage}
-                disabled={!input.trim() || !activeConvId}
-                title="发送"
-              >
-                <Send size={18} />
-              </button>
-            </div>
-          </div>
-          <div className="hx-input-hint">
-            <span
-              className="dot"
-              style={{
-                background: connected ? 'var(--hx-green)' : 'var(--hx-text-tertiary)',
-              }}
-            />
-            {activeConvId && activeConv
-              ? `${activeConv.peer_name} · HASN`
-              : status === 'connected' ? 'HASN 已连接' : 'HASN 未连接'}
-          </div>
-        </div>
+        {/* 输入区 — 使用 HxChatInput（含 /命令、@提及、文件上传） */}
+        <HxChatInput
+          onSend={handleSendMessage}
+          disabled={!activeConvId}
+          connected={connected}
+          agentName={activeConv?.peer_name || 'HASN'}
+          placeholder={
+            !activeConvId
+              ? '请先选择一个聊天'
+              : '输入消息... (Enter 发送，Shift+Enter 换行)'
+          }
+          mentionSections={mentionSections}
+          slashSections={slashSections}
+        />
       </div>
     </>
   );

@@ -25,6 +25,7 @@ const HuanxingLayout = lazy(() => import('./huanxing/components/layout/HuanxingL
 const SettingsPanel = lazy(() => import('./huanxing/components/layout/SettingsPanel'));
 const Engine = lazy(() => import('./huanxing/pages/Engine'));
 const ProfilePage = lazy(() => import('./huanxing/components/profile/ProfilePage'));
+const SopWorkbench = lazy(() => import('./huanxing/pages/SopWorkbench'));
 
 const LOCALE_STORAGE_KEY = 'zeroclaw:locale';
 
@@ -247,6 +248,9 @@ function AppContent() {
 
           {/* 新增: 市场 */}
           <Route path="/market" element={<Suspense fallback={null}><Marketplace /></Suspense>} />
+
+          {/* 新增: SOP 工作台 */}
+          <Route path="/sop" element={<Suspense fallback={null}><SopWorkbench /></Suspense>} />
 
           {/* 个人资料 */}
           <Route path="/profile" element={<Suspense fallback={null}><ProfilePage /></Suspense>} />

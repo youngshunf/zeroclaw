@@ -15,6 +15,7 @@ pub struct SopAdvanceTool {
     audit: Option<Arc<SopAuditLogger>>,
     collector: Option<Arc<SopMetricsCollector>>,
     workspace_dir: PathBuf,
+    huanxing_api_base: Option<String>,
 }
 
 impl SopAdvanceTool {
@@ -24,7 +25,13 @@ impl SopAdvanceTool {
             audit: None,
             collector: None,
             workspace_dir,
+            huanxing_api_base: None,
         }
+    }
+
+    pub fn with_huanxing_api_base(mut self, url: String) -> Self {
+        self.huanxing_api_base = Some(url);
+        self
     }
 
     pub fn with_audit(mut self, audit: Arc<SopAuditLogger>) -> Self {
@@ -162,6 +169,17 @@ impl Tool for SopAdvanceTool {
             }
         }
 
+        // HASN push notification to owner
+        if let Some(ref run) = finished_run {
+            if matches!(run.status, crate::sop::SopRunStatus::Completed) {
+                if let Some(api_base) = &self.huanxing_api_base {
+                    if let Err(e) = notify_hasn_owner(&self.workspace_dir, api_base, run).await {
+                        tracing::warn!("Failed to notify HASN owner for SOP run: {}", e);
+                    }
+                }
+            }
+        }
+
         match action {
             Ok(action) => {
                 let result_output = match action {
@@ -215,6 +233,66 @@ impl Tool for SopAdvanceTool {
     }
 }
 
+// ── HASN Notification integration ──────────────────────────────────────────
+
+async fn notify_hasn_owner(
+    workspace_dir: &std::path::Path,
+    api_base: &str,
+    run: &crate::sop::SopRun,
+) -> anyhow::Result<()> {
+    // Read hasn_id/star_id
+    let api_key_path = workspace_dir.join(".hasn").join("api_key");
+    let identity_path = workspace_dir.join(".hasn").join("identity.json");
+
+    if !api_key_path.exists() || !identity_path.exists() {
+        return Ok(()); // HASN not configured for this agent
+    }
+
+    let api_key = std::fs::read_to_string(&api_key_path)?.trim().to_string();
+    let identity: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&identity_path)?)?;
+        
+    let owner_star_id = match identity["owner_star_id"].as_str() {
+        Some(o) if !o.is_empty() => o.to_string(),
+        _ => return Ok(()), // no owner to notify
+    };
+
+    let duration = match (&run.completed_at, &run.started_at) {
+        (Some(c), s) => {
+            if let (Ok(ct), Ok(st)) = (chrono::DateTime::parse_from_rfc3339(c), chrono::DateTime::parse_from_rfc3339(s)) {
+                let diff = ct - st;
+                format!("{}分{}秒", diff.num_minutes(), diff.num_seconds() % 60)
+            } else {
+                "未知".to_string()
+            }
+        }
+        _ => "未知".to_string(),
+    };
+
+    let summary = format!(
+        "✅ 工作流已自动完成：**{}**\n\n📌 运行 ID: `{}`\n📊 总步骤数: {}\n⏱ 耗时: {}\n",
+        run.sop_name,
+        run.run_id,
+        run.total_steps,
+        duration,
+    );
+
+    let url = format!("{}/api/v1/hasn/messages/send", api_base);
+    let resp = reqwest::Client::new()
+        .post(&url)
+        .header("Authorization", format!("ApiKey {api_key}"))
+        .header("Content-Type", "application/json")
+        .json(&serde_json::json!({ "to": owner_star_id, "content": summary, "content_type": 1 }))
+        .send()
+        .await?;
+        
+    if !resp.status().is_success() {
+        anyhow::bail!("HASN API returned error status: {}", resp.status());
+    }
+
+    Ok(())
+}
+
 use crate::sop::engine::now_iso8601;
 
 #[cfg(test)]
@@ -227,6 +305,7 @@ mod tests {
 
     fn test_sop() -> Sop {
         Sop {
+            requirements: None,
             name: "test-sop".into(),
             description: "Test SOP".into(),
             version: "1.0.0".into(),

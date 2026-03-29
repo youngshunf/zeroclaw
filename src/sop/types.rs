@@ -159,6 +159,15 @@ pub struct SopStep {
 
 // ── SOP ─────────────────────────────────────────────────────────
 
+/// Skills dependency declarations for an SOP.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SopRequirements {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skills: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub optional_skills: Vec<String>,
+}
+
 /// A complete Standard Operating Procedure definition.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Sop {
@@ -173,6 +182,8 @@ pub struct Sop {
     pub cooldown_secs: u64,
     #[serde(default = "default_max_concurrent")]
     pub max_concurrent: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requirements: Option<SopRequirements>,
     #[serde(skip)]
     pub location: Option<PathBuf>,
     /// When true, sets execution_mode to Deterministic.
@@ -195,6 +206,8 @@ fn default_max_concurrent() -> u32 {
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct SopManifest {
     pub sop: SopMeta,
+    #[serde(default)]
+    pub requirements: Option<SopRequirements>,
     #[serde(default)]
     pub triggers: Vec<SopTrigger>,
 }

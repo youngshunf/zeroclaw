@@ -130,6 +130,7 @@ mod tests {
 
     fn test_sop(name: &str, priority: SopPriority) -> Sop {
         Sop {
+            requirements: None,
             name: name.into(),
             description: format!("Test SOP: {name}"),
             version: "1.0.0".into(),

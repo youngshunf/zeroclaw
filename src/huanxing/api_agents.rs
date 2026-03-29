@@ -19,7 +19,7 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::{delete, get},
+    routing::{delete, get, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -102,6 +102,8 @@ pub fn agent_routes() -> Router<AppState> {
             "/api/agents/{name}/files/{filename}",
             get(read_file).put(write_file),
         )
+        .route("/api/audio/transcribe", post(handle_audio_transcribe))
+        .route("/api/upload", post(handle_file_upload))
 }
 
 // ── 处理函数 ──────────────────────────────────────────────
@@ -366,6 +368,181 @@ async fn write_file(
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("写入失败: {e}"),
+        )
+            .into_response(),
+    }
+}
+
+// ── 音频转录 API ──────────────────────────────────────────
+
+/// STT 转录响应
+#[derive(Debug, Serialize)]
+struct TranscribeResponse {
+    text: String,
+}
+
+/// POST /api/audio/transcribe — 接收音频文件（multipart/form-data），返回转录文本
+///
+/// 前端通过 MediaRecorder 录音后，将 WebM/OGG Blob 上传到此端点。
+/// 使用配置中的 `[transcription]` 提供商进行语音识别。
+async fn handle_audio_transcribe(
+    State(state): State<AppState>,
+    mut multipart: axum::extract::Multipart,
+) -> impl IntoResponse {
+    // 1. 从 multipart 中提取音频文件
+    let mut audio_data: Option<Vec<u8>> = None;
+    let mut file_name = String::from("voice.webm");
+
+    while let Ok(Some(field)) = multipart.next_field().await {
+        let field_name = field.name().unwrap_or("").to_string();
+        if field_name == "file" {
+            let fname = field.file_name().map(|s| s.to_string());
+            if let Some(f) = fname {
+                file_name = f;
+            }
+            match field.bytes().await {
+                Ok(bytes) => {
+                    audio_data = Some(bytes.to_vec());
+                }
+                Err(e) => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({"error": format!("读取音频数据失败: {e}")})),
+                    )
+                        .into_response();
+                }
+            }
+        }
+    }
+
+    let Some(data) = audio_data else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "请提供音频文件 (field name: file)"})),
+        )
+            .into_response();
+    };
+
+    if data.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "音频文件为空"})),
+        )
+            .into_response();
+    }
+
+    tracing::info!(
+        file_name = %file_name,
+        size_bytes = data.len(),
+        "Audio transcribe: received audio file"
+    );
+
+    // 2. 使用配置中的转录提供商
+    let config = state.config.lock().clone();
+
+    match crate::channels::transcription::transcribe_audio(data, &file_name, &config.transcription)
+        .await
+    {
+        Ok(text) => {
+            tracing::info!(
+                text_len = text.len(),
+                "Audio transcribe: success"
+            );
+            (StatusCode::OK, Json(TranscribeResponse { text })).into_response()
+        }
+        Err(e) => {
+            tracing::warn!("Audio transcribe failed: {e}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": format!("语音识别失败: {e}")})),
+            )
+                .into_response()
+        }
+    }
+}
+
+// ── 文件上传 API ──────────────────────────────────────────
+
+/// 文件上传响应
+#[derive(Debug, Serialize)]
+struct UploadResponse {
+    path: String,
+}
+
+/// POST /api/upload — 上传文件到当前 Agent 工作区的 files/ 目录
+///
+/// 前端通过选择或粘贴文件后上传到此端点。
+/// 文件保存到 agents/{current_agent}/files/{filename}。
+/// 返回绝对路径，前端可用于 [IMAGE:path] 标记。
+async fn handle_file_upload(
+    State(state): State<AppState>,
+    mut multipart: axum::extract::Multipart,
+) -> impl IntoResponse {
+    let mut file_data: Option<Vec<u8>> = None;
+    let mut file_name = String::from("upload");
+
+    while let Ok(Some(field)) = multipart.next_field().await {
+        let field_name = field.name().unwrap_or("").to_string();
+        if field_name == "file" {
+            let fname = field.file_name().map(|s| s.to_string());
+            if let Some(f) = fname {
+                file_name = f;
+            }
+            match field.bytes().await {
+                Ok(bytes) => {
+                    file_data = Some(bytes.to_vec());
+                }
+                Err(e) => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({"error": format!("读取文件数据失败: {e}")})),
+                    )
+                        .into_response();
+                }
+            }
+        }
+    }
+
+    let Some(data) = file_data else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "请提供文件 (field name: file)"})),
+        )
+            .into_response();
+    };
+
+    // 确定保存目录
+    let config = state.config.lock().clone();
+    let agents_dir = config.huanxing.resolve_agents_dir(
+        config.config_path.parent().unwrap_or(&config.workspace_dir),
+    );
+    // 桌面端默认使用 default agent
+    let files_dir = agents_dir.join("default").join("files");
+
+    // 创建 files/ 目录
+    if let Err(e) = tokio::fs::create_dir_all(&files_dir).await {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": format!("创建目录失败: {e}")})),
+        )
+            .into_response();
+    }
+
+    // 保存文件
+    let dest_path = files_dir.join(&file_name);
+    match tokio::fs::write(&dest_path, &data).await {
+        Ok(_) => {
+            let abs_path = dest_path.to_string_lossy().to_string();
+            tracing::info!(
+                path = %abs_path,
+                size = data.len(),
+                "File uploaded successfully"
+            );
+            (StatusCode::OK, Json(UploadResponse { path: abs_path })).into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": format!("保存文件失败: {e}")})),
         )
             .into_response(),
     }

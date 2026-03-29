@@ -249,6 +249,7 @@ mod tests {
 
     fn test_sop(name: &str) -> Sop {
         Sop {
+            requirements: None,
             name: name.into(),
             description: format!("Test SOP: {name}"),
             version: "1.0.0".into(),

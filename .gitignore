@@ -77,3 +77,4 @@ playground/
 
 # Temporary rustc output
 rust_out
+clients/desktop/design_preview*.html

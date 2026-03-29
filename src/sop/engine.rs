@@ -984,6 +984,7 @@ mod tests {
 
     fn test_sop(name: &str, mode: SopExecutionMode, priority: SopPriority) -> Sop {
         Sop {
+            requirements: None,
             name: name.into(),
             description: format!("Test SOP: {name}"),
             version: "1.0.0".into(),
@@ -1960,6 +1961,7 @@ mod tests {
 
     fn deterministic_sop(name: &str) -> Sop {
         Sop {
+            requirements: None,
             name: name.into(),
             description: format!("Deterministic SOP: {name}"),
             version: "1.0.0".into(),

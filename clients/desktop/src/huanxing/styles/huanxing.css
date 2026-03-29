@@ -919,7 +919,7 @@ html:has(.hx-app) body {
 
 .hx-chat-input-wrapper:focus-within {
   border-color: var(--hx-purple);
-  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.1);
+  box-shadow: none;
 }
 
 .hx-chat-input-wrapper textarea {
@@ -992,6 +992,730 @@ html:has(.hx-app) body {
   height: 6px;
   border-radius: 50%;
   background: var(--hx-green);
+}
+
+/* ---------- NEW Chat Input v2 (with slash / mention) ---------- */
+
+.hx-chat-input-container {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background: var(--hx-bg-input);
+  border: 1.5px solid var(--hx-border);
+  border-radius: var(--hx-radius-lg);
+  transition: all 0.2s ease;
+  overflow: hidden;
+}
+
+.hx-chat-input-container:focus-within {
+  border-color: var(--hx-purple);
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.1), var(--hx-shadow-sm);
+}
+
+.hx-chat-input-container.drag-over {
+  border-color: var(--hx-purple);
+  background: var(--hx-purple-bg);
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.15);
+}
+
+/* Editor area */
+.hx-chat-input-editor {
+  padding: 12px 16px 4px;
+}
+
+.hx-chat-input-textarea {
+  width: 100%;
+  border: none;
+  outline: none !important;
+  background: transparent;
+  font-size: 14px;
+  color: var(--hx-text-primary);
+  resize: none;
+  min-height: 44px;
+  max-height: 300px;
+  line-height: 1.6;
+  font-family: inherit;
+  overflow-y: auto;
+  -webkit-appearance: none;
+  appearance: none;
+  box-shadow: none;
+}
+
+.hx-chat-input-textarea:focus {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+.hx-chat-input-textarea::placeholder {
+  color: var(--hx-text-tertiary);
+}
+
+.hx-chat-input-textarea:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Attached files preview */
+.hx-attached-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 12px 4px;
+  border-bottom: 1px solid var(--hx-border-light);
+}
+
+.hx-attached-file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--hx-purple-bg);
+  border: 1px solid var(--hx-border-light);
+  font-size: 12px;
+  color: var(--hx-text-secondary);
+  max-width: 220px;
+  animation: hx-chip-in 0.2s ease-out;
+}
+
+@keyframes hx-chip-in {
+  from { opacity: 0; transform: scale(0.9); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.hx-attached-file-icon {
+  flex-shrink: 0;
+  color: var(--hx-purple);
+  display: flex;
+}
+
+.hx-attached-file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.hx-attached-file-size {
+  flex-shrink: 0;
+  color: var(--hx-text-tertiary);
+  font-size: 11px;
+}
+
+.hx-attached-file-remove {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--hx-text-tertiary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+  padding: 0;
+}
+
+.hx-attached-file-remove:hover {
+  background: var(--hx-red);
+  color: white;
+}
+
+/* Drop overlay */
+.hx-drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: rgba(124, 58, 237, 0.08);
+  border: 2px dashed var(--hx-purple);
+  border-radius: var(--hx-radius-lg);
+  color: var(--hx-purple);
+  font-size: 13px;
+  font-weight: 500;
+  animation: hx-drop-fade-in 0.15s ease-out;
+  pointer-events: none;
+}
+
+@keyframes hx-drop-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Upload indicator */
+.hx-upload-indicator {
+  font-size: 12px;
+  color: var(--hx-purple);
+  animation: hx-pulse-text 1.5s infinite;
+}
+
+@keyframes hx-pulse-text {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* ── Voice recording UI ─────────────────────────────────────── */
+
+/* Mic button (idle state) */
+.hx-voice-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: none;
+  background: var(--hx-primary);
+  color: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, transform 0.1s, box-shadow 0.15s;
+  flex-shrink: 0;
+}
+
+.hx-voice-btn:hover:not(:disabled) {
+  background: var(--hx-primary-hover, hsl(215 85% 55%));
+  transform: scale(1.05);
+  box-shadow: 0 0 0 3px hsla(215, 85%, 58%, 0.2);
+}
+
+.hx-voice-btn:active:not(:disabled) {
+  transform: scale(0.95);
+}
+
+.hx-voice-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.hx-voice-btn-error {
+  background: var(--hx-red, hsl(0, 72%, 55%));
+}
+
+.hx-voice-btn-error:hover {
+  background: var(--hx-red-hover, hsl(0, 72%, 50%));
+}
+
+/* Recording bar (replaces toolbar-right when recording) */
+.hx-voice-recording-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 6px;
+  background: hsla(0, 80%, 55%, 0.08);
+  border-radius: 20px;
+  animation: hx-voice-bar-appear 0.2s ease-out;
+}
+
+@keyframes hx-voice-bar-appear {
+  from { opacity: 0; transform: scale(0.9); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+/* Cancel button */
+.hx-voice-cancel-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: none;
+  background: hsla(0, 0%, 50%, 0.15);
+  color: var(--hx-text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+  flex-shrink: 0;
+}
+
+.hx-voice-cancel-btn:hover {
+  background: hsla(0, 60%, 50%, 0.2);
+  color: var(--hx-red, hsl(0, 72%, 55%));
+}
+
+/* Recording indicator area */
+.hx-voice-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+/* Pulsing red dot */
+.hx-voice-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: hsl(0, 80%, 55%);
+  flex-shrink: 0;
+  animation: hx-voice-dot-pulse 1s ease-in-out infinite;
+}
+
+@keyframes hx-voice-dot-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.8); }
+}
+
+/* Waveform bars */
+.hx-voice-waveform {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 20px;
+  flex: 1;
+}
+
+.hx-voice-bar {
+  width: 2.5px;
+  min-height: 3px;
+  max-height: 18px;
+  border-radius: 1.5px;
+  background: hsl(0, 70%, 55%);
+  transition: height 0.1s ease-out;
+  animation: hx-voice-bar-idle 0.8s ease-in-out infinite alternate;
+}
+
+@keyframes hx-voice-bar-idle {
+  from { opacity: 0.5; }
+  to { opacity: 1; }
+}
+
+/* Duration text */
+.hx-voice-duration {
+  font-size: 12px;
+  font-weight: 500;
+  color: hsl(0, 70%, 50%);
+  font-variant-numeric: tabular-nums;
+  min-width: 32px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+/* Send button in recording bar */
+.hx-voice-send-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: none;
+  background: var(--hx-primary);
+  color: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, transform 0.1s;
+  flex-shrink: 0;
+}
+
+.hx-voice-send-btn:hover {
+  background: var(--hx-primary-hover, hsl(215 85% 55%));
+  transform: scale(1.05);
+}
+
+/* Transcribing state */
+.hx-voice-transcribing {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 16px;
+  background: hsla(215, 80%, 55%, 0.08);
+  animation: hx-voice-bar-appear 0.2s ease-out;
+}
+
+.hx-voice-spinner {
+  animation: hx-voice-spin 0.7s linear infinite;
+  color: var(--hx-primary);
+}
+
+@keyframes hx-voice-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.hx-voice-transcribing-text {
+  font-size: 12px;
+  color: var(--hx-primary);
+  font-weight: 500;
+}
+
+/* ── Image thumbnail in attachment chips ─────────────────────── */
+.hx-attached-file-chip.is-image {
+  padding: 3px;
+  gap: 2px;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.hx-attached-file-thumb {
+  width: 56px;
+  height: 56px;
+  border-radius: 6px;
+  object-fit: cover;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: opacity 0.15s;
+  display: block;
+}
+
+.hx-attached-file-thumb:hover {
+  opacity: 0.8;
+}
+
+/* Image chip: remove button positioned at top-right */
+.hx-attached-file-chip.is-image .hx-attached-file-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.5);
+  color: white;
+  font-size: 10px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.hx-attached-file-chip.is-image {
+  position: relative;
+}
+
+.hx-attached-file-chip.is-image:hover .hx-attached-file-remove {
+  opacity: 1;
+}
+
+/* ── react-photo-view 自定义工具栏 ──────────────────────────── */
+.hx-photoview-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+}
+
+.hx-photoview-toolbar button {
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.85);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s;
+}
+
+.hx-photoview-toolbar button:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: white;
+}
+
+/* ── Inline images in chat messages ──────────────────────────── */
+.hx-msg-image-container {
+  margin: 6px 0;
+}
+
+.hx-msg-image {
+  max-width: 360px;
+  width: auto;
+  height: auto;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: opacity 0.15s;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  display: block;
+}
+
+.hx-msg-image:hover {
+  opacity: 0.9;
+}
+
+.hx-msg-image-fallback {
+  padding: 12px 16px;
+  border-radius: 8px;
+  background: var(--hx-surface-light);
+  border: 1px dashed var(--hx-border-light);
+  color: var(--hx-text-tertiary);
+  font-size: 12px;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Bottom toolbar */
+.hx-chat-input-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-top: 1px solid var(--hx-border-light);
+}
+
+.hx-chat-input-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.hx-chat-input-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Tool buttons (attach, slash, at) */
+.hx-input-tool-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--hx-radius-sm);
+  border: none;
+  background: transparent;
+  color: var(--hx-text-tertiary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+
+.hx-input-tool-btn:hover:not(:disabled) {
+  color: var(--hx-purple);
+  background: var(--hx-purple-bg);
+}
+
+.hx-input-tool-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Status indicator */
+.hx-input-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--hx-text-tertiary);
+  padding-right: 4px;
+}
+
+.hx-input-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.hx-input-status-text {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Send button */
+.hx-input-send-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--hx-radius-md);
+  border: none;
+  background: var(--hx-purple);
+  color: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+
+.hx-input-send-btn:hover:not(:disabled) {
+  background: var(--hx-purple-hover);
+  transform: scale(1.05);
+}
+
+.hx-input-send-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* Stop button */
+.hx-input-stop-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--hx-radius-md);
+  border: none;
+  background: var(--hx-red);
+  color: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+  animation: hx-pulse-glow 2s infinite;
+}
+
+.hx-input-stop-btn:hover {
+  background: #DC2626;
+  transform: scale(1.05);
+}
+
+@keyframes hx-pulse-glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+  50% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+}
+
+/* Hint v2 */
+.hx-input-hint-v2 {
+  text-align: center;
+  font-size: 11px;
+  color: var(--hx-text-tertiary);
+  margin-top: 6px;
+  opacity: 0.7;
+}
+
+.hx-input-hint-v2 kbd {
+  display: inline-block;
+  padding: 1px 5px;
+  font-size: 10px;
+  font-family: inherit;
+  color: var(--hx-text-secondary);
+  background: var(--hx-bg-panel);
+  border: 1px solid var(--hx-border);
+  border-radius: 4px;
+  margin: 0 1px;
+  line-height: 1.4;
+}
+
+/* ---------- Slash Command Menu ---------- */
+.hx-slash-menu,
+.hx-mention-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 260px;
+  max-width: 380px;
+  overflow: hidden;
+  border-radius: var(--hx-radius-md);
+  background: var(--hx-bg-main);
+  border: 1px solid var(--hx-border);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.06);
+  animation: hx-menu-pop-in 0.15s ease-out;
+}
+
+@keyframes hx-menu-pop-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.hx-slash-menu-header,
+.hx-mention-menu-header {
+  padding: 8px 14px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--hx-text-tertiary);
+  border-bottom: 1px solid var(--hx-border-light);
+}
+
+.hx-slash-menu-list,
+.hx-mention-menu-list {
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.hx-slash-menu-section-label,
+.hx-mention-menu-section-label {
+  padding: 6px 14px 2px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--hx-text-tertiary);
+  opacity: 0.6;
+}
+
+.hx-slash-menu-item,
+.hx-mention-menu-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 12px;
+  margin: 1px 4px;
+  border-radius: var(--hx-radius-sm);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.hx-slash-menu-item:hover,
+.hx-slash-menu-item.selected,
+.hx-mention-menu-item:hover,
+.hx-mention-menu-item.selected {
+  background: var(--hx-purple-bg);
+}
+
+.hx-slash-menu-item-icon,
+.hx-mention-menu-item-icon {
+  flex-shrink: 0;
+  color: var(--hx-text-tertiary);
+  margin-top: 2px;
+}
+
+.hx-slash-menu-item.selected .hx-slash-menu-item-icon,
+.hx-mention-menu-item.selected .hx-mention-menu-item-icon {
+  color: var(--hx-purple);
+}
+
+.hx-slash-menu-item-content,
+.hx-mention-menu-item-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.hx-slash-menu-item-label,
+.hx-mention-menu-item-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--hx-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hx-slash-menu-item-desc,
+.hx-mention-menu-item-desc {
+  display: block;
+  font-size: 11px;
+  color: var(--hx-text-tertiary);
+  line-height: 1.3;
+  margin-top: 1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hx-slash-menu-item-id,
+.hx-mention-menu-item-type {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--hx-text-tertiary);
+  opacity: 0.5;
+  margin-top: 2px;
+}
+
+/* Dark mode adjustments for menus */
+[data-theme="dark"] .hx-slash-menu,
+[data-theme="dark"] .hx-mention-menu {
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.2);
+  border-color: var(--hx-border);
 }
 
 /* ---------- Settings layout ---------- */
@@ -1883,8 +2607,6 @@ html:has(.hx-app) body {
 }
 
 /* Engine layout */
-.hx-engine { }
-
 .hx-engine-header {
   display: flex;
   align-items: center;

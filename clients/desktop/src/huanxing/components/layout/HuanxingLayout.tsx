@@ -16,6 +16,7 @@ function routeToTab(pathname: string): TabKey | null {
   if (pathname.startsWith('/contacts')) return 'contacts';
   if (pathname.startsWith('/agents')) return 'agents';
   if (pathname.startsWith('/market')) return 'market';
+  if (pathname.startsWith('/sop')) return 'sop';
   // Settings pages
   if (settingsPaths.some((p) => pathname.startsWith(p))) return 'settings';
   // Independent pages — don't change active tab
@@ -31,6 +32,7 @@ const tabRoutes: Record<TabKey, string> = {
   contacts: '/contacts',
   agents: '/agents',
   market: '/market',
+  sop: '/sop',
   settings: '/dashboard',
 };
 

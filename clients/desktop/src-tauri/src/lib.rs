@@ -8,7 +8,7 @@
 mod commands;
 mod sidecar;
 
-use commands::{auth, hasn, marketplace, zeroclaw};
+use commands::{auth, files, hasn, marketplace, zeroclaw};
 use hasn::HasnClientState;
 use sidecar::SidecarManager;
 use std::sync::Arc;
@@ -177,12 +177,18 @@ pub fn run() {
             // 市场安装与数据接口
             marketplace::get_market_apps,
             marketplace::get_market_skills,
+            marketplace::get_market_sops,
             marketplace::download_and_install_agent,
             marketplace::download_and_install_skill,
+            marketplace::download_and_install_sop,
             // Onboard（登录后创建配置+启动）
             zeroclaw::onboard_zeroclaw,
             // 配置有效性检查
             zeroclaw::check_huanxing_config,
+            // 文件操作
+            files::copy_file_to_workspace,
+            files::get_workspace_dir,
+            files::get_config_dir,
         ])
         .build(tauri::generate_context!())
         .expect("error while building huanxing desktop");

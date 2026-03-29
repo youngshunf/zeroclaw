@@ -51,6 +51,7 @@ use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tower_http::cors::{Any, CorsLayer};
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::timeout::TimeoutLayer;
 use uuid::Uuid;
@@ -997,6 +998,10 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
     #[cfg(feature = "huanxing")]
     let inner = inner.merge(crate::huanxing::api_agents::agent_routes());
 
+    // ── HuanXing SOP API（桌面端，requires huanxing feature）──
+    #[cfg(feature = "huanxing")]
+    let inner = inner.merge(crate::huanxing::sop_api::sop_routes());
+
     // ── HuanXing Session REST API（桌面端，requires huanxing feature）──
     #[cfg(feature = "huanxing")]
     let inner = inner.merge(crate::huanxing::api_sessions::session_routes());
@@ -1045,6 +1050,12 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         // ── SPA fallback: non-API GET requests serve index.html ──
         .fallback(get(static_files::handle_spa_fallback))
         .with_state(state)
+        .layer(
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_headers(Any)
+                .allow_methods(Any)
+        )
         .layer(RequestBodyLimitLayer::new(MAX_BODY_SIZE))
         .layer(TimeoutLayer::with_status_code(
             StatusCode::REQUEST_TIMEOUT,

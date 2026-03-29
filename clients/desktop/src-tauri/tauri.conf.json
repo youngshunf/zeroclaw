@@ -25,7 +25,16 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "$APPDATA/**",
+          "$HOME/**",
+          "/tmp/**",
+          "/var/**"
+        ]
+      }
     }
   },
   "bundle": {
@@ -41,7 +50,11 @@
     "resources": [
       "../workspace-scaffold/*",
       "../workspace-scaffold/guardian/*"
-    ]
+    ],
+    "macOS": {
+      "entitlements": "./Entitlements.plist",
+      "minimumSystemVersion": "10.15"
+    }
   },
   "plugins": {
     "shell": {

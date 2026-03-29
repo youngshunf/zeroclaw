@@ -834,7 +834,18 @@ pub fn all_tools_with_runtime(
         let ws = workspace_dir.to_path_buf();
         tool_arcs.push(Arc::new(SopListTool::new(Arc::clone(&sop_engine), ws.clone())));
         tool_arcs.push(Arc::new(SopExecuteTool::new(Arc::clone(&sop_engine), ws.clone())));
-        tool_arcs.push(Arc::new(SopAdvanceTool::new(Arc::clone(&sop_engine), ws.clone())));
+        
+        // Pass huanxing API base to enable HASN notifications
+        #[allow(unused_mut)]
+        let mut advance_tool = SopAdvanceTool::new(Arc::clone(&sop_engine), ws.clone());
+        #[cfg(feature = "huanxing")]
+        {
+            if let Some(ref api) = root_config.huanxing.api_base_url {
+                advance_tool = advance_tool.with_huanxing_api_base(api.clone());
+            }
+        }
+        tool_arcs.push(Arc::new(advance_tool));
+        
         tool_arcs.push(Arc::new(SopApproveTool::new(Arc::clone(&sop_engine), ws.clone())));
         tool_arcs.push(Arc::new(SopStatusTool::new(Arc::clone(&sop_engine), ws)));
     }

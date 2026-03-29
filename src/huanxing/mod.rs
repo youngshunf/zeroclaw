@@ -51,6 +51,7 @@ pub mod router;
 pub mod secret_tools;
 pub mod skill_market_tools;
 pub mod sync;
+pub mod sop_api;
 pub mod templates;
 pub mod tenant;
 pub mod tenant_heartbeat;

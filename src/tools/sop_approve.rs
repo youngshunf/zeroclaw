@@ -137,6 +137,7 @@ mod tests {
 
     fn test_sop() -> Sop {
         Sop {
+            requirements: None,
             name: "test-sop".into(),
             description: "Test SOP".into(),
             version: "1.0.0".into(),

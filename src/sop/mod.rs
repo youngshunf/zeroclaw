@@ -139,6 +139,7 @@ fn load_sop(sop_dir: &Path, default_execution_mode: SopExecutionMode) -> Result<
         priority,
         execution_mode: effective_mode,
         triggers: manifest.triggers,
+        requirements: manifest.requirements,
         steps,
         cooldown_secs,
         max_concurrent,
@@ -738,6 +739,7 @@ type = "manual"
     #[test]
     fn validate_sop_warnings() {
         let sop = Sop {
+            requirements: None,
             name: String::new(),
             description: String::new(),
             version: "1.0.0".into(),
@@ -761,6 +763,7 @@ type = "manual"
     #[test]
     fn validate_sop_clean() {
         let sop = Sop {
+            requirements: None,
             name: "valid-sop".into(),
             description: "A valid SOP".into(),
             version: "1.0.0".into(),
