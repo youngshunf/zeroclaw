@@ -102,13 +102,31 @@ pub fn huanxing_all_tools(
     // ── TenantRouter + router-dependent tools ────────────────────
     let hx_config = root_config.huanxing.clone();
     let ws_dir: std::path::PathBuf = root_config.workspace_dir.clone();
-    let router_result = tokio::task::block_in_place(|| {
-        tokio::runtime::Handle::current().block_on(super::TenantRouter::new(
-            hx_config,
-            ws_dir,
-            Arc::new(root_config.clone()),
-        ))
-    });
+    let router_result = if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread {
+            tokio::task::block_in_place(|| handle.block_on(super::TenantRouter::new(
+                hx_config.clone(),
+                ws_dir.clone(),
+                Arc::new(root_config.clone()),
+            )))
+        } else {
+            let hx = hx_config.clone();
+            let wd = ws_dir.clone();
+            let rc = Arc::new(root_config.clone());
+            std::thread::spawn(move || {
+                let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+                rt.block_on(super::TenantRouter::new(hx, wd, rc))
+            }).join().unwrap()
+        }
+    } else {
+        let hx = hx_config.clone();
+        let wd = ws_dir.clone();
+        let rc = Arc::new(root_config.clone());
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+            rt.block_on(super::TenantRouter::new(hx, wd, rc))
+        }).join().unwrap()
+    };
 
     let router = match router_result {
         Ok(r) => Arc::new(r),
@@ -152,9 +170,21 @@ pub fn huanxing_all_tools(
             if hub_dir.exists() && hub_dir.join("registry.json").exists() {
                 let registry = Arc::new(super::registry::RegistryLoader::new(hub_dir));
                 let reg_clone = registry.clone();
-                let _ = tokio::task::block_in_place(|| {
-                    tokio::runtime::Handle::current().block_on(reg_clone.ensure_loaded())
-                });
+                if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                    if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread {
+                        let _ = tokio::task::block_in_place(|| handle.block_on(reg_clone.ensure_loaded()));
+                    } else {
+                        let _ = std::thread::spawn(move || {
+                            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+                            rt.block_on(reg_clone.ensure_loaded())
+                        }).join();
+                    }
+                } else {
+                    let _ = std::thread::spawn(move || {
+                        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+                        rt.block_on(reg_clone.ensure_loaded())
+                    }).join();
+                }
                 Some(registry)
             } else {
                 None

@@ -11599,6 +11599,9 @@ mod tests {
             SkillsPromptInjectionMode::Full
         );
         assert_eq!(c.provider_timeout_secs, 120);
+        #[cfg(feature = "huanxing")]
+        assert!(c.workspace_dir.to_string_lossy().contains("agents/default"));
+        #[cfg(not(feature = "huanxing"))]
         assert!(c.workspace_dir.to_string_lossy().contains("workspace"));
         assert!(c.config_path.to_string_lossy().contains("config.toml"));
     }
@@ -11977,6 +11980,7 @@ auto_save = true
                     ack_reactions: None,
                     proxy_url: None,
                 }),
+                #[cfg(feature = "huanxing")]
                 wechat_pad: None,
                 discord: None,
                 discord_history: None,
@@ -13005,6 +13009,7 @@ allowed_users = ["@ops:matrix.org"]
         let c = ChannelsConfig {
             cli: true,
             telegram: None,
+            #[cfg(feature = "huanxing")]
             wechat_pad: None,
             discord: None,
             discord_history: None,
@@ -13374,6 +13379,7 @@ channel_ids = ["C123", "D456"]
         let c = ChannelsConfig {
             cli: true,
             telegram: None,
+            #[cfg(feature = "huanxing")]
             wechat_pad: None,
             discord: None,
             discord_history: None,
