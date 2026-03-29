@@ -29,10 +29,10 @@
       "assetProtocol": {
         "enable": true,
         "scope": [
-          "$APPDATA/**",
-          "$HOME/**",
-          "/tmp/**",
-          "/var/**"
+          "$APPDATA/**/*",
+          "$HOME/**/*",
+          "/tmp/**/*",
+          "/var/**/*"
         ]
       }
     }

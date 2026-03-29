@@ -13,6 +13,27 @@ pub struct OpenAiProvider {
     max_tokens: Option<u32>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(untagged)]
+pub enum OpenAiContent {
+    Text(String),
+    Parts(Vec<OpenAiContentPart>),
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(tag = "type")]
+pub enum OpenAiContentPart {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "image_url")]
+    ImageUrl { image_url: OpenAiImageUrl },
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct OpenAiImageUrl {
+    pub url: String,
+}
+
 #[derive(Debug, Serialize)]
 struct ChatRequest {
     model: String,
@@ -25,7 +46,7 @@ struct ChatRequest {
 #[derive(Debug, Serialize)]
 struct Message {
     role: String,
-    content: String,
+    content: OpenAiContent,
 }
 
 #[derive(Debug, Deserialize)]
@@ -73,7 +94,7 @@ struct NativeChatRequest {
 struct NativeMessage {
     role: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    content: Option<String>,
+    content: Option<OpenAiContent>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_call_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -272,7 +293,7 @@ impl OpenAiProvider {
                                 let content = value
                                     .get("content")
                                     .and_then(serde_json::Value::as_str)
-                                    .map(ToString::to_string);
+                                    .map(|s| OpenAiContent::Text(s.to_string()));
                                 let reasoning_content = value
                                     .get("reasoning_content")
                                     .and_then(serde_json::Value::as_str)
@@ -298,7 +319,7 @@ impl OpenAiProvider {
                         let content = value
                             .get("content")
                             .and_then(serde_json::Value::as_str)
-                            .map(ToString::to_string);
+                            .map(|s| OpenAiContent::Text(s.to_string()));
                         return NativeMessage {
                             role: "tool".to_string(),
                             content,
@@ -309,9 +330,28 @@ impl OpenAiProvider {
                     }
                 }
 
+                let (cleaned_text, image_refs) = crate::multimodal::parse_image_markers(&m.content);
+
+                let content = if image_refs.is_empty() {
+                    Some(OpenAiContent::Text(m.content.clone()))
+                } else {
+                    let mut parts = Vec::new();
+                    if !cleaned_text.is_empty() {
+                        parts.push(OpenAiContentPart::Text {
+                            text: cleaned_text,
+                        });
+                    }
+                    for ref_url in image_refs {
+                        parts.push(OpenAiContentPart::ImageUrl {
+                            image_url: OpenAiImageUrl { url: ref_url },
+                        });
+                    }
+                    Some(OpenAiContent::Parts(parts))
+                };
+
                 NativeMessage {
                     role: m.role.clone(),
-                    content: Some(m.content.clone()),
+                    content,
                     tool_call_id: None,
                     tool_calls: None,
                     reasoning_content: None,
@@ -367,13 +407,13 @@ impl Provider for OpenAiProvider {
         if let Some(sys) = system_prompt {
             messages.push(Message {
                 role: "system".to_string(),
-                content: sys.to_string(),
+                content: OpenAiContent::Text(sys.to_string()),
             });
         }
 
         messages.push(Message {
             role: "user".to_string(),
-            content: message.to_string(),
+            content: OpenAiContent::Text(message.to_string()),
         });
 
         let request = ChatRequest {
@@ -582,11 +622,11 @@ mod tests {
             messages: vec![
                 Message {
                     role: "system".to_string(),
-                    content: "You are ZeroClaw".to_string(),
+                    content: OpenAiContent::Text("You are ZeroClaw".to_string()),
                 },
                 Message {
                     role: "user".to_string(),
-                    content: "hello".to_string(),
+                    content: OpenAiContent::Text("hello".to_string()),
                 },
             ],
             temperature: 0.7,
@@ -604,7 +644,7 @@ mod tests {
             model: "gpt-4o".to_string(),
             messages: vec![Message {
                 role: "user".to_string(),
-                content: "hello".to_string(),
+                content: OpenAiContent::Text("hello".to_string()),
             }],
             temperature: 0.0,
             max_tokens: None,
