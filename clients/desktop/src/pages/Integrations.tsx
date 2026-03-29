@@ -2,6 +2,9 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { Puzzle, Check, Zap, Clock, KeyRound, X } from 'lucide-react';
 import ChatChannelsGuide from '@/components/integrations/ChatChannelsGuide';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/Select';
+import { t } from '@/lib/i18n';
+import { useLocaleContext } from '@/App';
 import type {
   Integration,
   IntegrationCredentialsField,
@@ -20,19 +23,19 @@ function statusBadge(status: Integration['status']) {
     case 'Active':
       return {
         icon: Check,
-        label: 'Active',
+        label: t('integ.active') || 'Active',
         classes: 'bg-green-900/40 text-green-400 border-green-700/50',
       };
     case 'Available':
       return {
         icon: Zap,
-        label: 'Available',
+        label: t('integ.available') || 'Available',
         classes: 'bg-blue-900/40 text-blue-400 border-blue-700/50',
       };
     case 'ComingSoon':
       return {
         icon: Clock,
-        label: 'Coming Soon',
+        label: t('integ.coming_soon') || 'Coming Soon',
         classes: 'bg-gray-800 text-gray-400 border-gray-700',
       };
   }
@@ -86,6 +89,7 @@ function modelOptionsForField(
 }
 
 export default function Integrations() {
+  const { locale } = useLocaleContext(); // For re-render on language change
   const [integrations, setIntegrations] = useState<Integration[]>([]);
   const [settingsByName, setSettingsByName] = useState<
     Record<string, IntegrationSettingsEntry>
@@ -442,7 +446,7 @@ export default function Integrations() {
       <div className="flex items-center gap-2">
         <Puzzle className="h-5 w-5 text-blue-400" />
         <h2 className="text-base font-semibold text-white">
-          Integrations ({integrations.length})
+          {t('nav.integrations') || 'Integrations'} ({integrations.length})
         </h2>
       </div>
 
@@ -481,7 +485,7 @@ export default function Integrations() {
       {Object.keys(grouped).length === 0 ? (
         <div className="bg-gray-900 rounded-xl border border-gray-800 p-8 text-center">
           <Puzzle className="h-10 w-10 text-gray-600 mx-auto mb-3" />
-          <p className="text-gray-400">No integrations found.</p>
+          <p className="text-gray-400">{t('integ.no_integrations')}</p>
         </div>
       ) : (
         Object.entries(grouped)
@@ -574,7 +578,7 @@ export default function Integrations() {
                         <div className="mt-3 rounded-lg border border-gray-800 bg-gray-950/50 p-3 space-y-2">
                           <div className="flex items-center justify-between gap-2">
                             <span className="text-[11px] uppercase tracking-wider text-gray-500">
-                              Current model
+                              {t('integ.current_model')}
                             </span>
                             <span className="text-xs text-gray-200 truncate" title={modelSummary}>
                               {modelSummary}
@@ -584,23 +588,27 @@ export default function Integrations() {
                           {showQuickModelControls && editable && (
                             <div className="space-y-1">
                               <div className="flex items-center gap-2">
-                                <select
+                                <Select
                                   value={quickDraft}
-                                  onChange={(e) =>
+                                  onValueChange={(val) =>
                                     setQuickModelDrafts((prev) => ({
                                       ...prev,
-                                      [editable.id]: e.target.value,
+                                      [editable.id]: val,
                                     }))
                                   }
                                   disabled={quickModelSavingId === editable.id}
-                                  className="min-w-0 flex-1 px-2.5 py-1.5 rounded-lg bg-gray-950 border border-gray-700 text-xs text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50"
                                 >
-                                  {quickOptions.map((option) => (
-                                    <option key={option} value={option}>
-                                      {option}
-                                    </option>
-                                  ))}
-                                </select>
+                                  <SelectTrigger className="flex-1 min-w-0 px-2.5 py-1.5 h-auto text-xs">
+                                    <SelectValue placeholder="Select model" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {quickOptions.map((option) => (
+                                      <SelectItem key={option} value={option}>
+                                        {option}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
                                 <button
                                   onClick={() =>
                                     editable &&
@@ -618,16 +626,16 @@ export default function Integrations() {
                                   }
                                   className="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
                                 >
-                                  {quickModelSavingId === editable.id ? 'Saving...' : 'Apply'}
-                                </button>
+                                    {quickModelSavingId === editable.id ? t('integ.saving') : t('integ.apply')}
+                                  </button>
+                                </div>
+                                <p className="text-[11px] text-gray-500">
+                                  {t('integ.custom_model_hint')}
+                                </p>
                               </div>
-                              <p className="text-[11px] text-gray-500">
-                                For custom model IDs, use Edit Keys.
-                              </p>
-                            </div>
-                          )}
-                        </div>
-                      )}
+                            )}
+                          </div>
+                        )}
 
                       {editable && (
                         <div className="mt-4 pt-4 border-t border-gray-800 flex items-center justify-between gap-3">
@@ -635,17 +643,17 @@ export default function Integrations() {
                             {editable.configured
                               ? editable.activates_default_provider
                                 ? isActiveDefaultProvider
-                                  ? 'Default provider configured'
-                                  : 'Provider configured'
-                                : 'Credentials configured'
-                              : 'Credentials not configured'}
+                                  ? t('integ.default_configured')
+                                  : t('integ.provider_configured')
+                                : t('integ.creds_configured')
+                              : t('integ.creds_not_configured')}
                           </div>
                           <button
                             onClick={() => openEditor(editable)}
                             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-blue-700/70 bg-blue-900/30 hover:bg-blue-900/50 text-blue-300 text-xs font-medium transition-colors"
                           >
                             <KeyRound className="h-3.5 w-3.5" />
-                            {editable.configured ? 'Edit Keys' : 'Configure'}
+                            {editable.configured ? t('integ.edit_keys') : t('integ.configure')}
                           </button>
                         </div>
                       )}
@@ -670,12 +678,12 @@ export default function Integrations() {
             <div className="px-5 py-4 border-b border-gray-800 flex items-center justify-between gap-3">
               <div>
                 <h3 className="text-sm font-semibold text-white">
-                  Configure {activeEditor.name}
+                  {t('integ.configure_title', { name: activeEditor.name }) || `Configure ${activeEditor.name}`}
                 </h3>
                 <p className="text-xs text-gray-400 mt-0.5">
                   {activeEditor.configured
-                    ? 'Enter only fields you want to update.'
-                    : 'Enter required fields to configure this integration.'}
+                    ? t('integ.enter_update')
+                    : t('integ.enter_required')}
                 </p>
               </div>
               <button
@@ -691,10 +699,10 @@ export default function Integrations() {
             <div className="p-5 space-y-4">
               {activeEditor.activates_default_provider && (
                 <div className="rounded-lg border border-blue-800 bg-blue-950/30 p-3 text-xs text-blue-200">
-                  Saving here updates credentials and switches your default AI provider to{' '}
-                  <strong>{activeEditor.name}</strong>. For advanced provider settings, use{' '}
+                  {t('integ.saving_updates_default')}{' '}
+                  <strong>{activeEditor.name}</strong>. {t('integ.adv_settings')}{' '}
                   <Link to="/config" className="underline underline-offset-2 hover:text-blue-100">
-                    Configuration
+                    {t('integ.configuration')}
                   </Link>
                   .
                 </div>
@@ -731,26 +739,26 @@ export default function Integrations() {
                       </label>
                       {isSelectField ? (
                         <div className="space-y-2">
-                          <select
+                          <Select
                             value={fieldValues[field.key] ?? (field.has_value ? SELECT_KEEP : '')}
-                            onChange={(e) => updateField(field.key, e.target.value)}
-                            className="w-full px-3 py-2 rounded-lg bg-gray-950 border border-gray-700 text-sm text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            onValueChange={(val) => updateField(field.key, val)}
                           >
-                            {field.has_value ? (
-                              <option value={SELECT_KEEP}>{keepCurrentLabel}</option>
-                            ) : (
-                              <option value="" disabled>
-                                Select a recommended model
-                              </option>
-                            )}
-                            {selectOptions.map((option) => (
-                              <option key={option} value={option}>
-                                {option}
-                              </option>
-                            ))}
-                            <option value={SELECT_CUSTOM}>Custom model...</option>
-                            {field.has_value && <option value={SELECT_CLEAR}>Clear current model</option>}
-                          </select>
+                            <SelectTrigger className="w-full">
+                              <SelectValue placeholder={t('integ.select_recommended')} />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {field.has_value && (
+                                <SelectItem value={SELECT_KEEP}>{keepCurrentLabel}</SelectItem>
+                              )}
+                              {selectOptions.map((option) => (
+                                <SelectItem key={option} value={option}>
+                                  {option}
+                                </SelectItem>
+                              ))}
+                              <SelectItem value={SELECT_CUSTOM}>{t('integ.custom_model')}</SelectItem>
+                              {field.has_value && <SelectItem value={SELECT_CLEAR}>{t('integ.clear_current')}</SelectItem>}
+                            </SelectContent>
+                          </Select>
 
                           {fieldValues[field.key] === SELECT_CUSTOM && (
                             <input
@@ -770,7 +778,7 @@ export default function Integrations() {
                         <div className="space-y-2">
                           {maskedSecretValue && (
                             <p className="text-[11px] text-gray-500">
-                              Current value: <span className="font-mono text-gray-300">{maskedSecretValue}</span>
+                              {t('integ.current_value')} <span className="font-mono text-gray-300">{maskedSecretValue}</span>
                             </p>
                           )}
                           <input
@@ -780,11 +788,11 @@ export default function Integrations() {
                             placeholder={
                               field.required
                                 ? field.has_value
-                                  ? 'Enter a new value to replace current'
-                                  : 'Enter value'
+                                  ? t('integ.replace_current') || 'Enter a new value to replace current'
+                                  : t('integ.enter_value') || 'Enter value'
                                 : field.has_value
-                                  ? 'Type new value, or leave empty to keep current'
-                                  : 'Optional'
+                                  ? t('integ.leave_empty') || 'Type new value, or leave empty to keep current'
+                                  : t('integ.optional') || 'Optional'
                             }
                             className="w-full px-3 py-2 rounded-lg bg-gray-950 border border-gray-700 text-sm text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                           />

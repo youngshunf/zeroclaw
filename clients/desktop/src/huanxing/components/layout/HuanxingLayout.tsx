@@ -15,6 +15,7 @@ function routeToTab(pathname: string): TabKey | null {
   if (pathname.startsWith('/hasn-chat')) return 'hasn';
   if (pathname.startsWith('/contacts')) return 'contacts';
   if (pathname.startsWith('/agents')) return 'agents';
+  if (pathname.startsWith('/market')) return 'market';
   // Settings pages
   if (settingsPaths.some((p) => pathname.startsWith(p))) return 'settings';
   // Independent pages — don't change active tab
@@ -29,6 +30,7 @@ const tabRoutes: Record<TabKey, string> = {
   hasn: '/hasn-chat',
   contacts: '/contacts',
   agents: '/agents',
+  market: '/market',
   settings: '/dashboard',
 };
 
@@ -54,9 +56,9 @@ export default function HuanxingLayout() {
 
   return (
     <div className="hx-app">
-      {/* 全局拖拽条 — 覆盖顶部 32px，z-index 最高 */}
+      {/* 全局拖拽条 — 铺底，低 z-index，不阻挡交互 */}
       <div
-        className="fixed left-0 right-0 top-0 h-8 z-[9999] cursor-move select-none"
+        className="fixed left-0 right-0 top-0 h-8 z-[1] cursor-move select-none"
         style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
         data-tauri-drag-region
       />

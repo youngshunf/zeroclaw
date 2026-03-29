@@ -39,7 +39,8 @@
       "icons/icon.ico"
     ],
     "resources": [
-      "workspace-scaffold/*"
+      "../workspace-scaffold/*",
+      "../workspace-scaffold/guardian/*"
     ]
   },
   "plugins": {

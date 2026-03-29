@@ -40,7 +40,7 @@ export async function listAgents(): Promise<AgentListResponse> {
   return apiFetch<AgentListResponse>('/api/agents');
 }
 
-/** Create a new agent — injects user's LLM token from login session */
+/** Create a new agent — injects user's LLM token from login session + registers HASN identity */
 export async function createAgent(params: CreateAgentParams): Promise<{ status: string; name: string; config_dir: string }> {
   const session = getHuanxingSession();
   const body: Record<string, unknown> = { ...params };
@@ -49,10 +49,25 @@ export async function createAgent(params: CreateAgentParams): Promise<{ status: 
     body.base_url = HUANXING_CONFIG.llmGatewayV1;
   }
 
-  return apiFetch<{ status: string; name: string; config_dir: string }>('/api/agents', {
+  // 1. 在 Sidecar 创建工作区
+  const result = await apiFetch<{ status: string; name: string; config_dir: string }>('/api/agents', {
     method: 'POST',
     body: JSON.stringify(body),
   });
+
+  // 2. 注册 Agent 的 HASN 身份（幂等，非阻塞）
+  if (session?.accessToken) {
+    try {
+      const { registerHasnAgent } = await import('../onboard');
+      const displayName = params.display_name || params.name;
+      await registerHasnAgent(session, params.name, displayName, 'local');
+      console.log(`[agent-api] Agent '${params.name}' HASN 身份注册成功`);
+    } catch (err) {
+      console.warn(`[agent-api] Agent '${params.name}' HASN 身份注册失败（非致命）:`, err);
+    }
+  }
+
+  return result;
 }
 
 /** Delete an agent */

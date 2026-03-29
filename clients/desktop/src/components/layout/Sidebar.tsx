@@ -255,7 +255,7 @@ export default function Sidebar({
             isCollapsed ? 'md:px-1.5 md:text-center' : '',
           ].join(' ')}
         >
-          {isHuanxingDesktop() && ZeroClawStatus && !isCollapsed ? (
+          {isHuanxingDesktop() && !isCollapsed ? (
             <Suspense fallback={<p>唤星AI Desktop</p>}>
               <ZeroClawStatus />
             </Suspense>

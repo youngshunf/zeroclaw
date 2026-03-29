@@ -10,6 +10,8 @@ import {
 import { useConfigForm, type EditorMode } from '@/components/config/useConfigForm';
 import ConfigFormEditor from '@/components/config/ConfigFormEditor';
 import ConfigRawEditor from '@/components/config/ConfigRawEditor';
+import { t } from '@/lib/i18n';
+import { useLocaleContext } from '@/App';
 
 function ModeTab({
   active,
@@ -63,6 +65,8 @@ export default function Config() {
     save,
   } = useConfigForm();
 
+  const { locale } = useLocaleContext();
+
   if (loading) {
     return <div className="hx-loading-center"><div className="hx-spinner" /></div>;
   }
@@ -73,12 +77,12 @@ export default function Config() {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <Settings size={20} style={{ color: 'var(--hx-purple)' }} />
-          <h2 style={{ fontSize: 16, fontWeight: 600, color: 'var(--hx-text-primary)' }}>配置编辑</h2>
+          <h2 style={{ fontSize: 16, fontWeight: 600, color: 'var(--hx-text-primary)' }}>{t('config.editor_title')}</h2>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 2, background: 'var(--hx-bg-panel)', border: '1px solid var(--hx-border)', borderRadius: 10, padding: 2 }}>
-            <ModeTab mode="form" active={mode === 'form'} icon={SlidersHorizontal} label="表单" onClick={() => setMode('form')} />
-            <ModeTab mode="raw" active={mode === 'raw'} icon={FileText} label="原始" onClick={() => setMode('raw')} />
+            <ModeTab mode="form" active={mode === 'form'} icon={SlidersHorizontal} label={t('config.form')} onClick={() => setMode('form')} />
+            <ModeTab mode="raw" active={mode === 'raw'} icon={FileText} label={t('config.raw')} onClick={() => setMode('raw')} />
           </div>
           <button
             onClick={save}
@@ -92,7 +96,7 @@ export default function Config() {
             }}
           >
             <Save size={14} />
-            {saving ? '保存中...' : '保存'}
+            {saving ? t('config.saving') : t('config.save')}
           </button>
         </div>
       </div>
@@ -104,11 +108,11 @@ export default function Config() {
       }}>
         <ShieldAlert size={18} style={{ color: '#D97706', flexShrink: 0, marginTop: 2 }} />
         <div>
-          <p style={{ fontSize: 13, fontWeight: 500, color: '#92400E' }}>敏感字段已隐藏</p>
+          <p style={{ fontSize: 13, fontWeight: 500, color: '#92400E' }}>{t('config.hidden_title')}</p>
           <p style={{ fontSize: 12, color: '#B45309', marginTop: 2 }}>
             {mode === 'form'
-              ? '被隐藏的字段显示为"已配置（已隐藏）"。保持不变则保留原值，输入新值则更新。'
-              : 'API 密钥、令牌和密码已隐藏。要更新被隐藏的字段，请用新值替换整个隐藏值。'}
+              ? t('config.hidden_desc_form')
+              : t('config.hidden_desc_raw')}
           </p>
         </div>
       </div>

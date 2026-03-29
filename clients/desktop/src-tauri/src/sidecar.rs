@@ -859,6 +859,54 @@ impl SidecarManager {
         let valid = self.has_valid_huanxing_config();
         (true, valid)
     }
+
+    /// 杀掉可能残留的 zeroclaw 孤儿进程（配置已删除但进程还在跑）
+    pub async fn kill_orphan_sidecar(&self, port: u16) {
+        // 1. 尝试通过 HTTP 优雅关闭
+        let client = reqwest::Client::builder()
+            .timeout(HEALTH_TIMEOUT)
+            .build()
+            .unwrap_or_default();
+
+        let health_ok = client
+            .get(format!("http://127.0.0.1:{port}/health"))
+            .send()
+            .await
+            .map(|r| r.status().is_success())
+            .unwrap_or(false);
+
+        if !health_ok {
+            eprintln!("[huanxing-desktop] No orphan sidecar found on port {port}");
+            return;
+        }
+
+        eprintln!("[huanxing-desktop] Found orphan sidecar on port {port}, killing...");
+
+        // 2. 读 PID 文件
+        let pid_path = self.config_dir.join(".sidecar.pid");
+        if let Ok(pid_str) = std::fs::read_to_string(&pid_path) {
+            if let Ok(pid) = pid_str.trim().parse::<i32>() {
+                unsafe {
+                    libc::kill(pid, libc::SIGTERM);
+                }
+                eprintln!("[huanxing-desktop] Sent SIGTERM to PID {pid}");
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                // 如果还在运行，强杀
+                unsafe {
+                    libc::kill(pid, libc::SIGKILL);
+                }
+                let _ = std::fs::remove_file(&pid_path);
+                return;
+            }
+        }
+
+        // 3. PID 文件不存在，用 pkill 按端口关联杀
+        let _ = std::process::Command::new("pkill")
+            .args(["-f", &format!("zeroclaw daemon.*--port {port}")])
+            .status();
+        eprintln!("[huanxing-desktop] Killed orphan sidecar via pkill");
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    }
 }
 
 // ── Onboard：登录后初始化 ─────────────────────────────────
@@ -869,6 +917,8 @@ pub struct OnboardRequest {
     pub llm_token: String,
     pub user_nickname: Option<String>,
     pub user_uuid: Option<String>,
+    pub user_phone: Option<String>,
+    pub agent_key: Option<String>,
     pub api_base_url: Option<String>,
     /// LLM 网关地址（含 /v1 后缀），如 http://127.0.0.1:3180/v1
     pub llm_gateway_url: Option<String>,
@@ -908,6 +958,8 @@ impl SidecarManager {
         let star_name = req.user_nickname.as_deref().unwrap_or("小星");
         let nickname = req.user_nickname.as_deref().unwrap_or("主人");
         let user_uuid = req.user_uuid.as_deref().unwrap_or("unknown");
+        let user_phone = req.user_phone.as_deref().unwrap_or("（未提供）");
+        let agent_key = req.agent_key.as_deref().unwrap_or("");
 
         // 1. 创建目录结构
         std::fs::create_dir_all(&self.config_dir).map_err(|e| format!("创建配置目录失败: {e}"))?;
@@ -938,6 +990,8 @@ impl SidecarManager {
             &llm_gateway,
             api_base,
             star_name,
+            agent_key,
+            user_uuid,
             HUANXING_PORT,
         );
 
@@ -952,6 +1006,8 @@ impl SidecarManager {
         std::fs::create_dir_all(&agent_dir).ok();
         // 写入 agent 级别的 config.toml
         // provider 和 api_key 继承全局配置，agent 可独立设置 model
+        // 尝试从全局模板中提取 default_model / title_model
+        let (default_model, title_model) = extract_models_from_template(&app);
         let agent_config = format!(
             r#"# 默认 Agent 配置 — 唤星桌面端自动生成
 [agent]
@@ -961,10 +1017,12 @@ display_name = "{star_name}"
 hasn_id = ""
 
 # Agent 独立模型配置（继承全局 provider 和 api_key）
-default_model = "claude-sonnet-4-6"
-title_model = "claude-haiku-4-5"
+default_model = "{default_model}"
+title_model = "{title_model}"
 "#,
             star_name = star_name,
+            default_model = default_model,
+            title_model = title_model,
         );
         let agent_config_path = agent_dir.join("config.toml");
         if !agent_config_path.exists() {
@@ -981,6 +1039,10 @@ title_model = "claude-haiku-4-5"
             ("{{star_name}}", star_name),
             ("{{user_id}}", user_uuid),
             ("{{created_at}}", &now),
+            ("{{createdAt}}", &now),
+            ("{{timestamp}}", &now),
+            ("{{phone}}", user_phone),
+            ("{{agent_key}}", agent_key),
             ("{{comm_style}}", comm_style),
         ];
 
@@ -996,6 +1058,36 @@ title_model = "claude-haiku-4-5"
                 tracing::warn!("Workspace scaffold partial failure: {e}");
                 // Not fatal — sidecar can still run without workspace files
             }
+        }
+
+        // 4.5. 创建 Guardian 工作区（从 workspace-scaffold/guardian/ 复制）
+        // Guardian 放在 config_dir/guardian/（与 agents/ 同级，和云端保持一致）
+        let guardian_dir = self.config_dir.join("guardian");
+        std::fs::create_dir_all(&guardian_dir).ok();
+        let guardian_result = scaffold_guardian_workspace(&app, &guardian_dir, placeholders);
+        match guardian_result {
+            Ok(count) => {
+                tracing::info!(
+                    "Guardian workspace scaffolded: {count} files created in {}",
+                    guardian_dir.display()
+                );
+            }
+            Err(e) => {
+                tracing::warn!("Guardian scaffold failed (non-fatal): {e}");
+            }
+        }
+
+        // 4.6. 初始化 data/users.db（桌面端多租户）
+        let data_dir = self.config_dir.join("data");
+        std::fs::create_dir_all(&data_dir).ok();
+        let users_db_path = data_dir.join("users.db");
+        if !users_db_path.exists() {
+            match init_users_db(&users_db_path, user_uuid, user_phone, nickname) {
+                Ok(_) => tracing::info!("users.db initialized: {}", users_db_path.display()),
+                Err(e) => tracing::warn!("users.db init failed (non-fatal): {e}"),
+            }
+        } else {
+            tracing::info!("users.db already exists, skipping init");
         }
 
         // 5. 生成 secret key（如果不存在）
@@ -1042,7 +1134,7 @@ fn load_scaffold_file(app: &AppHandle, filename: &str) -> Option<String> {
         scaffold_dir
     } else {
         let dev_path =
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("workspace-scaffold");
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../workspace-scaffold");
         if dev_path.exists() {
             dev_path
         } else {
@@ -1070,7 +1162,7 @@ fn scaffold_workspace(
         scaffold_dir
     } else {
         let dev_path =
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("workspace-scaffold");
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../workspace-scaffold");
         if dev_path.exists() {
             dev_path
         } else {
@@ -1123,6 +1215,197 @@ fn scaffold_workspace(
     Ok(count)
 }
 
+/// Guardian 工作区初始化 — 从 workspace-scaffold/guardian/ 复制所有文件
+fn scaffold_guardian_workspace(
+    app: &AppHandle,
+    guardian_dir: &std::path::Path,
+    placeholders: &[(&str, &str)],
+) -> Result<usize, String> {
+    // 定位 workspace-scaffold/guardian/ 目录
+    let scaffold_dir = app
+        .path()
+        .resource_dir()
+        .map_err(|e| format!("获取资源目录失败: {e}"))?
+        .join("workspace-scaffold")
+        .join("guardian");
+
+    // Fallback: 开发模式
+    let scaffold_dir = if scaffold_dir.exists() {
+        scaffold_dir
+    } else {
+        let dev_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../workspace-scaffold/guardian");
+        if dev_path.exists() {
+            dev_path
+        } else {
+            return Err(format!(
+                "guardian scaffold 目录不存在: {} 或 {}",
+                scaffold_dir.display(),
+                dev_path.display()
+            ));
+        }
+    };
+
+    tracing::info!("Guardian scaffold source: {}", scaffold_dir.display());
+
+    let mut count = 0;
+    let entries =
+        std::fs::read_dir(&scaffold_dir).map_err(|e| format!("读取 guardian scaffold 失败: {e}"))?;
+
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("读取目录条目失败: {e}"))?;
+        let path = entry.path();
+
+        // 只处理文件（跳过子目录）
+        if !path.is_file() {
+            continue;
+        }
+
+        let file_name = entry.file_name().to_string_lossy().to_string();
+
+        // 处理 .md 和 .toml 文件
+        if !file_name.ends_with(".md") && !file_name.ends_with(".toml") {
+            continue;
+        }
+
+        let dest = guardian_dir.join(&file_name);
+
+        // 已存在的文件不覆盖
+        if dest.exists() {
+            tracing::debug!("Skipping existing guardian file: {}", dest.display());
+            continue;
+        }
+
+        // 读取模板 + 替换占位符
+        let content = std::fs::read_to_string(&path)
+            .map_err(|e| format!("读取模板 {file_name} 失败: {e}"))?;
+
+        let mut content = content;
+        for (placeholder, value) in placeholders {
+            content = content.replace(placeholder, value);
+        }
+
+        std::fs::write(&dest, &content).map_err(|e| format!("写入 {file_name} 失败: {e}"))?;
+        tracing::info!("Created guardian file: {}", dest.display());
+        count += 1;
+    }
+
+    Ok(count)
+}
+
+/// 初始化桌面端 users.db — 创建表并插入默认用户
+fn init_users_db(
+    db_path: &std::path::Path,
+    user_uuid: &str,
+    phone: &str,
+    nickname: &str,
+) -> Result<(), String> {
+    use std::io::Write;
+
+    // 使用 sqlite3 命令行初始化（避免引入 rusqlite 依赖）
+    let sql = format!(
+        r#"
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_uuid TEXT NOT NULL UNIQUE,
+    phone TEXT,
+    nickname TEXT,
+    agent_id TEXT,
+    server_id TEXT DEFAULT 'local',
+    status TEXT DEFAULT 'active',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS channel_bindings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_type TEXT NOT NULL,
+    sender_id TEXT NOT NULL,
+    agent_name TEXT NOT NULL,
+    user_uuid TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(channel_type, sender_id)
+);
+
+INSERT OR IGNORE INTO users (user_uuid, phone, nickname, agent_id)
+VALUES ('{user_uuid}', '{phone}', '{nickname}', 'default');
+"#,
+        user_uuid = user_uuid,
+        phone = phone,
+        nickname = nickname,
+    );
+
+    // 写入临时 SQL 文件后执行
+    let sql_path = db_path.with_extension("init.sql");
+    {
+        let mut f = std::fs::File::create(&sql_path)
+            .map_err(|e| format!("创建 SQL 文件失败: {e}"))?;
+        f.write_all(sql.as_bytes())
+            .map_err(|e| format!("写入 SQL 文件失败: {e}"))?;
+    }
+
+    let output = std::process::Command::new("sqlite3")
+        .arg(db_path.to_string_lossy().as_ref())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .arg(&format!(".read {}", sql_path.to_string_lossy()))
+        .output();
+
+    // 清理临时 SQL 文件
+    std::fs::remove_file(&sql_path).ok();
+
+    match output {
+        Ok(out) => {
+            if out.status.success() {
+                tracing::info!("users.db initialized successfully");
+                Ok(())
+            } else {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                // Fallback: 直接用 .read 方式不行的话，试用 pipe 方式
+                tracing::warn!("sqlite3 .read failed, trying pipe: {stderr}");
+                init_users_db_pipe(db_path, &sql)
+            }
+        }
+        Err(_) => {
+            // sqlite3 命令不存在，尝试直接写文件
+            tracing::warn!("sqlite3 command not found, trying pipe fallback");
+            init_users_db_pipe(db_path, &sql)
+        }
+    }
+}
+
+/// Fallback: 用 pipe 方式执行 sqlite3
+fn init_users_db_pipe(
+    db_path: &std::path::Path,
+    sql: &str,
+) -> Result<(), String> {
+    use std::io::Write;
+
+    let mut child = std::process::Command::new("sqlite3")
+        .arg(db_path.to_string_lossy().as_ref())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("启动 sqlite3 失败: {e}"))?;
+
+    if let Some(ref mut stdin) = child.stdin {
+        stdin.write_all(sql.as_bytes())
+            .map_err(|e| format!("写入 SQL 失败: {e}"))?;
+    }
+
+    let output = child.wait_with_output()
+        .map_err(|e| format!("等待 sqlite3 失败: {e}"))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!("sqlite3 执行失败: {stderr}"))
+    }
+}
+
 /// 生成随机 32 字节
 fn rand_bytes() -> [u8; 32] {
     let mut buf = [0u8; 32];
@@ -1146,6 +1429,8 @@ fn generate_config_toml(
     llm_gateway: &str,
     api_base: &str,
     agent_name: &str,
+    agent_key: &str,
+    user_uuid: &str,
     port: u16,
 ) -> String {
     // 尝试从 workspace-scaffold/config.toml.template 读取模板
@@ -1157,9 +1442,9 @@ fn generate_config_toml(
         return format!(
             r#"# 唤星桌面端配置 — 自动生成（回退模板）
 display_name = "{agent_name}"
-default_provider = "custom:{llm_gateway_base}"
-default_model = "claude-sonnet-4-6"
-title_model = "claude-haiku-4-5"
+default_provider = "custom:{llm_gateway_base}/v1"
+default_model = "MiniMax-M2.7"
+title_model = "MiniMax-M2.5"
 default_temperature = 0.7
 
 [memory]
@@ -1174,10 +1459,8 @@ require_pairing = false
 [huanxing]
 enabled = true
 api_base_url = "{api_base}"
-
-[workspace]
-enabled = true
-workspaces_dir = "~/.huanxing/agents"
+agent_key = "{agent_key}"
+server_id = "desktop-{user_uuid}"
 
 [runtime]
 kind = "native"
@@ -1185,6 +1468,8 @@ kind = "native"
             agent_name = agent_name,
             llm_gateway_base = llm_gateway.trim_end_matches("/v1"),
             api_base = api_base,
+            agent_key = agent_key,
+            user_uuid = user_uuid,
             port = port,
         );
     }
@@ -1197,7 +1482,49 @@ kind = "native"
         .replace("{{llm_gateway}}", llm_gateway)
         .replace("{{llm_gateway_base}}", llm_gateway_base)
         .replace("{{api_base}}", api_base)
+        .replace("{{agent_key}}", agent_key)
+        .replace("{{user_id}}", user_uuid)
         .replace("{{port}}", &port.to_string())
+}
+
+/// 从模板中提取 default_model / title_model（避免硬编码）
+fn extract_models_from_template(app: &AppHandle) -> (String, String) {
+    let default_model = "MiniMax-M2.7".to_string();
+    let title_model = "MiniMax-M2.5".to_string();
+
+    let template = match load_scaffold_file(app, "config.toml.template") {
+        Some(t) => t,
+        None => return (default_model, title_model),
+    };
+
+    let mut dm = default_model;
+    let mut tm = title_model;
+    for line in template.lines() {
+        let line = line.trim();
+        if line.starts_with("default_model") {
+            if let Some(val) = extract_toml_string_value(line) {
+                dm = val;
+            }
+        } else if line.starts_with("title_model") {
+            if let Some(val) = extract_toml_string_value(line) {
+                tm = val;
+            }
+        }
+    }
+    (dm, tm)
+}
+
+/// 从 `key = "value"` 格式行中提取 value
+fn extract_toml_string_value(line: &str) -> Option<String> {
+    let after_eq = line.split_once('=')?.1.trim();
+    // 去掉行内注释
+    let val = if let Some(idx) = after_eq.find('#') {
+        after_eq[..idx].trim()
+    } else {
+        after_eq
+    };
+    // 去掉引号
+    val.strip_prefix('"')?.strip_suffix('"').map(|s| s.to_string())
 }
 
 /// 简易时间戳（不依赖 chrono crate）

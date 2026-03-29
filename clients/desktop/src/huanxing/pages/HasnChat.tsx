@@ -53,15 +53,8 @@ export default function HasnChat() {
   const myId = session?.user?.uuid || '';
   const myName = session?.user?.nickname || '我';
 
-  // HASN 连接
-  const { connected, status, connect } = useHasnConnection();
-
-  // 自动连接
-  useEffect(() => {
-    if (!connected && session?.accessToken && myId) {
-      connect(session.accessToken, myId, '').catch(() => {});
-    }
-  }, [connected, session?.accessToken, myId, connect]);
+  // HASN 连接（由 Tauri 层管理，前端只读状态）
+  const { connected, status } = useHasnConnection();
 
   // 会话列表
   const { conversations, totalUnread, loading: convsLoading, refresh: refreshConvs, setConversations } = useHasnConversations();

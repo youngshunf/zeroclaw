@@ -2,6 +2,8 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { Activity, Pause, Play, ArrowDown, Filter } from 'lucide-react';
 import type { SSEEvent } from '@/types/api';
 import { SSEClient } from '@/lib/sse';
+import { t } from '@/lib/i18n';
+import { useLocaleContext } from '@/App';
 
 function formatTimestamp(ts?: string): string {
   if (!ts) return new Date().toLocaleTimeString('zh-CN');
@@ -32,6 +34,7 @@ export default function Logs() {
   const sseRef = useRef<SSEClient | null>(null);
   const pausedRef = useRef(false);
   const entryIdRef = useRef(0);
+  const { locale } = useLocaleContext();
 
   useEffect(() => { pausedRef.current = paused; }, [paused]);
 
@@ -70,12 +73,12 @@ export default function Logs() {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid var(--hx-border)', marginBottom: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <Activity size={18} style={{ color: 'var(--hx-purple)' }} />
-          <h2 style={{ fontSize: 15, fontWeight: 600, color: 'var(--hx-text-primary)' }}>实时日志</h2>
+          <h2 style={{ fontSize: 15, fontWeight: 600, color: 'var(--hx-text-primary)' }}>{t('logs_extra.title')}</h2>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginLeft: 8 }}>
             <span style={{ width: 8, height: 8, borderRadius: '50%', background: connected ? 'var(--hx-green)' : '#DC2626' }} />
-            <span style={{ fontSize: 12, color: 'var(--hx-text-tertiary)' }}>{connected ? '已连接' : '未连接'}</span>
+            <span style={{ fontSize: 12, color: 'var(--hx-text-tertiary)' }}>{connected ? t('logs_extra.connected') : t('logs_extra.disconnected')}</span>
           </span>
-          <span style={{ fontSize: 12, color: 'var(--hx-text-tertiary)', marginLeft: 8 }}>{filteredEntries.length} 条事件</span>
+          <span style={{ fontSize: 12, color: 'var(--hx-text-tertiary)', marginLeft: 8 }}>{t('logs_extra.events', { count: filteredEntries.length })}</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <button onClick={() => setPaused(!paused)} style={{
@@ -83,7 +86,7 @@ export default function Logs() {
             padding: '6px 12px', borderRadius: 8, fontSize: 13, fontWeight: 500, border: 'none', cursor: 'pointer',
             background: paused ? 'var(--hx-green)' : '#D97706', color: 'white',
           }}>
-            {paused ? <><Play size={14} />继续</> : <><Pause size={14} />暂停</>}
+            {paused ? <><Play size={14} />{t('logs_extra.resume')}</> : <><Pause size={14} />{t('logs_extra.pause')}</>}
           </button>
           {!autoScroll && (
             <button onClick={jumpToBottom} style={{
@@ -91,7 +94,7 @@ export default function Logs() {
               padding: '6px 12px', borderRadius: 8, fontSize: 13, fontWeight: 500, border: 'none', cursor: 'pointer',
               background: 'var(--hx-purple)', color: 'white',
             }}>
-              <ArrowDown size={14} />跳到底部
+              <ArrowDown size={14} />{t('logs_extra.jump_bottom')}
             </button>
           )}
         </div>
@@ -101,7 +104,7 @@ export default function Logs() {
       {allTypes.length > 0 && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0', borderBottom: '1px solid var(--hx-border)', overflowX: 'auto' }}>
           <Filter size={14} style={{ color: 'var(--hx-text-tertiary)', flexShrink: 0 }} />
-          <span style={{ fontSize: 12, color: 'var(--hx-text-tertiary)', flexShrink: 0 }}>筛选：</span>
+          <span style={{ fontSize: 12, color: 'var(--hx-text-tertiary)', flexShrink: 0 }}>{t('logs_extra.filter')}</span>
           {allTypes.map(type => (
             <label key={type} style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', flexShrink: 0 }}>
               <input type="checkbox" checked={typeFilters.has(type)} onChange={() => toggleTypeFilter(type)} style={{ width: 14, height: 14, accentColor: 'var(--hx-purple)' }} />
@@ -110,7 +113,7 @@ export default function Logs() {
           ))}
           {typeFilters.size > 0 && (
             <button onClick={() => setTypeFilters(new Set())} style={{ fontSize: 12, color: 'var(--hx-purple)', background: 'none', border: 'none', cursor: 'pointer', flexShrink: 0 }}>
-              清除
+              {t('logs_extra.clear')}
             </button>
           )}
         </div>
@@ -121,7 +124,7 @@ export default function Logs() {
         {filteredEntries.length === 0 ? (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--hx-text-tertiary)' }}>
             <Activity size={40} style={{ marginBottom: 12, opacity: 0.4 }} />
-            <p style={{ fontSize: 13 }}>{paused ? '日志流已暂停' : '等待事件...'}</p>
+            <p style={{ fontSize: 13 }}>{paused ? t('logs_extra.paused_msg') : t('logs_extra.waiting')}</p>
           </div>
         ) : (
           filteredEntries.map(entry => {

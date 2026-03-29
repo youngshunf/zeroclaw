@@ -1,6 +1,9 @@
 import { useState, useMemo } from 'react';
 import { Search } from 'lucide-react';
 import { CONFIG_SECTIONS } from './configSections';
+import { useTranslatedConfigSections } from './useTranslatedConfigSections';
+import { useLocaleContext } from '@/App';
+import { t_config } from './configTranslations';
 import ConfigSection from './ConfigSection';
 import type { FieldDef } from './types';
 
@@ -29,13 +32,15 @@ export default function ConfigFormEditor({
 }: Props) {
   const [search, setSearch] = useState('');
   const [activeCategory, setActiveCategory] = useState('all');
+  const { locale } = useLocaleContext();
+  const translatedSections = useTranslatedConfigSections();
 
   const isSearching = search.trim().length > 0;
 
   const filteredSections = useMemo(() => {
     if (isSearching) {
       const q = search.toLowerCase();
-      return CONFIG_SECTIONS.map((section) => {
+      return translatedSections.map((section) => {
         const titleMatch = section.title.toLowerCase().includes(q);
         const descMatch = section.description?.toLowerCase().includes(q);
 
@@ -60,11 +65,11 @@ export default function ConfigFormEditor({
 
     // Category filter
     const sections = activeCategory === 'all'
-      ? CONFIG_SECTIONS
-      : CONFIG_SECTIONS.filter((s) => s.category === activeCategory);
+      ? translatedSections
+      : translatedSections.filter((s) => s.category === activeCategory);
 
     return sections.map((s) => ({ section: s, fields: undefined }));
-  }, [search, isSearching, activeCategory]);
+  }, [search, isSearching, activeCategory, translatedSections]);
 
   return (
     <div className="space-y-3">
@@ -75,8 +80,8 @@ export default function ConfigFormEditor({
           type="text"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search config fields..."
-          className="w-full bg-gray-800 border border-gray-700 rounded-lg pl-9 pr-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          placeholder={t_config('Search config fields...', locale)}
+          className="w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg pl-9 pr-3 py-2 text-sm focus:outline-none transition-colors"
         />
       </div>
 
@@ -89,11 +94,11 @@ export default function ConfigFormEditor({
               onClick={() => setActiveCategory(key)}
               className={`px-3 py-1 rounded-lg text-sm font-medium transition-colors ${
                 activeCategory === key
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-900 text-gray-400 border border-gray-700 hover:bg-gray-800 hover:text-gray-200'
+                  ? 'bg-[var(--hx-purple)] text-white border border-[var(--hx-purple)]'
+                  : 'bg-white dark:bg-gray-900 text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-gray-200'
               }`}
             >
-              {label}
+              {t_config(label, locale)}
             </button>
           ))}
         </div>
@@ -102,7 +107,7 @@ export default function ConfigFormEditor({
       {/* Sections */}
       {filteredSections.length === 0 ? (
         <div className="text-center py-12 text-gray-500 text-sm">
-          No matching config fields found.
+          {t_config('No matching config fields found.', locale)}
         </div>
       ) : (
         filteredSections.map(({ section, fields }) => (

@@ -12,6 +12,9 @@ import {
   Trash2, Download, Settings,
 } from 'lucide-react';
 import { useSidecar, type QuickConfig } from '../hooks/useSidecar';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/Select';
+import { t } from '@/lib/i18n';
+import { useLocaleContext } from '@/App';
 
 export default function Engine() {
   const {
@@ -22,6 +25,7 @@ export default function Engine() {
     loadConfig, saveConfig,
   } = useSidecar();
 
+  const { locale } = useLocaleContext();
   const [logsExpanded, setLogsExpanded] = useState(true);
   const [configExpanded, setConfigExpanded] = useState(false);
   const logEndRef = useRef<HTMLDivElement>(null);
@@ -35,11 +39,11 @@ export default function Engine() {
 
   const formatUptime = (seconds: number | null): string => {
     if (!seconds) return '-';
-    if (seconds < 60) return `${seconds}秒`;
-    if (seconds < 3600) return `${Math.floor(seconds / 60)}分${seconds % 60}秒`;
+    if (seconds < 60) return `${seconds}s`;
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
     const h = Math.floor(seconds / 3600);
     const m = Math.floor((seconds % 3600) / 60);
-    return `${h}小时${m}分`;
+    return `${h}h ${m}m`;
   };
 
   const exportLogs = () => {
@@ -70,11 +74,11 @@ export default function Engine() {
           <div className="hx-engine-icon">
             <Cpu size={16} />
           </div>
-          <h2>AI 引擎</h2>
+          <h2>{t('engine.title')}</h2>
         </div>
         <button className="hx-engine-refresh" onClick={refreshStatus}>
           <RotateCw size={12} />
-          刷新
+          {t('engine.refresh')}
         </button>
       </div>
 
@@ -92,7 +96,7 @@ export default function Engine() {
           <div className="hx-engine-status-info">
             <span className={`hx-engine-dot ${isRunning ? 'active' : ''}`} />
             <span className="hx-engine-status-label">
-              {isRunning ? '运行中' : '已停止'}
+              {isRunning ? t('engine.running') : t('engine.stopped')}
             </span>
             {status?.pid && (
               <span className="hx-engine-pid">PID: {status.pid}</span>
@@ -103,17 +107,17 @@ export default function Engine() {
             {!isRunning ? (
               <button className="hx-btn hx-btn-primary" onClick={start} disabled={starting}>
                 <Power size={14} />
-                {starting ? '启动中...' : '启动'}
+                {starting ? t('engine.starting') : t('engine.start')}
               </button>
             ) : (
               <>
                 <button className="hx-btn hx-btn-outline" onClick={restart} disabled={starting}>
                   <RotateCw size={14} />
-                  {starting ? '重启中...' : '重启'}
+                  {starting ? t('engine.restarting') : t('engine.restart')}
                 </button>
                 <button className="hx-btn hx-btn-danger" onClick={stop} disabled={stopping}>
                   <Square size={14} />
-                  {stopping ? '停止中...' : '停止'}
+                  {stopping ? t('engine.stopping') : t('engine.stop')}
                 </button>
               </>
             )}
@@ -124,7 +128,7 @@ export default function Engine() {
         {isRunning && status && (
           <div className="hx-engine-metrics">
             <div className="hx-engine-metric">
-              <div className="hx-engine-metric-label"><Zap size={13} /> 模型</div>
+              <div className="hx-engine-metric-label"><Zap size={13} /> {t('engine.model')}</div>
               <div className="hx-engine-metric-value">{status.model ?? '-'}</div>
             </div>
             <div className="hx-engine-metric">
@@ -132,11 +136,11 @@ export default function Engine() {
               <div className="hx-engine-metric-value truncate">{status.provider?.replace('custom:', '') ?? '-'}</div>
             </div>
             <div className="hx-engine-metric">
-              <div className="hx-engine-metric-label"><Clock size={13} /> 运行时间</div>
+              <div className="hx-engine-metric-label"><Clock size={13} /> {t('engine.uptime')}</div>
               <div className="hx-engine-metric-value">{formatUptime(status.uptime_seconds)}</div>
             </div>
             <div className="hx-engine-metric">
-              <div className="hx-engine-metric-label"><Database size={13} /> 记忆后端</div>
+              <div className="hx-engine-metric-label"><Database size={13} /> {t('engine.memory_backend')}</div>
               <div className="hx-engine-metric-value">{status.memory_backend ?? '-'}</div>
             </div>
           </div>
@@ -146,7 +150,7 @@ export default function Engine() {
         {status && status.restart_count > 0 && (
           <div className="hx-engine-warning">
             <AlertTriangle size={12} />
-            已自动重启 {status.restart_count} 次
+            {t('engine.restarted_count', { count: status.restart_count })}
           </div>
         )}
       </div>
@@ -163,7 +167,7 @@ export default function Engine() {
           <div className="hx-card-title">
             <div className="hx-card-icon"><Settings size={16} /></div>
             <div>
-              <h2>快捷配置</h2>
+              <h2>{t('engine.quick_config')}</h2>
             </div>
           </div>
           {configExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
@@ -172,12 +176,12 @@ export default function Engine() {
         {configExpanded && (
           <div className="hx-card-body">
             {configLoading ? (
-              <div className="hx-engine-empty">加载配置中...</div>
+              <div className="hx-engine-empty">{t('engine.loading_config')}</div>
             ) : config ? (
               <ConfigEditor config={config} onSave={saveConfig} saving={configLoading} />
             ) : (
               <div className="hx-engine-empty">
-                仅 Tauri 桌面端可修改配置。开发模式请手动编辑 config.toml
+                {t('engine.config_helper')}
               </div>
             )}
           </div>
@@ -190,8 +194,8 @@ export default function Engine() {
           <div className="hx-card-title">
             <div className="hx-card-icon"><Terminal size={16} /></div>
             <div>
-              <h2>运行日志</h2>
-              <span className="hx-card-subtitle">{logs.length} 行</span>
+              <h2>{t('engine.logs_title')}</h2>
+              <span className="hx-card-subtitle">{t('engine.lines', { count: logs.length })}</span>
             </div>
           </div>
           <div className="hx-engine-log-controls">
@@ -201,18 +205,18 @@ export default function Engine() {
                   className={`hx-engine-log-btn ${autoScroll ? 'active' : ''}`}
                   onClick={(e) => { e.stopPropagation(); setAutoScroll(!autoScroll); }}
                 >
-                  自动滚动
+                  {t('engine.auto_scroll')}
                 </button>
                 <button
                   className="hx-engine-log-icon-btn"
-                  title="清空日志"
+                  title={t('engine.clear_logs') || 'Clear Logs'}
                   onClick={(e) => { e.stopPropagation(); clearLogs(); }}
                 >
                   <Trash2 size={13} />
                 </button>
                 <button
                   className="hx-engine-log-icon-btn"
-                  title="导出日志"
+                  title={t('engine.export_logs') || 'Export Logs'}
                   onClick={(e) => { e.stopPropagation(); exportLogs(); }}
                 >
                   <Download size={13} />
@@ -227,7 +231,7 @@ export default function Engine() {
           <div className="hx-engine-log-panel">
             {logs.length === 0 ? (
               <div className="hx-engine-log-empty">
-                {isRunning ? '等待日志...' : '引擎未运行'}
+                {isRunning ? t('engine.waiting_logs') : t('engine.not_running')}
               </div>
             ) : (
               logs.map((line, i) => (
@@ -288,21 +292,26 @@ function ConfigEditor({
     <div className="hx-engine-config-form">
       {/* 模型 */}
       <div className="hx-engine-field">
-        <label>默认模型</label>
-        <select
-          value={draft.default_model ?? ''}
-          onChange={(e) => setDraft({ ...draft, default_model: e.target.value || null })}
+        <label>{t('engine.default_model')}</label>
+        <Select
+          value={draft.default_model ?? 'none'}
+          onValueChange={(val) => setDraft({ ...draft, default_model: val === 'none' ? null : val })}
         >
-          <option value="">（未设置）</option>
-          {MODEL_OPTIONS.map((m) => (
-            <option key={m} value={m}>{m}</option>
-          ))}
-        </select>
+          <SelectTrigger>
+            <SelectValue placeholder={t('engine.not_set')} />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="none">{t('engine.not_set')}</SelectItem>
+            {MODEL_OPTIONS.map((m) => (
+              <SelectItem key={m} value={m}>{m}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       {/* 温度 */}
       <div className="hx-engine-field">
-        <label>温度 (temperature): {draft.default_temperature ?? 0.7}</label>
+        <label>{t('engine.temperature')}: {draft.default_temperature ?? 0.7}</label>
         <input
           type="range"
           min="0" max="2" step="0.1"
@@ -310,30 +319,35 @@ function ConfigEditor({
           onChange={(e) => setDraft({ ...draft, default_temperature: parseFloat(e.target.value) })}
         />
         <div className="hx-engine-range-labels">
-          <span>精确 0</span>
-          <span>平衡 1</span>
-          <span>创意 2</span>
+          <span>{t('engine.precise')}</span>
+          <span>{t('engine.balanced')}</span>
+          <span>{t('engine.creative')}</span>
         </div>
       </div>
 
       {/* 自主级别 */}
       <div className="hx-engine-field">
-        <label>自主级别</label>
-        <select
+        <label>{t('engine.autonomy')}</label>
+        <Select
           value={draft.autonomy_level ?? 'supervised'}
-          onChange={(e) => setDraft({ ...draft, autonomy_level: e.target.value })}
+          onValueChange={(val) => setDraft({ ...draft, autonomy_level: val })}
         >
-          {AUTONOMY_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>{opt.label}</option>
-          ))}
-        </select>
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="supervised">{t('engine.supervised')}</SelectItem>
+            <SelectItem value="semi">{t('engine.semi')}</SelectItem>
+            <SelectItem value="full">{t('engine.full')}</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       {/* 按钮 */}
       <div className="hx-engine-config-actions">
         {hasChanges && (
           <button className="hx-btn hx-btn-outline" onClick={() => setDraft({ ...config })}>
-            重置
+            {t('engine.reset')}
           </button>
         )}
         <button
@@ -341,7 +355,7 @@ function ConfigEditor({
           onClick={() => onSave(draft)}
           disabled={!hasChanges || saving}
         >
-          {saving ? '保存中...' : '保存并重启'}
+          {saving ? t('config.saving') : t('engine.save_restart')}
         </button>
       </div>
     </div>

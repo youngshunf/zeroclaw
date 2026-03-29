@@ -1,8 +1,11 @@
 import { useState } from 'react';
 import { Eye, EyeOff, Lock } from 'lucide-react';
 import type { FieldProps } from '../types';
+import { useLocaleContext } from '@/App';
+import { t_config } from '../configTranslations';
 
 export default function TextField({ field, value, onChange, isMasked }: FieldProps) {
+  const { locale } = useLocaleContext();
   const [showPassword, setShowPassword] = useState(false);
   const isPassword = field.type === 'password';
   const strValue = isMasked ? '' : ((value as string) ?? '');
@@ -13,8 +16,8 @@ export default function TextField({ field, value, onChange, isMasked }: FieldPro
         type={isPassword && !showPassword ? 'password' : 'text'}
         value={strValue}
         onChange={(e) => onChange(e.target.value)}
-        placeholder={isMasked ? 'Configured (masked)' : field.description ?? ''}
-        className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 pr-16"
+        placeholder={isMasked ? t_config('Configured (masked)', locale) : field.description ?? ''}
+        className="w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none pr-16 transition-colors"
       />
       <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
         {isMasked && (

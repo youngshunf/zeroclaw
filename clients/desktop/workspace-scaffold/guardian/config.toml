@@ -1,0 +1,134 @@
+# ═══════════════════════════════════════════════════════════════
+# 桌面端 Guardian — 渠道路由管理 Agent
+# 自动生成于 onboard 流程
+# ═══════════════════════════════════════════════════════════════
+
+[agent]
+name = "guardian"
+template = "guardian"
+display_name = "守护者"
+
+# Guardian 继承全局 provider/api_key，不独立配置
+default_model = "MiniMax-M2.7"
+title_model = "MiniMax-M2.5"
+
+compact_context = true
+max_tool_iterations = 30
+max_history_messages = 50
+
+[agent.session]
+backend = "sqlite"
+strategy = "per-sender"
+ttl_seconds = 86400
+max_messages = 100
+
+# ── 记忆 ──────────────────────────────────────────────────────
+[memory]
+backend = "sqlite"
+auto_save = true
+auto_hydrate = true
+hygiene_enabled = true
+archive_after_days = 14
+purge_after_days = 90
+
+# ── 自治与安全 ────────────────────────────────────────────────
+[autonomy]
+level = "full"
+workspace_only = true
+allowed_commands = []
+forbidden_paths = [
+    "/etc", "/root", "/home", "/usr", "/bin", "/sbin",
+    "/lib", "/opt", "/boot", "/dev", "/proc", "/sys",
+    "/var", "/tmp", "/mnt",
+    "~/.ssh", "~/.gnupg", "~/.aws", "~/.config",
+]
+max_actions_per_hour = 200
+max_cost_per_day_cents = 1000
+block_high_risk_commands = true
+auto_approve = [
+    "file_read", "memory_recall", "memory_store",
+    "hx_lookup_sender", "hx_local_find_user",
+    "hx_register_user", "hx_local_bind_channel",
+    "hx_invalidate_cache",
+]
+# 排除 Guardian 不需要的工具
+non_cli_excluded_tools = [
+    # ── 系统工具 ──
+    "shell", "process", "git_operations",
+    "browser", "browser_open", "browser_delegate",
+    "http_request", "web_fetch", "web_search_tool",
+    "schedule", "screenshot", "image_info", "image_gen",
+    "proxy_config", "model_routing_config", "model_switch",
+    "composio", "delegate",
+    "cron_add", "cron_list", "cron_remove", "cron_update", "cron_run", "cron_runs",
+    "file_write", "file_edit",
+    "backup", "security_ops", "cloud_ops", "cloud_patterns",
+    "sop_execute", "sop_list", "sop_approve", "sop_advance", "sop_status",
+    "swarm", "data_management",
+    # ── 桌面端不需要 SMS ──
+    "hx_send_sms", "hx_verify_sms",
+    # ── 唤星非路由工具 ──
+    "hx_get_user", "hx_check_quota", "hx_get_subscription", "hx_usage_stats",
+    "hx_local_list_users", "hx_local_update_user", "hx_local_stats",
+    # ── HASN 社交 ──
+    "hasn_send", "hasn_contacts", "hasn_add_friend", "hasn_inbox", "hasn_respond_request",
+    # ── 文档工具 ──
+    "hx_folder_tree", "hx_folder_create", "hx_folder_delete", "hx_folder_move",
+    "hx_doc_list", "hx_doc_get", "hx_doc_create", "hx_doc_update", "hx_doc_delete", "hx_doc_move", "hx_doc_share",
+    # ── 技能市场 ──
+    "hx_skill_search", "hx_skill_info", "hx_skill_install", "hx_skill_uninstall", "hx_skill_list", "hx_skill_update",
+    # ── Secret 管理 ──
+    "hx_set_secret", "hx_list_secrets", "hx_delete_secret",
+]
+
+# ── 安全 ──────────────────────────────────────────────────────
+[security]
+canary_tokens = true
+semantic_guard = false
+
+[security.otp]
+enabled = false
+
+[security.outbound_leak_guard]
+enabled = true
+action = "redact"
+sensitivity = 0.8
+
+# ── 心跳 ──────────────────────────────────────────────────────
+[heartbeat]
+enabled = false
+
+# ── 禁用功能 ──────────────────────────────────────────────────
+[cron]
+enabled = false
+
+[browser]
+enabled = false
+
+[http_request]
+enabled = false
+
+[web_fetch]
+enabled = false
+
+[web_search]
+enabled = false
+
+[proxy]
+enabled = false
+
+[composio]
+enabled = false
+
+[mcp]
+enabled = false
+
+[wasm]
+enabled = false
+
+[plugins]
+enabled = false
+
+[channels_config]
+cli = false
+message_timeout_secs = 300

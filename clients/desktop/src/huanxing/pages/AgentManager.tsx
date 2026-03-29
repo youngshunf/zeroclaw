@@ -259,15 +259,19 @@ function FileEditor({ agentName, filename, onClose }: FileEditorProps) {
   return (
     <div className="flex h-full w-full flex-col min-h-0 min-w-0 overflow-hidden bg-white">
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3 shrink-0">
-        <div className="flex items-center gap-2 text-sm text-gray-900 min-w-0">
+      <div 
+        className="relative z-10 bg-white flex items-center justify-between border-b border-gray-200 px-5 py-3 shrink-0"
+        style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
+        data-tauri-drag-region
+      >
+        <div className="flex items-center gap-2 text-sm text-gray-900 min-w-0" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
           <FileText className="h-4 w-4 text-[#7c3aed] shrink-0" />
           <span className="font-semibold truncate">{agentName}</span>
           <span className="text-gray-400">/</span>
           <span className="font-medium text-gray-500">{filename}</span>
           {dirty && <span className="text-xs text-amber-600 shrink-0">• 未保存</span>}
         </div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-2 shrink-0" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
           <button
             onClick={handleSave}
             disabled={saving || !dirty}
@@ -489,11 +493,16 @@ export default function AgentManager() {
   return (
     <div className="flex h-full min-h-0 min-w-0 overflow-hidden" style={{ width: '100%' }}>
       {/* ─── Left: Agent List ─── */}
-      <div className="flex w-72 shrink-0 flex-col border-r border-gray-200 min-h-0">
-        <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3 shrink-0">
-          <h2 className="text-sm font-semibold text-gray-900">Agent 管理</h2>
+      <div className="flex w-72 shrink-0 flex-col border-r border-gray-200 min-h-0 bg-white">
+        <div 
+          className="relative z-10 bg-white flex items-center justify-between border-b border-gray-200 px-4 py-3 shrink-0"
+          style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
+          data-tauri-drag-region
+        >
+          <h2 className="text-sm font-semibold text-gray-900" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>Agent 管理</h2>
           <button
             onClick={() => setShowCreate(true)}
+            style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
             className="flex items-center gap-1.5 rounded-lg bg-[#7c3aed] px-2.5 py-1.5 text-xs font-medium text-white hover:bg-[#6d28d9] transition-colors"
           >
             <Plus className="h-3.5 w-3.5" />

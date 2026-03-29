@@ -8,15 +8,15 @@ display_name = "{{star_name}}"
 
 # ── LLM Provider ──────────────────────────────────────────────
 api_key = "{{llm_token}}"
-default_provider = "custom:{{llm_gateway_base}}"
-default_model = "claude-sonnet-4-6"
-title_model = "claude-haiku-4-5"   # 会话标题自动生成用的轻量模型
+default_provider = "custom:{{llm_gateway_base}}/v1"
+default_model = "MiniMax-M2.7"
+title_model = "MiniMax-M2.5"   # 会话标题自动生成用的轻量模型
 default_temperature = 0.7
 
 # ── Agent 核心设置 ────────────────────────────────────────────
 [agent]
-compact_context = false          # 用大模型，不需要压缩模式
-max_tool_iterations = 15
+compact_context = true          # 用大模型，不需要压缩模式
+max_tool_iterations = 50
 max_history_messages = 100       # 100条后才触发压缩
 
 [agent.session]
@@ -135,10 +135,18 @@ enabled = true
 [identity]
 format = "openclaw"
 
-# ── 唤星平台 ──────────────────────────────────────────────────
+# ── 唤星平台（多租户配置）──────────────────────────────────
 [huanxing]
 enabled = true
 api_base_url = "{{api_base}}"
+agent_key = "{{agent_key}}"
+server_id = "desktop-{{user_id}}"
+
+# 数据路径（相对于 config_dir = ~/.huanxing/）
+# 默认值会自动解析，显式配置便于维护
+# db_path = "data/users.db"
+# agents_dir = "agents"
+# guardian_workspace = "guardian"
 
 [huanxing.templates]
 

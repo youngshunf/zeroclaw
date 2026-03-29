@@ -15,6 +15,18 @@ export function useHasnConnection() {
   const [connected, setConnected] = useState(false);
   const [status, setStatus] = useState<string>("disconnected");
 
+  // 初始化：查询 Tauri 后端当前连接状态
+  useEffect(() => {
+    const invoke = (window as any).__TAURI_INTERNALS__?.invoke;
+    if (invoke) {
+      invoke("hasn_status").then((s: string) => {
+        setConnected(s === "connected");
+        setStatus(s);
+      }).catch(() => {});
+    }
+  }, []);
+
+  // 订阅 Tauri 事件获取实时状态变化
   useEffect(() => {
     const unsub = hasnWs.subscribe((event: HasnWsEvent) => {
       if (event.type === "connected") {
@@ -25,20 +37,28 @@ export function useHasnConnection() {
         setStatus("disconnected");
       }
     });
-    return unsub;
-  }, []);
 
-  const connect = useCallback(async (platformToken: string, hasnId: string, starId: string) => {
-    setStatus("connecting");
-    try {
-      await hasnApi.hasnConnect(platformToken, hasnId, starId);
-      await hasnWs.connect();
-      setConnected(true);
-      setStatus("connected");
-    } catch (err) {
-      setStatus("disconnected");
-      throw err;
-    }
+    // 同时设置 Tauri 事件监听（hasn:connected 由 Rust 侧触发）
+    let unlistenConnected: (() => void) | null = null;
+    let unlistenDisconnected: (() => void) | null = null;
+
+    import('@tauri-apps/api/event').then(({ listen }) => {
+      listen('hasn:connected', () => {
+        setConnected(true);
+        setStatus("connected");
+      }).then(fn => { unlistenConnected = fn; });
+
+      listen('hasn:error', () => {
+        setConnected(false);
+        setStatus("disconnected");
+      }).then(fn => { unlistenDisconnected = fn; });
+    }).catch(() => {});
+
+    return () => {
+      unsub();
+      unlistenConnected?.();
+      unlistenDisconnected?.();
+    };
   }, []);
 
   const disconnect = useCallback(async () => {
@@ -48,7 +68,7 @@ export function useHasnConnection() {
     setStatus("disconnected");
   }, []);
 
-  return { connected, status, connect, disconnect };
+  return { connected, status, disconnect };
 }
 
 // ---------- 会话列表 ----------

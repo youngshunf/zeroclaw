@@ -53,7 +53,7 @@ export default function TagListField({ field, value, onChange }: FieldProps) {
         onKeyDown={handleKeyDown}
         onBlur={() => { if (input.trim()) addTag(input); }}
         placeholder={field.tagPlaceholder ?? 'Type and press Enter to add'}
-        className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+        className="w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none transition-colors"
       />
     </div>
   );

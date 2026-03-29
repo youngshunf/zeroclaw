@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { Stethoscope, Play, CheckCircle, AlertTriangle, XCircle, Loader2 } from 'lucide-react';
 import type { DiagResult } from '@/types/api';
 import { runDoctor } from '@/lib/api';
+import { t } from '@/lib/i18n';
+import { useLocaleContext } from '@/App';
 
 function severityStyle(severity: DiagResult['severity']): { icon: typeof CheckCircle; color: string; bg: string; border: string } {
   switch (severity) {
@@ -15,11 +17,12 @@ export default function Doctor() {
   const [results, setResults] = useState<DiagResult[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { locale } = useLocaleContext();
 
   const handleRun = async () => {
     setLoading(true); setError(null); setResults(null);
     try { setResults(await runDoctor()); }
-    catch (err: unknown) { setError(err instanceof Error ? err.message : '诊断失败'); }
+    catch (err: unknown) { setError(err instanceof Error ? err.message : t('doctor_extra.failed')); }
     finally { setLoading(false); }
   };
 
@@ -39,7 +42,7 @@ export default function Doctor() {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <Stethoscope size={18} style={{ color: 'var(--hx-purple)' }} />
-          <h2 style={{ fontSize: 15, fontWeight: 600, color: 'var(--hx-text-primary)' }}>系统诊断</h2>
+          <h2 style={{ fontSize: 15, fontWeight: 600, color: 'var(--hx-text-primary)' }}>{t('doctor_extra.title')}</h2>
         </div>
         <button
           onClick={handleRun} disabled={loading}
@@ -51,7 +54,7 @@ export default function Doctor() {
             opacity: loading ? 0.5 : 1,
           }}
         >
-          {loading ? <><Loader2 size={14} style={{ animation: 'hx-spin 0.8s linear infinite' }} />诊断中...</> : <><Play size={14} />运行诊断</>}
+          {loading ? <><Loader2 size={14} style={{ animation: 'hx-spin 0.8s linear infinite' }} />{t('doctor_extra.running')}</> : <><Play size={14} />{t('doctor_extra.run_btn')}</>}
         </button>
       </div>
 
@@ -60,8 +63,8 @@ export default function Doctor() {
       {loading && (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '60px 0' }}>
           <div className="hx-spinner" style={{ marginBottom: 16 }} />
-          <p style={{ color: 'var(--hx-text-secondary)', fontSize: 14 }}>正在运行诊断...</p>
-          <p style={{ color: 'var(--hx-text-tertiary)', fontSize: 12, marginTop: 4 }}>可能需要几秒钟</p>
+          <p style={{ color: 'var(--hx-text-secondary)', fontSize: 14 }}>{t('doctor_extra.running_msg')}</p>
+          <p style={{ color: 'var(--hx-text-tertiary)', fontSize: 12, marginTop: 4 }}>{t('doctor_extra.wait_msg')}</p>
         </div>
       )}
 
@@ -71,25 +74,25 @@ export default function Doctor() {
           <div className="hx-card" style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <CheckCircle size={18} style={{ color: 'var(--hx-green)' }} />
-              <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--hx-text-primary)' }}>{okCount} <span style={{ fontWeight: 400, color: 'var(--hx-text-tertiary)' }}>正常</span></span>
+              <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--hx-text-primary)' }}>{okCount} <span style={{ fontWeight: 400, color: 'var(--hx-text-tertiary)' }}>{t('doctor_extra.status_ok')}</span></span>
             </div>
             <div style={{ width: 1, height: 20, background: 'var(--hx-border)' }} />
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <AlertTriangle size={18} style={{ color: '#D97706' }} />
-              <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--hx-text-primary)' }}>{warnCount} <span style={{ fontWeight: 400, color: 'var(--hx-text-tertiary)' }}>警告</span></span>
+              <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--hx-text-primary)' }}>{warnCount} <span style={{ fontWeight: 400, color: 'var(--hx-text-tertiary)' }}>{t('doctor_extra.status_warn')}</span></span>
             </div>
             <div style={{ width: 1, height: 20, background: 'var(--hx-border)' }} />
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <XCircle size={18} style={{ color: '#DC2626' }} />
-              <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--hx-text-primary)' }}>{errorCount} <span style={{ fontWeight: 400, color: 'var(--hx-text-tertiary)' }}>错误</span></span>
+              <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--hx-text-primary)' }}>{errorCount} <span style={{ fontWeight: 400, color: 'var(--hx-text-tertiary)' }}>{t('doctor_extra.status_error')}</span></span>
             </div>
             <div style={{ marginLeft: 'auto' }}>
               {errorCount > 0 ? (
-                <span style={{ padding: '4px 12px', borderRadius: 99, fontSize: 12, fontWeight: 500, background: '#FEF2F2', color: '#DC2626', border: '1px solid #FECACA' }}>发现问题</span>
+                <span style={{ padding: '4px 12px', borderRadius: 99, fontSize: 12, fontWeight: 500, background: '#FEF2F2', color: '#DC2626', border: '1px solid #FECACA' }}>{t('doctor_extra.issues_found')}</span>
               ) : warnCount > 0 ? (
-                <span style={{ padding: '4px 12px', borderRadius: 99, fontSize: 12, fontWeight: 500, background: '#FFFBEB', color: '#D97706', border: '1px solid #FDE68A' }}>有警告</span>
+                <span style={{ padding: '4px 12px', borderRadius: 99, fontSize: 12, fontWeight: 500, background: '#FFFBEB', color: '#D97706', border: '1px solid #FDE68A' }}>{t('doctor_extra.has_warns')}</span>
               ) : (
-                <span style={{ padding: '4px 12px', borderRadius: 99, fontSize: 12, fontWeight: 500, background: '#F0FDF4', color: '#16A34A', border: '1px solid #BBF7D0' }}>全部正常</span>
+                <span style={{ padding: '4px 12px', borderRadius: 99, fontSize: 12, fontWeight: 500, background: '#F0FDF4', color: '#16A34A', border: '1px solid #BBF7D0' }}>{t('doctor_extra.all_ok')}</span>
               )}
             </div>
           </div>
@@ -121,8 +124,8 @@ export default function Doctor() {
       {!results && !loading && !error && (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '60px 0' }}>
           <Stethoscope size={48} style={{ color: 'var(--hx-text-tertiary)', marginBottom: 16 }} />
-          <p style={{ fontSize: 16, fontWeight: 500, color: 'var(--hx-text-secondary)' }}>系统诊断</p>
-          <p style={{ fontSize: 13, color: 'var(--hx-text-tertiary)', marginTop: 4 }}>点击"运行诊断"检查系统状态</p>
+          <p style={{ fontSize: 16, fontWeight: 500, color: 'var(--hx-text-secondary)' }}>{t('doctor_extra.title')}</p>
+          <p style={{ fontSize: 13, color: 'var(--hx-text-tertiary)', marginTop: 4 }}>{t('doctor_extra.hint')}</p>
         </div>
       )}
     </div>

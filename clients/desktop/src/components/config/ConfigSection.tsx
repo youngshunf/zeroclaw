@@ -6,6 +6,8 @@ import NumberField from './fields/NumberField';
 import ToggleField from './fields/ToggleField';
 import SelectField from './fields/SelectField';
 import TagListField from './fields/TagListField';
+import { useLocaleContext } from '@/App';
+import { t_config } from './configTranslations';
 
 interface Props {
   section: SectionDef;
@@ -46,6 +48,7 @@ export default function ConfigSection({
   isFieldMasked,
   visibleFields,
 }: Props) {
+  const { locale } = useLocaleContext();
   const [collapsed, setCollapsed] = useState(section.defaultCollapsed ?? false);
   const sectionPanelId = useMemo(
     () =>
@@ -81,7 +84,7 @@ export default function ConfigSection({
           </span>
         )}
         <span className="ml-auto text-xs text-gray-600">
-          {fields.length} {fields.length === 1 ? 'field' : 'fields'}
+          {fields.length} {fields.length === 1 ? t_config('field', locale) : t_config('fields', locale)}
         </span>
       </button>
 
@@ -101,12 +104,12 @@ export default function ConfigSection({
                   <span>{field.label}</span>
                   {field.sensitive && (
                     <span className="text-[10px] text-yellow-400 bg-yellow-900/30 border border-yellow-800/50 px-1.5 py-0.5 rounded">
-                      sensitive
+                      {t_config('sensitive', locale)}
                     </span>
                   )}
                   {masked && (
                     <span className="text-[10px] text-blue-400 bg-blue-900/30 border border-blue-800/50 px-1.5 py-0.5 rounded">
-                      masked
+                      {t_config('masked', locale)}
                     </span>
                   )}
                 </label>

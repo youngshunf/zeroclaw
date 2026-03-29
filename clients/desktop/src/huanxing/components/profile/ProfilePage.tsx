@@ -7,6 +7,9 @@ import { Camera, Save, ArrowLeft, Check, X } from 'lucide-react';
 import { getHuanxingSession, type HuanxingSession } from '../../config';
 import { uploadAvatar, updateAvatar, updateProfile, getUserProfile } from '../../lib/huanxing-api';
 import AvatarCropDialog from './AvatarCropDialog';
+import { t } from '../../../lib/i18n';
+import { useLocaleContext } from '../../../App';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/Select';
 
 interface UserProfile {
   nickname: string;
@@ -22,6 +25,7 @@ interface UserProfile {
 export default function ProfilePage() {
   const session = getHuanxingSession();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { locale } = useLocaleContext();
 
   const [profile, setProfile] = useState<UserProfile>({
     nickname: session?.user?.nickname || '',
@@ -61,7 +65,7 @@ export default function ProfilePage() {
           }));
         }
       })
-      .catch((err: Error) => console.warn('获取用户资料失败:', err));
+      .catch((err: Error) => console.warn(`${t('profile.fetch_failed')} ${err}`));
   }, []);
 
   // 头像选择
@@ -72,11 +76,11 @@ export default function ProfilePage() {
     if (!file) return;
     // 校验文件类型和大小
     if (!['image/jpeg', 'image/png', 'image/gif', 'image/webp'].includes(file.type)) {
-      showMessage('error', '仅支持 JPG、PNG、GIF、WebP 格式');
+      showMessage('error', t('profile.err_format'));
       return;
     }
     if (file.size > 5 * 1024 * 1024) {
-      showMessage('error', '文件大小不能超过 5MB');
+      showMessage('error', t('profile.err_size'));
       return;
     }
     const reader = new FileReader();
@@ -98,10 +102,10 @@ export default function ProfilePage() {
         setProfile((prev) => ({ ...prev, avatar: url }));
         // 更新 localStorage 中的 session
         updateLocalSession({ avatar: url });
-        showMessage('success', '头像更新成功');
+        showMessage('success', t('profile.avatar_success'));
       }
     } catch (err: any) {
-      showMessage('error', err.message || '头像上传失败');
+      showMessage('error', err.message || t('profile.avatar_failed'));
     } finally {
       setUploading(false);
     }
@@ -129,10 +133,10 @@ export default function ProfilePage() {
       if (field === 'nickname') {
         updateLocalSession({ nickname: editValue });
       }
-      showMessage('success', '保存成功');
+      showMessage('success', t('profile.save_success'));
       setEditField(null);
     } catch (err: any) {
-      showMessage('error', err.message || '保存失败');
+      showMessage('error', err.message || t('profile.save_failed'));
     } finally {
       setSaving(false);
     }
@@ -155,18 +159,18 @@ export default function ProfilePage() {
   };
 
   const genderOptions = [
-    { value: '', label: '未设置' },
-    { value: 'male', label: '男' },
-    { value: 'female', label: '女' },
+    { value: 'none', label: t('profile.not_set') },
+    { value: 'male', label: t('profile.male') },
+    { value: 'female', label: t('profile.female') },
   ];
 
-  const avatarChar = profile.nickname?.charAt(0) || profile.phone?.charAt(0) || '用';
+  const avatarChar = profile.nickname?.charAt(0) || profile.phone?.charAt(0) || t('profile.default_char');
 
   return (
     <div className="hx-profile-page">
       {/* Header */}
       <div className="hx-profile-header">
-        <h2>个人资料</h2>
+        <h2>{t('profile.title')}</h2>
       </div>
 
       {/* Toast */}
@@ -180,7 +184,7 @@ export default function ProfilePage() {
       <div className="hx-profile-avatar-section">
         <div className="hx-profile-avatar-wrap" onClick={handleAvatarClick}>
           {profile.avatar ? (
-            <img className="hx-profile-avatar" src={profile.avatar} alt="头像" />
+            <img className="hx-profile-avatar" src={profile.avatar} alt={t('profile.avatar_alt')} />
           ) : (
             <div className="hx-profile-avatar hx-profile-avatar-placeholder">
               {avatarChar}
@@ -188,7 +192,7 @@ export default function ProfilePage() {
           )}
           <div className="hx-profile-avatar-overlay">
             <Camera size={20} />
-            <span>{uploading ? '上传中...' : '更换头像'}</span>
+            <span>{uploading ? t('profile.uploading') : t('profile.change_avatar')}</span>
           </div>
         </div>
         <input
@@ -204,7 +208,7 @@ export default function ProfilePage() {
       <div className="hx-profile-fields">
         {/* 昵称 */}
         <ProfileField
-          label="昵称"
+          label={t('profile.nickname')}
           value={profile.nickname}
           field="nickname"
           editField={editField}
@@ -214,32 +218,37 @@ export default function ProfilePage() {
           onSave={saveField}
           onCancel={cancelEdit}
           onChange={setEditValue}
-          placeholder="设置你的昵称"
+          placeholder={t('profile.nickname_pl')}
         />
 
         {/* 手机号 */}
         <div className="hx-profile-field">
-          <label>手机号</label>
+          <label>{t('profile.phone')}</label>
           <div className="hx-profile-field-value">
-            <span>{profile.phone || '未绑定'}</span>
+            <span>{profile.phone || t('profile.unbound')}</span>
           </div>
         </div>
 
         {/* 性别 */}
         <div className="hx-profile-field">
-          <label>性别</label>
+          <label>{t('profile.gender')}</label>
           <div className="hx-profile-field-value">
             {editField === 'gender' ? (
-              <div className="hx-profile-field-edit">
-                <select
-                  className="hx-profile-select"
-                  value={editValue}
-                  onChange={(e) => setEditValue(e.target.value)}
-                >
-                  {genderOptions.map((opt) => (
-                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                  ))}
-                </select>
+              <div className="hx-profile-field-edit" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <div style={{ flex: 1, minWidth: 120 }}>
+                  <Select value={editValue || 'none'} onValueChange={(val: string) => setEditValue(val === 'none' ? '' : val)}>
+                    <SelectTrigger className="hx-profile-select w-full" style={{ minWidth: 120 }}>
+                      <SelectValue placeholder={t('profile.not_set')} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {genderOptions.map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
                 <button className="hx-profile-field-btn" onClick={() => saveField('gender')} disabled={saving}>
                   <Check size={14} />
                 </button>
@@ -252,7 +261,7 @@ export default function ProfilePage() {
                 className="hx-profile-field-editable"
                 onClick={() => startEdit('gender', profile.gender)}
               >
-                {genderOptions.find((o) => o.value === profile.gender)?.label || '未设置'}
+                {genderOptions.find((o) => o.value === profile.gender)?.label || t('profile.not_set')}
               </span>
             )}
           </div>
@@ -260,7 +269,7 @@ export default function ProfilePage() {
 
         {/* 生日 */}
         <div className="hx-profile-field">
-          <label>生日</label>
+          <label>{t('profile.birthday')}</label>
           <div className="hx-profile-field-value">
             {editField === 'birthday' ? (
               <div className="hx-profile-field-edit">
@@ -282,7 +291,7 @@ export default function ProfilePage() {
                 className="hx-profile-field-editable"
                 onClick={() => startEdit('birthday', profile.birthday)}
               >
-                {profile.birthday || '未设置'}
+                {profile.birthday || t('profile.not_set')}
               </span>
             )}
           </div>
@@ -290,7 +299,7 @@ export default function ProfilePage() {
 
         {/* 个人简介 */}
         <ProfileField
-          label="个人简介"
+          label={t('profile.bio')}
           value={profile.bio}
           field="bio"
           editField={editField}
@@ -300,13 +309,13 @@ export default function ProfilePage() {
           onSave={saveField}
           onCancel={cancelEdit}
           onChange={setEditValue}
-          placeholder="介绍一下自己"
+          placeholder={t('profile.bio_pl')}
           multiline
         />
 
         {/* UUID */}
         <div className="hx-profile-field">
-          <label>唤星 ID</label>
+          <label>{t('profile.uuid')}</label>
           <div className="hx-profile-field-value">
             <span className="hx-profile-field-mono">{profile.uuid || '-'}</span>
           </div>
@@ -385,7 +394,7 @@ function ProfileField({
             className="hx-profile-field-editable"
             onClick={() => onStartEdit(field, value)}
           >
-            {value || placeholder || '未设置'}
+            {value || placeholder || t('profile.not_set')}
           </span>
         )}
       </div>

@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { DollarSign, TrendingUp, Hash, Layers } from 'lucide-react';
 import type { CostSummary } from '@/types/api';
 import { getCost } from '@/lib/api';
+import { t } from '@/lib/i18n';
+import { useLocaleContext } from '@/App';
 
 function formatCNY(value: number): string {
   return `¥${value.toFixed(4)}`;
@@ -11,6 +13,7 @@ export default function Cost() {
   const [cost, setCost] = useState<CostSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const { locale } = useLocaleContext();
 
   useEffect(() => {
     getCost()
@@ -20,7 +23,7 @@ export default function Cost() {
   }, []);
 
   if (error) {
-    return <div className="hx-error-card"><h2>加载失败</h2><p>{error}</p></div>;
+    return <div className="hx-error-card"><h2>{t('tools.load_failed')}</h2><p>{error}</p></div>;
   }
   if (loading || !cost) {
     return <div className="hx-loading-center"><div className="hx-spinner" /></div>;
@@ -33,19 +36,19 @@ export default function Cost() {
       {/* Summary Cards */}
       <div className="hx-metrics-grid">
         <div className="hx-metric-card">
-          <div className="hx-metric-head"><DollarSign /><span>本次会话</span></div>
+          <div className="hx-metric-head"><DollarSign /><span>{t('cost_extra.session')}</span></div>
           <div className="hx-metric-value">{formatCNY(cost.session_cost_usd)}</div>
         </div>
         <div className="hx-metric-card">
-          <div className="hx-metric-head"><TrendingUp /><span>今日费用</span></div>
+          <div className="hx-metric-head"><TrendingUp /><span>{t('cost_extra.daily')}</span></div>
           <div className="hx-metric-value">{formatCNY(cost.daily_cost_usd)}</div>
         </div>
         <div className="hx-metric-card">
-          <div className="hx-metric-head"><Layers /><span>本月费用</span></div>
+          <div className="hx-metric-head"><Layers /><span>{t('cost_extra.monthly')}</span></div>
           <div className="hx-metric-value">{formatCNY(cost.monthly_cost_usd)}</div>
         </div>
         <div className="hx-metric-card">
-          <div className="hx-metric-head"><Hash /><span>总请求数</span></div>
+          <div className="hx-metric-head"><Hash /><span>{t('cost_extra.requests')}</span></div>
           <div className="hx-metric-value">{cost.request_count.toLocaleString()}</div>
         </div>
       </div>
@@ -53,19 +56,19 @@ export default function Cost() {
       {/* Token Statistics */}
       <div className="hx-card">
         <h3 style={{ fontSize: 15, fontWeight: 600, color: 'var(--hx-text-primary)', marginBottom: 16 }}>
-          Token 统计
+          {t('cost_extra.token_stats')}
         </h3>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
           <div className="hx-stat-pill">
-            <span>总 Token 数</span>
+            <span>{t('cost_extra.total_tokens')}</span>
             <strong>{cost.total_tokens.toLocaleString()}</strong>
           </div>
           <div className="hx-stat-pill">
-            <span>平均 Token/请求</span>
+            <span>{t('cost_extra.avg_tokens')}</span>
             <strong>{cost.request_count > 0 ? Math.round(cost.total_tokens / cost.request_count).toLocaleString() : '0'}</strong>
           </div>
           <div className="hx-stat-pill">
-            <span>每千 Token 费用</span>
+            <span>{t('cost_extra.cost_per_1k')}</span>
             <strong>{cost.total_tokens > 0 ? formatCNY((cost.monthly_cost_usd / cost.total_tokens) * 1000) : '¥0.0000'}</strong>
           </div>
         </div>
@@ -74,22 +77,22 @@ export default function Cost() {
       {/* Model Breakdown */}
       <div className="hx-card" style={{ padding: 0, overflow: 'hidden' }}>
         <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--hx-border)' }}>
-          <h3 style={{ fontSize: 15, fontWeight: 600, color: 'var(--hx-text-primary)' }}>模型明细</h3>
+          <h3 style={{ fontSize: 15, fontWeight: 600, color: 'var(--hx-text-primary)' }}>{t('cost_extra.model_breakdown')}</h3>
         </div>
         {models.length === 0 ? (
           <div style={{ padding: 32, textAlign: 'center', color: 'var(--hx-text-tertiary)', fontSize: 13 }}>
-            暂无模型数据
+            {t('cost_extra.no_data')}
           </div>
         ) : (
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid var(--hx-border)' }}>
-                  <th style={{ textAlign: 'left', padding: '10px 20px', fontWeight: 500, color: 'var(--hx-text-tertiary)' }}>模型</th>
-                  <th style={{ textAlign: 'right', padding: '10px 20px', fontWeight: 500, color: 'var(--hx-text-tertiary)' }}>费用</th>
-                  <th style={{ textAlign: 'right', padding: '10px 20px', fontWeight: 500, color: 'var(--hx-text-tertiary)' }}>Token</th>
-                  <th style={{ textAlign: 'right', padding: '10px 20px', fontWeight: 500, color: 'var(--hx-text-tertiary)' }}>请求</th>
-                  <th style={{ textAlign: 'left', padding: '10px 20px', fontWeight: 500, color: 'var(--hx-text-tertiary)' }}>占比</th>
+                  <th style={{ textAlign: 'left', padding: '10px 20px', fontWeight: 500, color: 'var(--hx-text-tertiary)' }}>{t('cost_extra.th_model')}</th>
+                  <th style={{ textAlign: 'right', padding: '10px 20px', fontWeight: 500, color: 'var(--hx-text-tertiary)' }}>{t('cost_extra.th_cost')}</th>
+                  <th style={{ textAlign: 'right', padding: '10px 20px', fontWeight: 500, color: 'var(--hx-text-tertiary)' }}>{t('cost_extra.th_tokens')}</th>
+                  <th style={{ textAlign: 'right', padding: '10px 20px', fontWeight: 500, color: 'var(--hx-text-tertiary)' }}>{t('cost_extra.th_requests')}</th>
+                  <th style={{ textAlign: 'left', padding: '10px 20px', fontWeight: 500, color: 'var(--hx-text-tertiary)' }}>{t('cost_extra.th_share')}</th>
                 </tr>
               </thead>
               <tbody>

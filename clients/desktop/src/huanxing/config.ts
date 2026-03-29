@@ -44,6 +44,7 @@ export interface HuanxingLoginData {
   refresh_token: string;
   refresh_token_expire_time: string;
   llm_token: string;
+  agent_key: string;
   gateway_token: string;
   is_new_user: boolean;
   user: {
@@ -64,6 +65,7 @@ export interface HuanxingSession {
   refreshToken: string;
   refreshTokenExpireTime: string;  // ISO datetime
   llmToken: string;
+  agentKey: string;
   gatewayToken: string;
   user: HuanxingLoginData['user'];
   isNewUser: boolean;
@@ -80,6 +82,7 @@ export function saveHuanxingSession(data: HuanxingLoginData): HuanxingSession {
     refreshToken: data.refresh_token,
     refreshTokenExpireTime: data.refresh_token_expire_time,
     llmToken: data.llm_token,
+    agentKey: data.agent_key,
     gatewayToken: data.gateway_token,
     user: data.user,
     isNewUser: data.is_new_user,

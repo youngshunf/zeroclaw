@@ -11,7 +11,7 @@ import React from "react";
 import { useState, useEffect, useCallback, useRef } from "react";
 import starSvg from "../assets/huanxing-star.svg";
 import { saveHuanxingSession, type HuanxingLoginData } from "../config";
-import { autoOnboard } from "../onboard";
+import { autoOnboard, registerHasnIdentity, registerHasnAgent, connectHasn } from "../onboard";
 import { sendVerifyCode, phoneLogin } from "../lib/huanxing-api";
 import { startTokenRefresh } from "../lib/token-refresh";
 
@@ -252,22 +252,22 @@ function playSupernova() {
     const ctx = new AudioContext();
     const now = ctx.currentTime;
 
-    // 低频冲击 boom：瞬间爆发，缓慢衰减
+    // 低频冲击 boom：瞬间爆发，快速衰减
     const boom = ctx.createOscillator();
     const boomGain = ctx.createGain();
     boom.type = "sine";
     boom.frequency.setValueAtTime(80, now);
-    boom.frequency.exponentialRampToValueAtTime(20, now + 2.5);
+    boom.frequency.exponentialRampToValueAtTime(20, now + 1.5);
     boomGain.gain.setValueAtTime(0, now);
     boomGain.gain.linearRampToValueAtTime(1.0, now + 0.04);
-    boomGain.gain.exponentialRampToValueAtTime(0.001, now + 2.5);
+    boomGain.gain.exponentialRampToValueAtTime(0.001, now + 1.5);
     boom.connect(boomGain);
     boomGain.connect(ctx.destination);
     boom.start(now);
-    boom.stop(now + 2.5);
+    boom.stop(now + 1.5);
 
     // 低频噪声体：给 boom 加厚度
-    const bufSize = ctx.sampleRate * 3;
+    const bufSize = ctx.sampleRate * 2;
     const noiseBuf = ctx.createBuffer(1, bufSize, ctx.sampleRate);
     const nd = noiseBuf.getChannelData(0);
     for (let i = 0; i < bufSize; i++) nd[i] = Math.random() * 2 - 1;
@@ -276,18 +276,18 @@ function playSupernova() {
     const bodyFilter = ctx.createBiquadFilter();
     bodyFilter.type = "lowpass";
     bodyFilter.frequency.setValueAtTime(200, now);
-    bodyFilter.frequency.exponentialRampToValueAtTime(40, now + 2.5);
+    bodyFilter.frequency.exponentialRampToValueAtTime(40, now + 1.5);
     const bodyGain = ctx.createGain();
     bodyGain.gain.setValueAtTime(0, now);
     bodyGain.gain.linearRampToValueAtTime(0.6, now + 0.05);
-    bodyGain.gain.exponentialRampToValueAtTime(0.001, now + 2.5);
+    bodyGain.gain.exponentialRampToValueAtTime(0.001, now + 1.5);
     noiseBody.connect(bodyFilter);
     bodyFilter.connect(bodyGain);
     bodyGain.connect(ctx.destination);
     noiseBody.start(now);
 
-    // 持续余震 rumble：贯穿整个 5s，模拟持续震动
-    const rumbleBufSize = ctx.sampleRate * 5.5;
+    // 持续余震 rumble：贯穿整个 3s
+    const rumbleBufSize = ctx.sampleRate * 3.5;
     const rumbleBuf = ctx.createBuffer(1, rumbleBufSize, ctx.sampleRate);
     const rd = rumbleBuf.getChannelData(0);
     for (let i = 0; i < rumbleBufSize; i++) rd[i] = Math.random() * 2 - 1;
@@ -296,42 +296,45 @@ function playSupernova() {
     const rumbleFilter = ctx.createBiquadFilter();
     rumbleFilter.type = "lowpass";
     rumbleFilter.frequency.setValueAtTime(120, now);
-    rumbleFilter.frequency.exponentialRampToValueAtTime(30, now + 5.0);
+    rumbleFilter.frequency.exponentialRampToValueAtTime(30, now + 3.0);
     const rumbleGain = ctx.createGain();
     rumbleGain.gain.setValueAtTime(0, now);
-    rumbleGain.gain.linearRampToValueAtTime(0.4, now + 0.3);   // 快速建立
-    rumbleGain.gain.setValueAtTime(0.35, now + 2.0);           // 中段保持
-    rumbleGain.gain.linearRampToValueAtTime(0.2, now + 3.5);   // 缓慢减弱
-    rumbleGain.gain.exponentialRampToValueAtTime(0.001, now + 5.0); // 结尾消失
+    rumbleGain.gain.linearRampToValueAtTime(0.35, now + 0.2);
+    rumbleGain.gain.setValueAtTime(0.3, now + 1.0);
+    rumbleGain.gain.exponentialRampToValueAtTime(0.001, now + 3.0);
     rumbleNoise.connect(rumbleFilter);
     rumbleFilter.connect(rumbleGain);
     rumbleGain.connect(ctx.destination);
     rumbleNoise.start(now);
 
-    // 周期性脉冲：模拟持续爆炸的节奏感（每 0.8s 一次小 boom）
-    for (let i = 1; i <= 4; i++) {
-      const pulseTime = now + i * 0.9;
+    // 两次脉冲（比原来少）
+    for (let i = 1; i <= 2; i++) {
+      const pulseTime = now + i * 0.6;
       const pulse = ctx.createOscillator();
       const pulseGain = ctx.createGain();
       pulse.type = "sine";
-      pulse.frequency.setValueAtTime(55 - i * 5, pulseTime);
-      pulse.frequency.exponentialRampToValueAtTime(15, pulseTime + 0.6);
+      pulse.frequency.setValueAtTime(55 - i * 8, pulseTime);
+      pulse.frequency.exponentialRampToValueAtTime(15, pulseTime + 0.4);
       pulseGain.gain.setValueAtTime(0, pulseTime);
-      pulseGain.gain.linearRampToValueAtTime(0.35 - i * 0.05, pulseTime + 0.03);
-      pulseGain.gain.exponentialRampToValueAtTime(0.001, pulseTime + 0.6);
+      pulseGain.gain.linearRampToValueAtTime(0.3 - i * 0.08, pulseTime + 0.03);
+      pulseGain.gain.exponentialRampToValueAtTime(0.001, pulseTime + 0.4);
       pulse.connect(pulseGain);
       pulseGain.connect(ctx.destination);
       pulse.start(pulseTime);
-      pulse.stop(pulseTime + 0.6);
+      pulse.stop(pulseTime + 0.4);
     }
 
-    setTimeout(() => ctx.close(), 6000);
+    setTimeout(() => ctx.close(), 4000);
   } catch {
     // 静默失败
   }
 }
 
 // ─── 超新星爆炸 Canvas ───────────────────────────────────────────────
+// 新流程：
+//   Phase 1: 爆炸扩散 (0 ~ EXPLOSION_END ≈ 2s) — 粒子从中心飞射并停留
+//   Phase 2: onDone 回调 → 登录页开始淡入，粒子在画面上闪烁停留
+//   Phase 3: 粒子开始慢慢消融 (PARTICLE_FADE_MS ≈ 1.5s)，canvas 最终移除
 interface SupernovaProps {
   onDone: () => void;
 }
@@ -355,8 +358,10 @@ function SupernovaCanvas({ onDone }: SupernovaProps) {
 
     playSupernova();
 
-    const DURATION = 5000; // 5 秒
-    const STOP_EMIT = 4000; // 4s 后停止喷射，留 1s 让最后一批粒子淡出
+    // ── 时间节点 ──
+    const EXPLOSION_END = 2000;     // 2s 爆炸扩散阶段
+    const STOP_EMIT     = 1600;     // 1.6s 后停止喷射新粒子
+    const PARTICLE_FADE_MS = 1800;  // 粒子消融持续 1.8s
 
     const COLORS = [
       "#ffffff", "#ffe066", "#ffd700",
@@ -364,80 +369,73 @@ function SupernovaCanvas({ onDone }: SupernovaProps) {
       "#f472b6", "#fb923c", "#a5f3fc",
     ];
 
-    // ── 粒子：持续喷射，每个粒子有自己的生命周期 ──
+    // ── 粒子定义 ──
     interface Particle {
       x: number; y: number;
       vx: number; vy: number;
       r: number;
       alpha: number;
       color: string;
-      spawnTime: number; // 出生时刻 ms
-      lifespan: number;  // 寿命 ms（飞行 + 停留 + 淡出）
-      travelMs: number;  // 飞行时间 ms，之后停在原地
+      spawnTime: number;
+      travelMs: number;   // 飞行时间，之后停在原地
+      settled: boolean;    // 是否已到达目的地
     }
 
     const maxDim = Math.max(canvas.width, canvas.height);
     const particles: Particle[] = [];
 
-    // 预生成初始一批（爆炸瞬间）
     function spawnBurst(spawnTime: number, count: number) {
       for (let i = 0; i < count; i++) {
         const angle = Math.random() * Math.PI * 2;
-        const dist = maxDim * (0.25 + Math.random() * 0.7); // 目标距离
-        const travelMs = 400 + Math.random() * 800;          // 0.4~1.2s 飞到位
-        const speed = dist / (travelMs / 16.67);             // px/帧
+        const dist = maxDim * (0.2 + Math.random() * 0.65);
+        const travelMs = 300 + Math.random() * 600;           // 更快飞到位
+        const speed = dist / (travelMs / 16.67);
         particles.push({
           x: cx, y: cy,
           vx: Math.cos(angle) * speed,
           vy: Math.sin(angle) * speed,
-          r: 0.8 + Math.random() * 2.8,
+          r: 0.8 + Math.random() * 2.5,
           alpha: 1.0,
           color: COLORS[Math.floor(Math.random() * COLORS.length)],
           spawnTime,
-          lifespan: travelMs + 800 + Math.random() * 600, // 飞行 + 停留~1s + 淡出
           travelMs,
+          settled: false,
         });
       }
     }
 
-    spawnBurst(0, 180); // 初始爆炸一大批
+    spawnBurst(0, 200); // 初始爆炸大批
 
-    // ── 冲击波环：循环扩散 ──
-    interface Ring { r: number; speed: number; maxR: number; alpha: number; width: number; color: string; interval: number; lastSpawn: number; }
+    // ── 冲击波环 ──
+    interface Ring { speed: number; maxR: number; width: number; color: string; interval: number; lastSpawn: number; }
     const ringDefs: Ring[] = [
-      { r: -1, speed: 4.5, maxR: maxDim * 0.85, alpha: 0, width: 3, color: "180,140,255", interval: 900,  lastSpawn: -999 },
-      { r: -1, speed: 3.5, maxR: maxDim * 0.7,  alpha: 0, width: 2, color: "103,232,249", interval: 1200, lastSpawn: -400 },
-      { r: -1, speed: 2.5, maxR: maxDim * 0.55, alpha: 0, width: 1, color: "255,224,102", interval: 1500, lastSpawn: -800 },
+      { speed: 6, maxR: maxDim * 0.85, width: 3, color: "180,140,255", interval: 600,  lastSpawn: -999 },
+      { speed: 5, maxR: maxDim * 0.7,  width: 2, color: "103,232,249", interval: 800,  lastSpawn: -300 },
+      { speed: 4, maxR: maxDim * 0.55, width: 1, color: "255,224,102", interval: 1000, lastSpawn: -600 },
     ];
-    // 每种环维护一个活跃实例列表
     interface RingInstance { r: number; alpha: number; defIdx: number; }
     const ringInstances: RingInstance[] = [];
 
     let startTime: number | null = null;
     let lastEmit = 0;
-    let fadeOutStart: number | null = null; // onDone 触发时记录，用于同步淡出光环
+    let doneFired = false;
+    let fadeStartTime: number | null = null; // 粒子开始消融的时刻
 
     const draw = (ts: number) => {
       if (!startTime) startTime = ts;
       const elapsed = ts - startTime;
-      const t = Math.min(elapsed / DURATION, 1);
 
-      // fade 系数：onDone 触发后 700ms 内从 1 降到 0
-      const fadeAlpha = fadeOutStart !== null
-        ? Math.max(0, 1 - (ts - fadeOutStart) / 700)
-        : 1;
-
-      // ── 持续喷射：每 150ms 喷一批（慢一些）──
-      if (elapsed < STOP_EMIT && elapsed - lastEmit > 150) {
-        spawnBurst(elapsed, 30 + Math.floor(Math.random() * 9));
+      // ── 喷射阶段 ──
+      if (elapsed < STOP_EMIT && elapsed - lastEmit > 120) {
+        spawnBurst(elapsed, 25 + Math.floor(Math.random() * 10));
         lastEmit = elapsed;
       }
 
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      // ── 核心闪光（前 0.5s）──
-      if (elapsed < 500) {
-        const ft = elapsed / 500;
+      // ── 核心闪光（前 0.4s）──
+      if (elapsed < 400) {
+        const ft = elapsed / 400;
         const flashAlpha = ft < 0.15 ? ft / 0.15 : 1 - (ft - 0.15) / 0.85;
         const flashR = 10 + ft * 200;
         const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, flashR);
@@ -448,22 +446,20 @@ function SupernovaCanvas({ onDone }: SupernovaProps) {
         ctx.beginPath();
         ctx.arc(cx, cy, flashR, 0, Math.PI * 2);
         ctx.fill();
-        if (elapsed < 80) {
-          ctx.fillStyle = `rgba(255,255,255,${(1 - elapsed / 80) * 0.85})`;
+        if (elapsed < 60) {
+          ctx.fillStyle = `rgba(255,255,255,${(1 - elapsed / 60) * 0.85})`;
           ctx.fillRect(0, 0, canvas.width, canvas.height);
         }
       }
 
-      // ── 冲击波环循环 ──
+      // ── 冲击波环 ──
       for (let i = 0; i < ringDefs.length; i++) {
         const def = ringDefs[i];
-        // 按 interval 生成新实例（停止喷射后不再生成）
         if (elapsed < STOP_EMIT && elapsed - def.lastSpawn > def.interval) {
           ringInstances.push({ r: 2, alpha: 1.0, defIdx: i });
           def.lastSpawn = elapsed;
         }
       }
-      // 更新并绘制所有活跃实例
       for (let i = ringInstances.length - 1; i >= 0; i--) {
         const inst = ringInstances[i];
         const def = ringDefs[inst.defIdx];
@@ -475,35 +471,45 @@ function SupernovaCanvas({ onDone }: SupernovaProps) {
         }
         ctx.beginPath();
         ctx.arc(cx, cy, inst.r, 0, Math.PI * 2);
-        ctx.strokeStyle = `rgba(${def.color},${inst.alpha * 0.35 * fadeAlpha})`;
+        ctx.strokeStyle = `rgba(${def.color},${inst.alpha * 0.35})`;
         ctx.lineWidth = def.width * (0.3 + inst.alpha * 0.7);
         ctx.stroke();
       }
 
-      // ── 粒子 ──
+      // ── 粒子消融系数 ──
+      // 爆炸结束后开始消融，消融进度 0→1
+      let globalFade = 1.0;
+      if (fadeStartTime !== null) {
+        globalFade = Math.max(0, 1 - (ts - fadeStartTime) / PARTICLE_FADE_MS);
+      }
+
+      // ── 绘制粒子 ──
+      let anyAlive = false;
       for (const p of particles) {
         const age = elapsed - p.spawnTime;
         if (age < 0) continue;
-        if (age > p.lifespan) continue;
 
         // 飞行阶段
-        if (age < p.travelMs) {
+        if (!p.settled && age < p.travelMs) {
           p.x += p.vx;
           p.y += p.vy;
-        }
-        // alpha：飞行+停留期间保持1，最后 600ms 淡出
-        const fadeStart = p.lifespan - 600;
-        if (age < fadeStart) {
-          p.alpha = 1.0;
         } else {
-          p.alpha = Math.max(0, 1 - (age - fadeStart) / 600);
+          p.settled = true;
         }
-        if (p.alpha <= 0) continue;
+
+        // 飞行过程中淡入，到达后保持1.0
+        const arrivalAlpha = age < p.travelMs * 0.3
+          ? age / (p.travelMs * 0.3)
+          : 1.0;
 
         // 停留时轻微闪烁
-        const twinkle = age >= p.travelMs
-          ? 0.65 + 0.35 * Math.sin(elapsed * 0.004 + p.spawnTime * 0.01)
+        const twinkle = p.settled
+          ? 0.6 + 0.4 * Math.sin(elapsed * 0.005 + p.spawnTime * 0.013)
           : 1.0;
+
+        p.alpha = arrivalAlpha * twinkle * globalFade;
+        if (p.alpha <= 0.005) continue;
+        anyAlive = true;
 
         const hex = p.color;
         const r = parseInt(hex.slice(1, 3), 16);
@@ -512,44 +518,48 @@ function SupernovaCanvas({ onDone }: SupernovaProps) {
 
         ctx.beginPath();
         ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(${r},${g},${b},${p.alpha * twinkle})`;
+        ctx.fillStyle = `rgba(${r},${g},${b},${p.alpha})`;
         ctx.shadowBlur = 6;
         ctx.shadowColor = `rgba(${r},${g},${b},${p.alpha * 0.6})`;
         ctx.fill();
         ctx.shadowBlur = 0;
       }
 
-      // ── 中心余辉 ──
-      const glowAlpha = Math.max(0, 0.35 * (1 - t * 1.2));
-      if (glowAlpha > 0.01) {
-        const glowR = 50 + t * 60;
-        const glow = ctx.createRadialGradient(cx, cy, 0, cx, cy, glowR);
-        glow.addColorStop(0, `rgba(200,160,255,${glowAlpha})`);
-        glow.addColorStop(1, `rgba(124,58,237,0)`);
-        ctx.fillStyle = glow;
-        ctx.beginPath();
-        ctx.arc(cx, cy, glowR, 0, Math.PI * 2);
-        ctx.fill();
+      // ── 中心余辉（仅爆炸阶段）──
+      if (elapsed < EXPLOSION_END) {
+        const t = elapsed / EXPLOSION_END;
+        const glowAlpha = Math.max(0, 0.35 * (1 - t * 1.5));
+        if (glowAlpha > 0.01) {
+          const glowR = 50 + t * 60;
+          const glow = ctx.createRadialGradient(cx, cy, 0, cx, cy, glowR);
+          glow.addColorStop(0, `rgba(200,160,255,${glowAlpha})`);
+          glow.addColorStop(1, `rgba(124,58,237,0)`);
+          ctx.fillStyle = glow;
+          ctx.beginPath();
+          ctx.arc(cx, cy, glowR, 0, Math.PI * 2);
+          ctx.fill();
+        }
       }
 
-      if (t < 1) {
-        animRef.current = requestAnimationFrame(draw);
-      } else {
-        // 5s 到了：通知父组件（登录页开始淡入），同时记录 fadeOutStart 继续跑动画
-        if (fadeOutStart === null) {
-          fadeOutStart = ts;
-          onDoneRef.current();
-        }
-        // 继续跑 700ms 让光环同步淡出
-        if (ts - fadeOutStart < 700) {
-          animRef.current = requestAnimationFrame(draw);
-        }
+      // ── 状态转移 ──
+      if (elapsed >= EXPLOSION_END && !doneFired) {
+        // 爆炸结束 → 通知父组件淡入登录内容
+        doneFired = true;
+        onDoneRef.current();
+        // 延迟 300ms 后开始让粒子消融，给登录页淡入一点缓冲
+        setTimeout(() => { fadeStartTime = performance.now(); }, 300);
       }
+
+      // 当还有活跃粒子或消融还没开始时，继续动画
+      if (anyAlive || fadeStartTime === null) {
+        animRef.current = requestAnimationFrame(draw);
+      }
+      // 否则所有粒子都消失了，canvas 自然停止（父组件会移除它）
     };
 
     animRef.current = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(animRef.current);
-  }, []); // 空依赖，只运行一次
+  }, []);
 
   return (
     <canvas
@@ -761,6 +771,8 @@ export default function Login({ onLoginSuccess }: LoginProps) {
     { id: "config", label: "创建 AI 引擎配置", status: "pending" },
     { id: "agent", label: "初始化默认助手", status: "pending" },
     { id: "engine", label: "启动 AI 引擎", status: "pending" },
+    { id: "hasn", label: "注册 HASN 身份", status: "pending" },
+    { id: "hasn_connect", label: "连接 HASN 网络", status: "pending" },
     { id: "ready", label: "一切就绪", status: "pending" },
   ]);
 
@@ -853,7 +865,49 @@ export default function Login({ onLoginSuccess }: LoginProps) {
         updateStep("engine", "done");
       }
 
-      // ── Step 5: 就绪 ──
+      // ── Step 5: 注册 HASN 身份 ──
+      updateStep("hasn", "running");
+      let hasnIdentity;
+      try {
+        hasnIdentity = await registerHasnIdentity(session);
+        console.log("[huanxing] HASN 身份:", hasnIdentity);
+
+        // 同时注册桌面端默认 Agent 的 HASN 身份
+        try {
+          const agentId = await registerHasnAgent(
+            session,
+            "default",
+            session.user.nickname ? `${session.user.nickname}的星灵` : "唤星AI助手",
+            "local",
+          );
+          console.log("[huanxing] 默认 Agent HASN 身份:", agentId);
+        } catch (agentErr) {
+          console.warn("[huanxing] 默认 Agent HASN 注册失败（非致命）:", agentErr);
+        }
+
+        updateStep("hasn", "done");
+      } catch (err) {
+        console.warn("[huanxing] HASN 注册失败（非致命）:", err);
+        updateStep("hasn", "error", err instanceof Error ? err.message : "HASN 注册失败");
+        // HASN 注册失败不阻塞登录
+        hasnIdentity = null;
+      }
+
+      // ── Step 6: 连接 HASN 网络 ──
+      if (hasnIdentity) {
+        updateStep("hasn_connect", "running");
+        try {
+          await connectHasn(session, hasnIdentity);
+          updateStep("hasn_connect", "done");
+        } catch (err) {
+          console.warn("[huanxing] HASN 连接失败（非致命）:", err);
+          updateStep("hasn_connect", "error", err instanceof Error ? err.message : "HASN 连接失败");
+        }
+      } else {
+        updateStep("hasn_connect", "done"); // 跳过
+      }
+
+      // ── Step 7: 就绪 ──
       updateStep("ready", "running");
       await new Promise((r) => setTimeout(r, 400));
       updateStep("ready", "done");
@@ -908,8 +962,8 @@ export default function Login({ onLoginSuccess }: LoginProps) {
       {/* 超新星爆炸入场 */}
       {!supernovaDone && (
         <SupernovaCanvas onDone={() => {
-          setContentVisible(true);   // 提前淡入内容
-          setTimeout(() => setSupernovaDone(true), 800); // 800ms 后移除 canvas
+          setContentVisible(true);   // 登录页开始淡入
+          setTimeout(() => setSupernovaDone(true), 2500); // 等粒子消融完毕再移除 canvas
         }} />
       )}
 
@@ -920,9 +974,9 @@ export default function Login({ onLoginSuccess }: LoginProps) {
         data-tauri-drag-region
       />
 
-      {/* 主内容：爆炸结束后淡入 */}
+      {/* 主内容：爆炸结束后淡入（1s 过渡 + 粒子在上层逐渐消融） */}
       <div
-        className="transition-opacity duration-700"
+        className="transition-opacity duration-1000 ease-out"
         style={{ opacity: contentVisible ? 1 : 0 }}
       >
       {/* 径向背景光 */}

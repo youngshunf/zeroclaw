@@ -1,11 +1,14 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Bot, MessageSquare, Users, Grid2X2, Settings, User, LogOut } from 'lucide-react';
-import logoLight from '../../assets/logo-icon-light.svg';
+import { Bot, MessageSquare, Users, Grid2X2, Settings, User, LogOut, Sun, Moon, Globe, Check, Store } from 'lucide-react';
+import logoDark from '../../assets/logo-v2-dark.svg';
+import logoLight from '../../assets/logo-v2-light.svg';
 import { getHuanxingSession, clearHuanxingSession } from '../../config';
 import { useAuth } from '../../../hooks/useAuth';
+import { LANGUAGE_BUTTON_LABELS, LANGUAGE_SWITCH_ORDER, type Locale } from '../../../lib/i18n';
+import { useLocaleContext } from '../../../App';
 
-export type TabKey = 'agent' | 'hasn' | 'contacts' | 'agents' | 'settings';
+export type TabKey = 'agent' | 'hasn' | 'contacts' | 'agents' | 'market' | 'settings';
 
 interface NavRailProps {
   activeTab: TabKey;
@@ -18,13 +21,49 @@ const tabs: { key: TabKey; icon: typeof Bot; label: string }[] = [
   { key: 'hasn', icon: MessageSquare, label: '消息' },
   { key: 'contacts', icon: Users, label: '通讯录' },
   { key: 'agents', icon: Grid2X2, label: 'Agent 管理' },
+  { key: 'market', icon: Store, label: '应用生态市场' },
 ];
+
+/** Full display names for the language picker */
+const LANGUAGE_NAMES: Record<Locale, string> = {
+  en: 'English',
+  tr: 'Türkçe',
+  'zh-CN': '简体中文',
+  ja: '日本語',
+  ru: 'Русский',
+  fr: 'Français',
+  vi: 'Tiếng Việt',
+  el: 'Ελληνικά',
+};
 
 export default function NavRail({ activeTab, onTabChange, badges = {} }: NavRailProps) {
   const { logout } = useAuth();
   const navigate = useNavigate();
+  const { locale, setAppLocale } = useLocaleContext();
   const [showMenu, setShowMenu] = useState(false);
+  const [showLangMenu, setShowLangMenu] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const langRef = useRef<HTMLDivElement>(null);
+
+  // Theme state
+  const [isDark, setIsDark] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    const saved = localStorage.getItem('huanxing_theme');
+    return saved === 'dark';
+  });
+
+  // Apply theme attribute
+  useEffect(() => {
+    const root = document.querySelector('.hx-app');
+    if (root) {
+      root.setAttribute('data-theme', isDark ? 'dark' : 'light');
+    }
+    localStorage.setItem('huanxing_theme', isDark ? 'dark' : 'light');
+  }, [isDark]);
+
+  const toggleTheme = useCallback(() => {
+    setIsDark(prev => !prev);
+  }, []);
 
   // 从 session 获取用户信息
   const session = getHuanxingSession();
@@ -35,15 +74,18 @@ export default function NavRail({ activeTab, onTabChange, badges = {} }: NavRail
 
   // 点击外部关闭菜单
   useEffect(() => {
-    if (!showMenu) return;
+    if (!showMenu && !showLangMenu) return;
     const handler = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+      if (showMenu && menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setShowMenu(false);
+      }
+      if (showLangMenu && langRef.current && !langRef.current.contains(e.target as Node)) {
+        setShowLangMenu(false);
       }
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
-  }, [showMenu]);
+  }, [showMenu, showLangMenu]);
 
   const handleLogout = () => {
     setShowMenu(false);
@@ -57,11 +99,22 @@ export default function NavRail({ activeTab, onTabChange, badges = {} }: NavRail
     navigate('/profile');
   };
 
+  const handleSelectLanguage = (lang: Locale) => {
+    setAppLocale(lang);
+    setShowLangMenu(false);
+  };
+
   return (
     <nav className="hx-nav-rail">
       {/* Logo */}
       <div className="hx-nav-logo" onClick={() => onTabChange('agent')}>
-        <img src={logoLight} alt="唤星" width="32" height="32" />
+        <img 
+          src={isDark ? logoDark : logoLight} 
+          alt="唤星" 
+          width="36" 
+          height="36" 
+          className="object-cover rounded-[7.5px]" 
+        />
       </div>
 
       <div className="hx-nav-divider" />
@@ -82,6 +135,43 @@ export default function NavRail({ activeTab, onTabChange, badges = {} }: NavRail
       ))}
 
       <div className="hx-nav-spacer" />
+
+      {/* Theme toggle */}
+      <button
+        className="hx-nav-item"
+        onClick={toggleTheme}
+        title={isDark ? '切换亮色模式' : '切换暗色模式'}
+      >
+        {isDark ? <Sun size={20} /> : <Moon size={20} />}
+      </button>
+
+      {/* Language picker */}
+      <div className="hx-nav-avatar-wrap" ref={langRef}>
+        <button
+          className="hx-nav-item hx-nav-lang-btn"
+          onClick={() => setShowLangMenu(!showLangMenu)}
+          title="切换语言"
+        >
+          <Globe size={22} />
+          <span className="hx-nav-lang-label">{LANGUAGE_BUTTON_LABELS[locale] ?? 'EN'}</span>
+        </button>
+
+        {showLangMenu && (
+          <div className="hx-lang-menu">
+            <div className="hx-lang-menu-title">语言 / Language</div>
+            {LANGUAGE_SWITCH_ORDER.map((lang) => (
+              <button
+                key={lang}
+                className={`hx-lang-menu-item${locale === lang ? ' active' : ''}`}
+                onClick={() => handleSelectLanguage(lang)}
+              >
+                <span>{LANGUAGE_NAMES[lang] ?? lang}</span>
+                {locale === lang && <Check size={14} />}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
 
       {/* Settings */}
       <button
