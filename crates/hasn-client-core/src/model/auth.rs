@@ -68,11 +68,14 @@ pub struct LoginUser {
     pub avatar_url: Option<String>,
 }
 
-/// HASN 注册响应
+/// HASN 注册响应（幂等）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HasnRegisterResponse {
     pub human: HasnHumanOut,
-    pub agent: HasnAgentOut,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent: Option<HasnAgentOut>,
+    #[serde(default)]
+    pub already_exists: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -87,7 +90,8 @@ pub struct HasnAgentOut {
     pub hasn_id: String,
     pub star_id: String,
     pub name: String,
-    pub api_key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
 }
 
 /// 客户端注册响应
@@ -121,4 +125,17 @@ pub struct AgentInfo {
     pub created_via: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_time: Option<String>,
+}
+
+/// Agent HASN 注册响应（幂等）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegisterAgentResponse {
+    pub hasn_id: String,
+    pub star_id: String,
+    pub name: String,
+    pub agent_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
+    #[serde(default)]
+    pub already_exists: bool,
 }
