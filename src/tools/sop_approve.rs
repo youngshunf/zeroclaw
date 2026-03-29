@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -13,14 +14,16 @@ pub struct SopApproveTool {
     engine: Arc<Mutex<SopEngine>>,
     audit: Option<Arc<SopAuditLogger>>,
     collector: Option<Arc<SopMetricsCollector>>,
+    workspace_dir: PathBuf,
 }
 
 impl SopApproveTool {
-    pub fn new(engine: Arc<Mutex<SopEngine>>) -> Self {
+    pub fn new(engine: Arc<Mutex<SopEngine>>, workspace_dir: PathBuf) -> Self {
         Self {
             engine,
             audit: None,
             collector: None,
+            workspace_dir,
         }
     }
 
@@ -64,12 +67,15 @@ impl Tool for SopApproveTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing 'run_id' parameter"))?;
 
-        // Lock engine, approve, snapshot run for audit, then drop lock
+        // Lock engine, ensure SOPs loaded for current tenant, approve
+        let ws = crate::tools::get_active_workspace()
+            .unwrap_or_else(|| self.workspace_dir.clone());
         let (result, run_snapshot) = {
             let mut engine = self
                 .engine
                 .lock()
                 .map_err(|e| anyhow::anyhow!("Engine lock poisoned: {e}"))?;
+            engine.ensure_loaded(&ws);
 
             match engine.approve_step(run_id) {
                 Ok(action) => {
@@ -176,7 +182,7 @@ mod tests {
     #[tokio::test]
     async fn approve_waiting_run() {
         let (engine, run_id) = engine_with_run();
-        let tool = SopApproveTool::new(engine);
+        let tool = SopApproveTool::new(engine, PathBuf::from("/tmp"));
         let result = tool.execute(json!({"run_id": run_id})).await.unwrap();
         assert!(result.success);
         assert!(result.output.contains("Approved"));
@@ -186,7 +192,7 @@ mod tests {
     #[tokio::test]
     async fn approve_nonexistent_run() {
         let engine = Arc::new(Mutex::new(SopEngine::new(SopConfig::default())));
-        let tool = SopApproveTool::new(engine);
+        let tool = SopApproveTool::new(engine, PathBuf::from("/tmp"));
         let result = tool
             .execute(json!({"run_id": "nonexistent"}))
             .await
@@ -198,7 +204,7 @@ mod tests {
     #[tokio::test]
     async fn approve_missing_run_id() {
         let engine = Arc::new(Mutex::new(SopEngine::new(SopConfig::default())));
-        let tool = SopApproveTool::new(engine);
+        let tool = SopApproveTool::new(engine, PathBuf::from("/tmp"));
         let result = tool.execute(json!({})).await;
         assert!(result.is_err());
     }
@@ -206,7 +212,7 @@ mod tests {
     #[test]
     fn name_and_schema() {
         let engine = Arc::new(Mutex::new(SopEngine::new(SopConfig::default())));
-        let tool = SopApproveTool::new(engine);
+        let tool = SopApproveTool::new(engine, PathBuf::from("/tmp"));
         assert_eq!(tool.name(), "sop_approve");
         assert!(tool.parameters_schema()["required"].is_array());
     }
@@ -223,7 +229,7 @@ mod tests {
             Arc::from(crate::memory::create_memory(&mem_cfg, tmp.path(), None).unwrap());
         let audit = Arc::new(SopAuditLogger::new(memory.clone()));
 
-        let tool = SopApproveTool::new(engine).with_audit(audit.clone());
+        let tool = SopApproveTool::new(engine, PathBuf::from("/tmp")).with_audit(audit.clone());
         let result = tool.execute(json!({"run_id": &run_id})).await.unwrap();
         assert!(result.success);
 
@@ -257,7 +263,7 @@ mod tests {
             Arc::from(crate::memory::create_memory(&mem_cfg, tmp.path(), None).unwrap());
         let audit = Arc::new(SopAuditLogger::new(memory.clone()));
 
-        let tool = SopApproveTool::new(engine).with_audit(audit.clone());
+        let tool = SopApproveTool::new(engine, PathBuf::from("/tmp")).with_audit(audit.clone());
         let result = tool
             .execute(json!({"run_id": "nonexistent"}))
             .await

@@ -72,6 +72,9 @@ struct WorkspaceOverrides {
     /// [reliability] 节覆盖可靠性配置（fallback_providers / model_fallbacks / api_keys 等）
     #[serde(default)]
     reliability: Option<crate::config::ReliabilityConfig>,
+    /// [sop] 节覆盖 SOP 工作流引擎配置（sops_dir / default_execution_mode 等）
+    #[serde(default)]
+    sop: Option<crate::config::SopConfig>,
     /// Catch-all for unknown sections in config.toml (e.g. [proxy], [composio], [mcp]).
     /// Prevents serde from failing on unrecognized fields.
     #[serde(flatten)]

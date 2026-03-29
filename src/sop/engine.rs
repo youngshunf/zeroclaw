@@ -15,6 +15,11 @@ use super::types::{
 use crate::config::SopConfig;
 
 /// Central SOP orchestrator: loads SOPs, matches triggers, manages run lifecycle.
+///
+/// Supports multi-tenant operation: call `ensure_loaded(workspace_dir)` before
+/// any query or mutation to lazily load/reload SOPs from the active tenant's
+/// workspace. The engine tracks the last loaded workspace and only reloads
+/// when the workspace changes.
 pub struct SopEngine {
     sops: Vec<Sop>,
     active_runs: HashMap<String, SopRun>,
@@ -24,6 +29,9 @@ pub struct SopEngine {
     run_counter: u64,
     /// Cumulative savings from deterministic execution.
     deterministic_savings: DeterministicSavings,
+    /// Last workspace path from which SOPs were loaded.
+    /// Used to detect workspace switches in multi-tenant mode.
+    last_loaded_workspace: Option<PathBuf>,
 }
 
 impl SopEngine {
@@ -36,6 +44,7 @@ impl SopEngine {
             config,
             run_counter: 0,
             deterministic_savings: DeterministicSavings::default(),
+            last_loaded_workspace: None,
         }
     }
 
@@ -46,7 +55,28 @@ impl SopEngine {
             self.config.sops_dir.as_deref(),
             super::parse_execution_mode(&self.config.default_execution_mode),
         );
-        info!("SOP engine loaded {} SOPs", self.sops.len());
+        self.last_loaded_workspace = Some(workspace_dir.to_path_buf());
+        info!(
+            workspace = %workspace_dir.display(),
+            count = self.sops.len(),
+            "SOP engine loaded SOPs"
+        );
+    }
+
+    /// Ensure SOPs are loaded for the given workspace directory.
+    ///
+    /// In multi-tenant mode, each tenant has its own `workspace/sops/` directory.
+    /// This method checks if the workspace has changed since the last load and
+    /// reloads if necessary. For single-tenant (CLI/desktop) use, this is a
+    /// one-time lazy load on first call.
+    pub fn ensure_loaded(&mut self, workspace_dir: &Path) {
+        let need_reload = self
+            .last_loaded_workspace
+            .as_ref()
+            .map_or(true, |prev| prev != workspace_dir);
+        if need_reload {
+            self.reload(workspace_dir);
+        }
     }
 
     /// Return all loaded SOP definitions.
@@ -623,9 +653,12 @@ impl SopEngine {
     // ── Test helpers ──────────────────────────────────────────────
 
     /// Replace loaded SOPs (for testing from other modules).
+    /// Also sets `last_loaded_workspace` to `/tmp` so that `ensure_loaded()`
+    /// won't overwrite the injected SOPs when tests pass `/tmp` as workspace.
     #[cfg(test)]
     pub(crate) fn set_sops_for_test(&mut self, sops: Vec<Sop>) {
         self.sops = sops;
+        self.last_loaded_workspace = Some(PathBuf::from("/tmp"));
     }
 
     // ── Internal helpers ────────────────────────────────────────

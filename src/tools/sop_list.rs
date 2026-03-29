@@ -1,4 +1,5 @@
 use std::fmt::Write;
+use std::path::PathBuf;
 use std::sync::Mutex;
 
 use async_trait::async_trait;
@@ -10,11 +11,12 @@ use crate::sop::SopEngine;
 /// Lists all loaded SOPs with their triggers, priority, step count, and active runs.
 pub struct SopListTool {
     engine: std::sync::Arc<Mutex<SopEngine>>,
+    workspace_dir: PathBuf,
 }
 
 impl SopListTool {
-    pub fn new(engine: std::sync::Arc<Mutex<SopEngine>>) -> Self {
-        Self { engine }
+    pub fn new(engine: std::sync::Arc<Mutex<SopEngine>>, workspace_dir: PathBuf) -> Self {
+        Self { engine, workspace_dir }
     }
 }
 
@@ -44,10 +46,13 @@ impl Tool for SopListTool {
         let filter = args.get("filter").and_then(|v| v.as_str()).unwrap_or("");
         let filter_lower = filter.to_lowercase();
 
-        let engine = self
+        let ws = crate::tools::get_active_workspace()
+            .unwrap_or_else(|| self.workspace_dir.clone());
+        let mut engine = self
             .engine
             .lock()
             .map_err(|e| anyhow::anyhow!("Engine lock poisoned: {e}"))?;
+        engine.ensure_loaded(&ws);
         let sops = engine.sops();
 
         if sops.is_empty() {
@@ -159,7 +164,7 @@ mod tests {
             test_sop("pump-shutdown", SopPriority::Critical),
             test_sop("daily-check", SopPriority::Normal),
         ]);
-        let tool = SopListTool::new(engine);
+        let tool = SopListTool::new(engine, PathBuf::from("/tmp"));
         let result = tool.execute(json!({})).await.unwrap();
         assert!(result.success);
         assert!(result.output.contains("pump-shutdown"));
@@ -170,7 +175,7 @@ mod tests {
     #[tokio::test]
     async fn list_empty() {
         let engine = engine_with_sops(vec![]);
-        let tool = SopListTool::new(engine);
+        let tool = SopListTool::new(engine, PathBuf::from("/tmp"));
         let result = tool.execute(json!({})).await.unwrap();
         assert!(result.success);
         assert!(result.output.contains("No SOPs loaded"));
@@ -182,7 +187,7 @@ mod tests {
             test_sop("pump-shutdown", SopPriority::Critical),
             test_sop("daily-check", SopPriority::Normal),
         ]);
-        let tool = SopListTool::new(engine);
+        let tool = SopListTool::new(engine, PathBuf::from("/tmp"));
         let result = tool.execute(json!({"filter": "pump"})).await.unwrap();
         assert!(result.success);
         assert!(result.output.contains("pump-shutdown"));
@@ -195,7 +200,7 @@ mod tests {
             test_sop("pump-shutdown", SopPriority::Critical),
             test_sop("daily-check", SopPriority::Normal),
         ]);
-        let tool = SopListTool::new(engine);
+        let tool = SopListTool::new(engine, PathBuf::from("/tmp"));
         let result = tool.execute(json!({"filter": "critical"})).await.unwrap();
         assert!(result.success);
         assert!(result.output.contains("pump-shutdown"));
@@ -205,7 +210,7 @@ mod tests {
     #[tokio::test]
     async fn filter_no_match() {
         let engine = engine_with_sops(vec![test_sop("pump-shutdown", SopPriority::Critical)]);
-        let tool = SopListTool::new(engine);
+        let tool = SopListTool::new(engine, PathBuf::from("/tmp"));
         let result = tool
             .execute(json!({"filter": "nonexistent"}))
             .await
@@ -217,7 +222,7 @@ mod tests {
     #[test]
     fn name_and_schema() {
         let engine = engine_with_sops(vec![]);
-        let tool = SopListTool::new(engine);
+        let tool = SopListTool::new(engine, PathBuf::from("/tmp"));
         assert_eq!(tool.name(), "sop_list");
         assert!(tool.parameters_schema()["properties"]["filter"].is_object());
     }

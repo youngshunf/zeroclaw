@@ -1,4 +1,5 @@
 use std::fmt::Write;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -11,13 +12,15 @@ use crate::sop::{SopEngine, SopMetricsCollector};
 pub struct SopStatusTool {
     engine: Arc<Mutex<SopEngine>>,
     collector: Option<Arc<SopMetricsCollector>>,
+    workspace_dir: PathBuf,
 }
 
 impl SopStatusTool {
-    pub fn new(engine: Arc<Mutex<SopEngine>>) -> Self {
+    pub fn new(engine: Arc<Mutex<SopEngine>>, workspace_dir: PathBuf) -> Self {
         Self {
             engine,
             collector: None,
+            workspace_dir,
         }
     }
 
@@ -82,10 +85,13 @@ impl Tool for SopStatusTool {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        let engine = self
+        let ws = crate::tools::get_active_workspace()
+            .unwrap_or_else(|| self.workspace_dir.clone());
+        let mut engine = self
             .engine
             .lock()
             .map_err(|e| anyhow::anyhow!("Engine lock poisoned: {e}"))?;
+        engine.ensure_loaded(&ws);
 
         // Query specific run
         if let Some(run_id) = run_id {
@@ -283,7 +289,7 @@ mod tests {
     #[tokio::test]
     async fn status_no_runs() {
         let engine = engine_with_sops(vec![test_sop("s1")]);
-        let tool = SopStatusTool::new(engine);
+        let tool = SopStatusTool::new(engine, PathBuf::from("/tmp"));
         let result = tool.execute(json!({})).await.unwrap();
         assert!(result.success);
         assert!(result.output.contains("No active runs"));
@@ -297,7 +303,7 @@ mod tests {
             e.start_run("s1", manual_event()).unwrap();
             e.active_runs().keys().next().unwrap().clone()
         };
-        let tool = SopStatusTool::new(engine);
+        let tool = SopStatusTool::new(engine, PathBuf::from("/tmp"));
         let result = tool.execute(json!({})).await.unwrap();
         assert!(result.success);
         assert!(result.output.contains("Active runs (1)"));
@@ -312,7 +318,7 @@ mod tests {
             e.start_run("s1", manual_event()).unwrap();
             e.active_runs().keys().next().unwrap().clone()
         };
-        let tool = SopStatusTool::new(engine);
+        let tool = SopStatusTool::new(engine, PathBuf::from("/tmp"));
         let result = tool.execute(json!({"run_id": run_id})).await.unwrap();
         assert!(result.success);
         assert!(result.output.contains(&format!("Run: {run_id}")));
@@ -322,7 +328,7 @@ mod tests {
     #[tokio::test]
     async fn status_unknown_run() {
         let engine = engine_with_sops(vec![]);
-        let tool = SopStatusTool::new(engine);
+        let tool = SopStatusTool::new(engine, PathBuf::from("/tmp"));
         let result = tool
             .execute(json!({"run_id": "nonexistent"}))
             .await
@@ -339,7 +345,7 @@ mod tests {
             e.start_run("s1", manual_event()).unwrap();
             e.start_run("s2", manual_event()).unwrap();
         }
-        let tool = SopStatusTool::new(engine);
+        let tool = SopStatusTool::new(engine, PathBuf::from("/tmp"));
         let result = tool.execute(json!({"sop_name": "s1"})).await.unwrap();
         assert!(result.success);
         assert!(result.output.contains("s1"));
@@ -350,7 +356,7 @@ mod tests {
     #[test]
     fn name_and_schema() {
         let engine = engine_with_sops(vec![]);
-        let tool = SopStatusTool::new(engine);
+        let tool = SopStatusTool::new(engine, PathBuf::from("/tmp"));
         assert_eq!(tool.name(), "sop_status");
         let schema = tool.parameters_schema();
         assert!(schema["properties"]["run_id"].is_object());
@@ -384,7 +390,7 @@ mod tests {
         };
         collector.record_run_complete(&run);
 
-        let tool = SopStatusTool::new(engine).with_collector(collector);
+        let tool = SopStatusTool::new(engine, PathBuf::from("/tmp")).with_collector(collector);
         let result = tool
             .execute(json!({"include_metrics": true}))
             .await
@@ -420,7 +426,7 @@ mod tests {
         };
         collector.record_run_complete(&run);
 
-        let tool = SopStatusTool::new(engine).with_collector(collector);
+        let tool = SopStatusTool::new(engine, PathBuf::from("/tmp")).with_collector(collector);
         let result = tool
             .execute(json!({"sop_name": "s1", "include_metrics": true}))
             .await
@@ -434,7 +440,7 @@ mod tests {
     #[tokio::test]
     async fn status_metrics_without_collector() {
         let engine = engine_with_sops(vec![]);
-        let tool = SopStatusTool::new(engine);
+        let tool = SopStatusTool::new(engine, PathBuf::from("/tmp"));
         let result = tool
             .execute(json!({"include_metrics": true}))
             .await
@@ -447,7 +453,7 @@ mod tests {
     async fn status_metrics_not_shown_by_default() {
         let engine = engine_with_sops(vec![test_sop("s1")]);
         let collector = Arc::new(SopMetricsCollector::new());
-        let tool = SopStatusTool::new(engine).with_collector(collector);
+        let tool = SopStatusTool::new(engine, PathBuf::from("/tmp")).with_collector(collector);
         let result = tool.execute(json!({})).await.unwrap();
         assert!(result.success);
         assert!(!result.output.contains("Metrics"));

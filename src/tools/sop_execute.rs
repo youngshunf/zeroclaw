@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -12,13 +13,15 @@ use crate::sop::{SopAuditLogger, SopEngine};
 pub struct SopExecuteTool {
     engine: Arc<Mutex<SopEngine>>,
     audit: Option<Arc<SopAuditLogger>>,
+    workspace_dir: PathBuf,
 }
 
 impl SopExecuteTool {
-    pub fn new(engine: Arc<Mutex<SopEngine>>) -> Self {
+    pub fn new(engine: Arc<Mutex<SopEngine>>, workspace_dir: PathBuf) -> Self {
         Self {
             engine,
             audit: None,
+            workspace_dir,
         }
     }
 
@@ -73,12 +76,15 @@ impl Tool for SopExecuteTool {
             timestamp: now_iso8601(),
         };
 
-        // Lock engine, start run, snapshot run for audit, then drop lock
+        // Lock engine, ensure SOPs loaded for current tenant, start run
+        let ws = crate::tools::get_active_workspace()
+            .unwrap_or_else(|| self.workspace_dir.clone());
         let (action, run_snapshot) = {
             let mut engine = self
                 .engine
                 .lock()
                 .map_err(|e| anyhow::anyhow!("Engine lock poisoned: {e}"))?;
+            engine.ensure_loaded(&ws);
 
             match engine.start_run(sop_name, event) {
                 Ok(action) => {
@@ -211,7 +217,7 @@ mod tests {
     #[tokio::test]
     async fn execute_auto_sop() {
         let engine = engine_with_sops(vec![test_sop("test-sop", SopExecutionMode::Auto)]);
-        let tool = SopExecuteTool::new(engine);
+        let tool = SopExecuteTool::new(engine, PathBuf::from("/tmp"));
         let result = tool.execute(json!({"name": "test-sop"})).await.unwrap();
         assert!(result.success);
         assert!(result.output.contains("run-"));
@@ -221,7 +227,7 @@ mod tests {
     #[tokio::test]
     async fn execute_supervised_sop() {
         let engine = engine_with_sops(vec![test_sop("test-sop", SopExecutionMode::Supervised)]);
-        let tool = SopExecuteTool::new(engine);
+        let tool = SopExecuteTool::new(engine, PathBuf::from("/tmp"));
         let result = tool.execute(json!({"name": "test-sop"})).await.unwrap();
         assert!(result.success);
         assert!(result.output.contains("waiting for approval"));
@@ -230,7 +236,7 @@ mod tests {
     #[tokio::test]
     async fn execute_unknown_sop() {
         let engine = engine_with_sops(vec![]);
-        let tool = SopExecuteTool::new(engine);
+        let tool = SopExecuteTool::new(engine, PathBuf::from("/tmp"));
         let result = tool.execute(json!({"name": "nonexistent"})).await.unwrap();
         assert!(!result.success);
         assert!(result.error.unwrap().contains("Failed to start SOP"));
@@ -239,7 +245,7 @@ mod tests {
     #[tokio::test]
     async fn execute_missing_name() {
         let engine = engine_with_sops(vec![]);
-        let tool = SopExecuteTool::new(engine);
+        let tool = SopExecuteTool::new(engine, PathBuf::from("/tmp"));
         let result = tool.execute(json!({})).await;
         assert!(result.is_err());
     }
@@ -247,7 +253,7 @@ mod tests {
     #[tokio::test]
     async fn execute_with_payload() {
         let engine = engine_with_sops(vec![test_sop("test-sop", SopExecutionMode::Auto)]);
-        let tool = SopExecuteTool::new(engine);
+        let tool = SopExecuteTool::new(engine, PathBuf::from("/tmp"));
         let result = tool
             .execute(json!({"name": "test-sop", "payload": "{\"value\": 87.3}"}))
             .await
@@ -259,7 +265,7 @@ mod tests {
     #[test]
     fn name_and_schema() {
         let engine = engine_with_sops(vec![]);
-        let tool = SopExecuteTool::new(engine);
+        let tool = SopExecuteTool::new(engine, PathBuf::from("/tmp"));
         assert_eq!(tool.name(), "sop_execute");
         assert!(tool.parameters_schema()["required"].is_array());
     }

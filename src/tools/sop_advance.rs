@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -13,14 +14,16 @@ pub struct SopAdvanceTool {
     engine: Arc<Mutex<SopEngine>>,
     audit: Option<Arc<SopAuditLogger>>,
     collector: Option<Arc<SopMetricsCollector>>,
+    workspace_dir: PathBuf,
 }
 
 impl SopAdvanceTool {
-    pub fn new(engine: Arc<Mutex<SopEngine>>) -> Self {
+    pub fn new(engine: Arc<Mutex<SopEngine>>, workspace_dir: PathBuf) -> Self {
         Self {
             engine,
             audit: None,
             collector: None,
+            workspace_dir,
         }
     }
 
@@ -98,12 +101,15 @@ impl Tool for SopAdvanceTool {
             }
         };
 
-        // Lock engine, advance step, snapshot data for audit, then drop lock
+        // Lock engine, ensure SOPs loaded for current tenant, advance step
+        let ws = crate::tools::get_active_workspace()
+            .unwrap_or_else(|| self.workspace_dir.clone());
         let (action, step_result_ok, finished_run) = {
             let mut engine = self
                 .engine
                 .lock()
                 .map_err(|e| anyhow::anyhow!("Engine lock poisoned: {e}"))?;
+            engine.ensure_loaded(&ws);
 
             let current_step = engine
                 .get_run(run_id)
@@ -276,7 +282,7 @@ mod tests {
     #[tokio::test]
     async fn advance_to_next_step() {
         let (engine, run_id) = engine_with_active_run();
-        let tool = SopAdvanceTool::new(engine);
+        let tool = SopAdvanceTool::new(engine, PathBuf::from("/tmp"));
         let result = tool
             .execute(json!({
                 "run_id": run_id,
@@ -293,7 +299,7 @@ mod tests {
     #[tokio::test]
     async fn advance_to_completion() {
         let (engine, run_id) = engine_with_active_run();
-        let tool = SopAdvanceTool::new(engine.clone());
+        let tool = SopAdvanceTool::new(engine.clone(), PathBuf::from("/tmp"));
 
         // Complete step 1
         tool.execute(json!({
@@ -320,7 +326,7 @@ mod tests {
     #[tokio::test]
     async fn advance_with_failure() {
         let (engine, run_id) = engine_with_active_run();
-        let tool = SopAdvanceTool::new(engine);
+        let tool = SopAdvanceTool::new(engine, PathBuf::from("/tmp"));
         let result = tool
             .execute(json!({
                 "run_id": run_id,
@@ -337,7 +343,7 @@ mod tests {
     #[tokio::test]
     async fn advance_invalid_status() {
         let (engine, run_id) = engine_with_active_run();
-        let tool = SopAdvanceTool::new(engine);
+        let tool = SopAdvanceTool::new(engine, PathBuf::from("/tmp"));
         let result = tool
             .execute(json!({
                 "run_id": run_id,
@@ -353,7 +359,7 @@ mod tests {
     #[tokio::test]
     async fn advance_unknown_run() {
         let engine = Arc::new(Mutex::new(SopEngine::new(SopConfig::default())));
-        let tool = SopAdvanceTool::new(engine);
+        let tool = SopAdvanceTool::new(engine, PathBuf::from("/tmp"));
         let result = tool
             .execute(json!({
                 "run_id": "nonexistent",
@@ -367,7 +373,7 @@ mod tests {
     #[test]
     fn name_and_schema() {
         let engine = Arc::new(Mutex::new(SopEngine::new(SopConfig::default())));
-        let tool = SopAdvanceTool::new(engine);
+        let tool = SopAdvanceTool::new(engine, PathBuf::from("/tmp"));
         assert_eq!(tool.name(), "sop_advance");
         let schema = tool.parameters_schema();
         assert!(schema["properties"]["run_id"].is_object());
@@ -387,7 +393,7 @@ mod tests {
             Arc::from(crate::memory::create_memory(&mem_cfg, tmp.path(), None).unwrap());
         let audit = Arc::new(SopAuditLogger::new(memory.clone()));
 
-        let tool = SopAdvanceTool::new(engine).with_audit(audit.clone());
+        let tool = SopAdvanceTool::new(engine, PathBuf::from("/tmp")).with_audit(audit.clone());
         let result = tool
             .execute(json!({
                 "run_id": "nonexistent",
@@ -418,7 +424,7 @@ mod tests {
             Arc::from(crate::memory::create_memory(&mem_cfg, tmp.path(), None).unwrap());
         let audit = Arc::new(SopAuditLogger::new(memory.clone()));
 
-        let tool = SopAdvanceTool::new(engine).with_audit(audit.clone());
+        let tool = SopAdvanceTool::new(engine, PathBuf::from("/tmp")).with_audit(audit.clone());
         let result = tool
             .execute(json!({
                 "run_id": run_id,

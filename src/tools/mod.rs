@@ -831,11 +831,12 @@ pub fn all_tools_with_runtime(
         let sop_engine = Arc::new(std::sync::Mutex::new(crate::sop::SopEngine::new(
             root_config.sop.clone(),
         )));
-        tool_arcs.push(Arc::new(SopListTool::new(Arc::clone(&sop_engine))));
-        tool_arcs.push(Arc::new(SopExecuteTool::new(Arc::clone(&sop_engine))));
-        tool_arcs.push(Arc::new(SopAdvanceTool::new(Arc::clone(&sop_engine))));
-        tool_arcs.push(Arc::new(SopApproveTool::new(Arc::clone(&sop_engine))));
-        tool_arcs.push(Arc::new(SopStatusTool::new(Arc::clone(&sop_engine))));
+        let ws = workspace_dir.to_path_buf();
+        tool_arcs.push(Arc::new(SopListTool::new(Arc::clone(&sop_engine), ws.clone())));
+        tool_arcs.push(Arc::new(SopExecuteTool::new(Arc::clone(&sop_engine), ws.clone())));
+        tool_arcs.push(Arc::new(SopAdvanceTool::new(Arc::clone(&sop_engine), ws.clone())));
+        tool_arcs.push(Arc::new(SopApproveTool::new(Arc::clone(&sop_engine), ws.clone())));
+        tool_arcs.push(Arc::new(SopStatusTool::new(Arc::clone(&sop_engine), ws)));
     }
 
     if let Some(key) = composio_key {
