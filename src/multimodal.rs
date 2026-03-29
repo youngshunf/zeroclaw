@@ -2,6 +2,7 @@ use crate::config::{MultimodalConfig, build_runtime_proxy_client_with_timeouts};
 use crate::providers::ChatMessage;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use reqwest::Client;
+use std::io::Cursor;
 use std::path::Path;
 
 const IMAGE_MARKER_PREFIX: &str = "[IMAGE:";
@@ -299,6 +300,29 @@ fn normalize_data_uri(source: &str, max_bytes: usize) -> anyhow::Result<String> 
     Ok(format!("data:{mime};base64,{}", STANDARD.encode(decoded)))
 }
 
+fn compress_image(bytes: &[u8]) -> anyhow::Result<(Vec<u8>, String)> {
+    // Attempt to parse the image. If features like webp or gif are missing, this safely fails
+    // and returns Err, meaning we fall back to the original payload in the caller.
+    let img = image::load_from_memory(bytes)?;
+    
+    // Scale down if any dimension exceeds 1536px to save vast amount of tokens/bandwidth, 
+    // while remaining fully recognizable by Vision LLMs.
+    let max_dim = 1536;
+    let (width, height) = (img.width(), img.height());
+    let resized = if width > max_dim || height > max_dim {
+        img.resize(max_dim, max_dim, image::imageops::FilterType::Lanczos3)
+    } else {
+        img
+    };
+
+    let mut buf = Cursor::new(Vec::new());
+    // Convert out to JPEG to save space. Default quality is usually ~75 which is decent.
+    resized.write_to(&mut buf, image::ImageFormat::Jpeg)?;
+    
+    let compressed_bytes = buf.into_inner();
+    Ok((compressed_bytes, "image/jpeg".to_string()))
+}
+
 async fn normalize_remote_image(
     source: &str,
     max_bytes: usize,
@@ -339,18 +363,18 @@ async fn normalize_remote_image(
             reason: error.to_string(),
         })?;
 
-    validate_size(source, bytes.len(), max_bytes)?;
+    let (final_bytes, final_mime) = compress_image(&bytes)
+        .unwrap_or_else(|err| {
+            tracing::warn!("Image compression skipped/failed for '{source}': {err}");
+            let mime = detect_mime(None, bytes.as_ref(), content_type.as_deref())
+                .unwrap_or_else(|| "unknown".to_string());
+            (bytes.to_vec(), mime)
+        });
 
-    let mime = detect_mime(None, bytes.as_ref(), content_type.as_deref()).ok_or_else(|| {
-        MultimodalError::UnsupportedMime {
-            input: source.to_string(),
-            mime: "unknown".to_string(),
-        }
-    })?;
+    validate_size(source, final_bytes.len(), max_bytes)?;
+    validate_mime(source, &final_mime)?;
 
-    validate_mime(source, &mime)?;
-
-    Ok(format!("data:{mime};base64,{}", STANDARD.encode(bytes)))
+    Ok(format!("data:{};base64,{}", final_mime, STANDARD.encode(final_bytes)))
 }
 
 async fn normalize_local_image(source: &str, max_bytes: usize) -> anyhow::Result<String> {
@@ -383,17 +407,18 @@ async fn normalize_local_image(source: &str, max_bytes: usize) -> anyhow::Result
             reason: error.to_string(),
         })?;
 
-    validate_size(source, bytes.len(), max_bytes)?;
+    let (final_bytes, final_mime) = compress_image(&bytes)
+        .unwrap_or_else(|err| {
+            tracing::warn!("Image compression skipped/failed for '{source}': {err}");
+            let mime = detect_mime(Some(path), &bytes, None)
+                .unwrap_or_else(|| "unknown".to_string());
+            (bytes, mime)
+        });
 
-    let mime =
-        detect_mime(Some(path), &bytes, None).ok_or_else(|| MultimodalError::UnsupportedMime {
-            input: source.to_string(),
-            mime: "unknown".to_string(),
-        })?;
+    validate_size(source, final_bytes.len(), max_bytes)?;
+    validate_mime(source, &final_mime)?;
 
-    validate_mime(source, &mime)?;
-
-    Ok(format!("data:{mime};base64,{}", STANDARD.encode(bytes)))
+    Ok(format!("data:{};base64,{}", final_mime, STANDARD.encode(final_bytes)))
 }
 
 fn validate_size(source: &str, size_bytes: usize, max_bytes: usize) -> anyhow::Result<()> {
