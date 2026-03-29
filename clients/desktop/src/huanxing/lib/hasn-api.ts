@@ -186,3 +186,21 @@ export async function getMyAgents(): Promise<AgentInfo[]> {
   if (invoke) return invoke("get_my_agents") as Promise<AgentInfo[]>;
   return httpGet<AgentInfo[]>("/me/agents");
 }
+
+// ---------- Client ID 读取 ----------
+
+/**
+ * 读取当前 HASN 客户端 ID（从 ~/.huanxing/hasn/client.json）
+ * 用于 Agent 注册时绑定 client_id
+ */
+export async function loadClientId(): Promise<string | undefined> {
+  const invoke = getTauriInvoke();
+  if (!invoke) return undefined;
+  try {
+    // 调用 Rust 侧读取 client.json
+    const result = await invoke("hasn_get_client_id") as string | null;
+    return result ?? undefined;
+  } catch {
+    return undefined;
+  }
+}

@@ -29,10 +29,35 @@ export interface OnboardResult {
   sidecar_started?: boolean;
 }
 
+/** HASN 注册结果 */
+export interface HasnIdentity {
+  hasn_id: string;
+  star_id: string;
+  name: string;
+  agent_hasn_id?: string;
+  agent_star_id?: string;
+  already_exists: boolean;
+}
+
 // ── Tauri IPC 检测 ──────────────────────────────────────
 
 function isTauri(): boolean {
   return typeof window !== 'undefined' && !!(window as any).__TAURI_INTERNALS__;
+}
+
+/**
+ * 获取 HASN API 基地址
+ * - Tauri 生产模式（tauri:// 协议）：直接访问后端
+ * - Dev 模式 / Web 模式：走 Vite 代理（相对路径）
+ */
+function hasnApiUrl(path: string): string {
+  const protocol = window.location.protocol;
+  // Tauri 生产打包：协议是 tauri:// 或 https://tauri.localhost
+  if (protocol === 'tauri:' || protocol === 'https:' && window.location.hostname === 'tauri.localhost') {
+    return `${HUANXING_CONFIG.backendBaseUrl}${path}`;
+  }
+  // Dev 模式 (http://localhost:1420) 和 Web 模式：走代理
+  return path;
 }
 
 async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
@@ -70,6 +95,8 @@ async function tauriOnboard(session: HuanxingSession): Promise<OnboardResult> {
         llm_token: session.llmToken,
         user_nickname: session.user.nickname || null,
         user_uuid: session.user.uuid || null,
+        user_phone: session.user.phone || null,
+        agent_key: session.agentKey || null,
         api_base_url: HUANXING_CONFIG.backendBaseUrl,
         llm_gateway_url: HUANXING_CONFIG.llmGatewayV1,
       },
@@ -270,4 +297,191 @@ provider_retries = 2
 [runtime]
 kind = "native"
 `;
+}
+
+// ── HASN 身份注册（登录后调用）──────────────────────────
+
+/**
+ * 注册 HASN 身份（Human + 默认 Agent），幂等
+ *
+ * @returns HasnIdentity — 包含 hasn_id, star_id
+ */
+export async function registerHasnIdentity(session: HuanxingSession): Promise<HasnIdentity> {
+  const resp = await fetch(hasnApiUrl('/api/v1/hasn/app/auth/register'), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${session.accessToken}`,
+    },
+    body: JSON.stringify({
+      name: session.user.nickname || '唤星用户',
+      avatar_url: session.user.avatar || null,
+    }),
+  });
+
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`HASN 注册失败 (${resp.status}): ${text}`);
+  }
+
+  const json = await resp.json();
+  const data = json.data ?? json;
+
+  return {
+    hasn_id: data.human?.hasn_id,
+    star_id: data.human?.star_id,
+    name: data.human?.name,
+    agent_hasn_id: data.agent?.hasn_id,
+    agent_star_id: data.agent?.star_id,
+    already_exists: data.already_exists ?? false,
+  };
+}
+
+/**
+ * 连接 HASN 网络（Tauri 模式调用 IPC，Web 模式存 localStorage）
+ *
+ * 同时初始化前端 WS 事件监听（Tauri emit 事件 → React hooks）
+ */
+export async function connectHasn(
+  session: HuanxingSession,
+  hasnIdentity: HasnIdentity,
+): Promise<void> {
+  const { hasnConnect } = await import('./lib/hasn-api');
+  const { hasnWs } = await import('./lib/hasn-ws');
+
+  // 1. 通过 Tauri IPC 建立后端 HASN 连接（注册客户端 + WS）
+  await hasnConnect(session.accessToken, hasnIdentity.hasn_id, hasnIdentity.star_id);
+
+  // 2. 前端订阅 Tauri WS 事件（Tauri emit → React hooks）
+  await hasnWs.connect();
+
+  console.log('[huanxing-onboard] HASN 连接成功:', hasnIdentity.hasn_id);
+}
+
+/** Agent HASN 注册结果 */
+export interface AgentHasnIdentity {
+  hasn_id: string;
+  star_id: string;
+  name: string;
+  agent_name: string;
+  api_key?: string;
+  already_exists: boolean;
+}
+
+/**
+ * 注册 Agent 的 HASN 身份（幂等）
+ *
+ * 用于桌面端本地 Agent（如 "default"）。
+ * 后端默认 Agent（"star"）由 registerHasnIdentity 自动创建。
+ */
+export async function registerHasnAgent(
+  session: HuanxingSession,
+  agentName: string,
+  displayName: string,
+  agentType: string = 'local',
+  clientId?: string,
+): Promise<AgentHasnIdentity> {
+  // 如果是本地 Agent 且未传 clientId，尝试从 Tauri state 获取
+  let resolvedClientId = clientId;
+  if (agentType === 'local' && !resolvedClientId) {
+    try {
+      const internals = (window as any).__TAURI_INTERNALS__;
+      if (internals?.invoke) {
+        const statusJson = await internals.invoke('hasn_status');
+        // hasn_status 返回 "connected" / "disconnected" 等字符串
+        // 从 hasn client.json 读取 client_id
+        const { loadClientId } = await import('./lib/hasn-api');
+        resolvedClientId = await loadClientId();
+      }
+    } catch {
+      // 忽略，clientId 可选
+    }
+  }
+
+  const body: Record<string, unknown> = {
+    agent_name: agentName,
+    display_name: displayName,
+    agent_type: agentType,
+  };
+  if (resolvedClientId) body.client_id = resolvedClientId;
+
+  const resp = await fetch(hasnApiUrl('/api/v1/hasn/app/auth/register-agent'), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${session.accessToken}`,
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`Agent HASN 注册失败 (${resp.status}): ${text}`);
+  }
+
+  const json = await resp.json();
+  const data = json.data ?? json;
+
+  const result: AgentHasnIdentity = {
+    hasn_id: data.hasn_id,
+    star_id: data.star_id,
+    name: data.name,
+    agent_name: data.agent_name,
+    api_key: data.api_key,
+    already_exists: data.already_exists ?? false,
+  };
+
+  // 注册成功后，将 hasn_id 写回 Agent 的 config.toml
+  if (result.hasn_id && agentType === 'local') {
+    try {
+      await writeAgentHasnId(agentName, result.hasn_id);
+      console.log(`[onboard] Agent '${agentName}' hasn_id 已写入 config.toml:`, result.hasn_id);
+    } catch (err) {
+      console.warn(`[onboard] Agent '${agentName}' hasn_id 写入 config.toml 失败（非致命）:`, err);
+    }
+  }
+
+  return result;
+}
+
+/**
+ * 将 hasn_id 写回 Agent 的 config.toml
+ *
+ * 通过 Sidecar REST API 读取 → 替换/插入 hasn_id → 写回。
+ * 不依赖 Tauri IPC，Sidecar 运行在 localhost:42620。
+ */
+async function writeAgentHasnId(agentName: string, hasnId: string): Promise<void> {
+  const sidecarPort = 42620; // TODO: 从配置读取
+  const baseUrl = `http://127.0.0.1:${sidecarPort}`;
+  const filePath = `/api/agents/${encodeURIComponent(agentName)}/files/config.toml`;
+
+  // 1. 读取现有 config
+  const readResp = await fetch(`${baseUrl}${filePath}`);
+  if (!readResp.ok) {
+    throw new Error(`读取 agent config 失败: ${readResp.status}`);
+  }
+  const json = await readResp.json();
+  let content: string = json.content ?? '';
+
+  // 2. 替换或插入 hasn_id
+  if (content.includes('hasn_id =')) {
+    // 替换已有的 hasn_id 行
+    content = content.replace(/hasn_id\s*=\s*"[^"]*"/, `hasn_id = "${hasnId}"`);
+  } else if (content.includes('[agent]')) {
+    // 在 [agent] 段落下插入
+    content = content.replace('[agent]', `[agent]\nhasn_id = "${hasnId}"`);
+  } else {
+    // 追加
+    content += `\nhasn_id = "${hasnId}"\n`;
+  }
+
+  // 3. 写回
+  const writeResp = await fetch(`${baseUrl}${filePath}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'text/plain' },
+    body: content,
+  });
+  if (!writeResp.ok) {
+    throw new Error(`写回 agent config 失败: ${writeResp.status}`);
+  }
 }

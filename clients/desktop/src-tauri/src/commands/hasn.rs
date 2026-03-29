@@ -1,10 +1,12 @@
 //! HASN IM 命令 — 消息/会话/联系人
 //!
 //! 接入 hasn-client-core，实现完整的 HASN 社交通信功能。
+//! 连接生命周期由 Tauri 管理，前端只读状态。
 //! 对齐 29/30 设计文档的客户端连接架构。
 
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::path::PathBuf;
 
 use hasn_client_core::{
     AgentReport, HasnApiClient, HasnWsClient, SyncEngine,
@@ -60,6 +62,125 @@ impl HasnClientState {
     }
 }
 
+// ─── client.json 持久化（只存标识符，不存 token）───
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct HasnClientInfo {
+    pub hasn_id: String,
+    pub star_id: String,
+    pub client_id: String,
+    pub name: String,
+}
+
+fn client_info_path() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_default()
+        .join(".huanxing")
+        .join("hasn")
+        .join("client.json")
+}
+
+pub fn load_client_info() -> Option<HasnClientInfo> {
+    let path = client_info_path();
+    let content = std::fs::read_to_string(&path).ok()?;
+    serde_json::from_str(&content).ok()
+}
+
+fn save_client_info(info: &HasnClientInfo) {
+    let path = client_info_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    if let Ok(json) = serde_json::to_string_pretty(info) {
+        if let Err(e) = std::fs::write(&path, json) {
+            tracing::warn!("[HASN] 保存 client.json 失败: {e}");
+        }
+    }
+}
+
+fn delete_client_info() {
+    let path = client_info_path();
+    std::fs::remove_file(&path).ok();
+}
+
+/// 读取当前 HASN 客户端 ID（供前端绑定 Agent 时使用）
+#[tauri::command]
+pub async fn hasn_get_client_id(
+    state: State<'_, Arc<HasnClientState>>,
+) -> Result<Option<String>, String> {
+    // 优先从运行时 state 读
+    let cid = state.client_id.read().await.clone();
+    if cid.is_some() {
+        return Ok(cid);
+    }
+    // 回退到 client.json
+    Ok(load_client_info().map(|info| info.client_id))
+}
+
+/// 获取稳定的设备指纹（跨重启不变）
+///
+/// macOS: 通过 ioreg 获取 IOPlatformUUID
+/// Linux: 读 /etc/machine-id
+/// 兜底: hostname 的哈希
+fn get_device_fingerprint() -> String {
+    // macOS: ioreg -rd1 -c IOPlatformExpertDevice | grep IOPlatformUUID
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(output) = std::process::Command::new("ioreg")
+            .args(["-rd1", "-c", "IOPlatformExpertDevice"])
+            .output()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                if line.contains("IOPlatformUUID") {
+                    if let Some(uuid) = line.split('"').nth(3) {
+                        return uuid.to_string();
+                    }
+                }
+            }
+        }
+    }
+
+    // Linux: /etc/machine-id
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(mid) = std::fs::read_to_string("/etc/machine-id") {
+            let trimmed = mid.trim();
+            if !trimmed.is_empty() {
+                return trimmed.to_string();
+            }
+        }
+    }
+
+    // Fallback: hostname hash
+    let hostname = hostname::get()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    hostname.hash(&mut hasher);
+    format!("h_{:016x}", hasher.finish())
+}
+
+/// 构造 device_info JSON（含设备指纹）
+fn build_device_info() -> serde_json::Value {
+    let fingerprint = get_device_fingerprint();
+    let os = std::env::consts::OS;
+    let arch = std::env::consts::ARCH;
+    let hostname = hostname::get()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+
+    serde_json::json!({
+        "device_fingerprint": fingerprint,
+        "os": os,
+        "arch": arch,
+        "hostname": hostname,
+    })
+}
+
 // ─── 响应类型 ───
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -98,32 +219,51 @@ pub struct Contact {
     pub status: String,
 }
 
-// ─── HASN 连接管理 ───
+// ─── HASN 连接核心逻辑 ───
 
-/// 初始化 HASN 连接（登录后调用）
-#[tauri::command]
-pub async fn hasn_connect(
-    platform_token: String,
-    hasn_id: String,
-    _star_id: String,
-    state: State<'_, Arc<HasnClientState>>,
-    app: AppHandle,
-) -> Result<serde_json::Value, String> {
+/// 连接核心逻辑（被 hasn_connect IPC 和 auto_connect 共用）
+pub async fn do_hasn_connect(
+    state: &Arc<HasnClientState>,
+    app: &AppHandle,
+    platform_token: &str,
+    hasn_id: &str,
+    star_id: &str,
+) -> Result<String, String> {
     // 1. 设置 API token
-    state.api.set_platform_token(&platform_token).await;
-    state.api.set_hasn_token(&platform_token).await;
-    state.sync_engine.set_current_user(&hasn_id).await;
-    *state.user_hasn_id.write().await = Some(hasn_id.clone());
+    state.api.set_platform_token(platform_token).await;
+    state.api.set_hasn_token(platform_token).await;
+    state.sync_engine.set_current_user(hasn_id).await;
+    *state.user_hasn_id.write().await = Some(hasn_id.to_string());
 
-    // 2. 注册客户端（如果还没有 client_id）
+    // 2. 复用已有 client_id（内存 → 磁盘 → 新注册）
     let client_id = {
+        // 2a: 内存中已有（同次运行多次连接）
         let existing = state.client_id.read().await.clone();
         if let Some(cid) = existing {
             cid
-        } else {
+        }
+        // 2b: 磁盘 client.json 中有（重启恢复）
+        else if let Some(info) = load_client_info() {
+            if !info.client_id.is_empty() {
+                tracing::info!("[HASN] 从 client.json 恢复 client_id: {}", info.client_id);
+                *state.client_id.write().await = Some(info.client_id.clone());
+                info.client_id
+            } else {
+                // client_id 为空，重新注册
+                let resp = state
+                    .api
+                    .register_client("desktop", Some("唤星桌面端"), Some(build_device_info()))
+                    .await
+                    .map_err(|e| format!("注册客户端失败: {}", e))?;
+                *state.client_id.write().await = Some(resp.client_id.clone());
+                resp.client_id
+            }
+        }
+        // 2c: 首次注册
+        else {
             let resp = state
                 .api
-                .register_client("desktop", Some("唤星桌面端"))
+                .register_client("desktop", Some("唤星桌面端"), Some(build_device_info()))
                 .await
                 .map_err(|e| format!("注册客户端失败: {}", e))?;
             *state.client_id.write().await = Some(resp.client_id.clone());
@@ -147,7 +287,7 @@ pub async fn hasn_connect(
     // 5. 建立 WebSocket 连接
     let ws_url = state.api.ws_client_url(&token_resp.client_jwt);
     let app_handle = app.clone();
-    let hasn_state = state.inner().clone();
+    let hasn_state = state.clone();
 
     state
         .ws
@@ -157,7 +297,7 @@ pub async fn hasn_connect(
         .await
         .map_err(|e| format!("WebSocket 连接失败: {}", e))?;
 
-    // 6. 上报本地 Agent（获取本地 Agent 列表）
+    // 6. 上报本地 Agent
     let agents = state
         .api
         .list_my_agents()
@@ -175,6 +315,33 @@ pub async fn hasn_connect(
         let _ = state.ws.send_command(&cmd).await;
     }
 
+    // 7. 持久化客户端标识（无 token）
+    save_client_info(&HasnClientInfo {
+        hasn_id: hasn_id.to_string(),
+        star_id: star_id.to_string(),
+        client_id: client_id.clone(),
+        name: String::new(),
+    });
+
+    eprintln!("[HASN] 连接成功: hasn_id={}, client_id={}", hasn_id, client_id);
+    Ok(client_id)
+}
+
+// ─── HASN 连接管理 (IPC Commands) ───
+
+/// 初始化 HASN 连接（前端登录后调用）
+#[tauri::command]
+pub async fn hasn_connect(
+    platform_token: String,
+    hasn_id: String,
+    star_id: String,
+    state: State<'_, Arc<HasnClientState>>,
+    app: AppHandle,
+) -> Result<serde_json::Value, String> {
+    let client_id = do_hasn_connect(
+        state.inner(), &app, &platform_token, &hasn_id, &star_id,
+    ).await?;
+
     Ok(serde_json::json!({
         "connected": true,
         "client_id": client_id,
@@ -189,6 +356,7 @@ pub async fn hasn_disconnect(state: State<'_, Arc<HasnClientState>>) -> Result<(
     *state.user_hasn_id.write().await = None;
     *state.client_jwt.write().await = None;
     state.local_agents.write().await.clear();
+    delete_client_info();
     Ok(())
 }
 
@@ -202,6 +370,61 @@ pub async fn hasn_status(state: State<'_, Arc<HasnClientState>>) -> Result<Strin
         WsStatus::Disconnected => "disconnected".to_string(),
         WsStatus::Reconnecting { attempt } => format!("reconnecting:{}", attempt),
     })
+}
+
+// ─── 自动连接（setup hook 调用）───
+
+/// App 启动时自动连接 HASN
+/// 1. 读取 client.json 获取 hasn_id
+/// 2. 发 event 向前端请求 platform_token
+/// 3. 前端响应后执行 do_hasn_connect
+pub async fn hasn_auto_connect(state: Arc<HasnClientState>, app: AppHandle) {
+    // 检查是否有保存的客户端信息
+    let info = match load_client_info() {
+        Some(info) => info,
+        None => {
+            eprintln!("[HASN] 无 client.json，跳过自动连接");
+            return;
+        }
+    };
+
+    eprintln!("[HASN] 发现 client.json, hasn_id={}, 请求前端提供 token...", info.hasn_id);
+
+    // 预设 client_id（避免重复注册）
+    *state.client_id.write().await = Some(info.client_id.clone());
+
+    // 发事件给前端请求 platform_token
+    let _ = app.emit("hasn:request-token", serde_json::json!({
+        "hasn_id": info.hasn_id,
+        "star_id": info.star_id,
+    }));
+
+    // 监听前端响应（通过全局 OnceChannel）
+    // 前端会调用 hasn_provide_token 命令传回 token
+    eprintln!("[HASN] 等待前端提供 token（将通过 hasn_provide_token 命令）");
+}
+
+/// 前端响应 hasn:request-token 事件，提供 platform_token
+#[tauri::command]
+pub async fn hasn_provide_token(
+    platform_token: String,
+    state: State<'_, Arc<HasnClientState>>,
+    app: AppHandle,
+) -> Result<serde_json::Value, String> {
+    let info = load_client_info()
+        .ok_or("client.json 不存在")?;
+
+    eprintln!("[HASN] 收到前端 token，开始自动连接...");
+
+    let client_id = do_hasn_connect(
+        state.inner(), &app, &platform_token, &info.hasn_id, &info.star_id,
+    ).await?;
+
+    Ok(serde_json::json!({
+        "connected": true,
+        "client_id": client_id,
+        "hasn_id": info.hasn_id,
+    }))
 }
 
 // ─── 会话 ───
@@ -569,6 +792,19 @@ fn handle_ws_event(event: WsEvent, app: &AppHandle, state: &Arc<HasnClientState>
                 "to_id": to_id,
                 "reply_to_id": msg.reply_to,
             }));
+
+            // 3. 发送系统通知（消息来自别人时）
+            {
+                let content_preview = if msg.content.len() > 50 {
+                    format!("{}...", &msg.content[..50])
+                } else {
+                    msg.content.clone()
+                };
+                let _ = app.emit("hasn:notification", serde_json::json!({
+                    "title": msg.from_id,
+                    "body": content_preview,
+                }));
+            }
 
             // 3. 路由判断：to_id 是否是本地 Agent？
             if let Some(ref target_id) = to_id {

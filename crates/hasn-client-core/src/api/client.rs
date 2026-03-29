@@ -49,7 +49,7 @@ impl HasnApiClient {
 
     /// 构造请求 (自动附 HASN JWT)
     fn hasn_request(&self, method: Method, path: &str) -> RequestBuilder {
-        let url = format!("{}/api/v1/hasn{}", self.base_url, path);
+        let url = format!("{}/api/v1/hasn/app{}", self.base_url, path);
         self.http.request(method, &url)
     }
 
@@ -116,6 +116,29 @@ impl HasnApiClient {
 
         let req = self
             .hasn_request(Method::POST, "/auth/register")
+            .json(&body);
+        self.send_hasn(req).await
+    }
+
+    /// 注册 Agent 的 HASN 身份（幂等）
+    pub async fn register_agent(
+        &self,
+        agent_name: &str,
+        display_name: &str,
+        agent_type: &str,
+        server_id: Option<&str>,
+    ) -> Result<RegisterAgentResponse, HasnError> {
+        let mut body = serde_json::json!({
+            "agent_name": agent_name,
+            "display_name": display_name,
+            "agent_type": agent_type,
+        });
+        if let Some(sid) = server_id {
+            body["server_id"] = serde_json::Value::String(sid.to_string());
+        }
+
+        let req = self
+            .hasn_request(Method::POST, "/auth/register-agent")
             .json(&body);
         self.send_hasn(req).await
     }
@@ -287,12 +310,16 @@ impl HasnApiClient {
         &self,
         client_type: &str,
         device_name: Option<&str>,
+        device_info: Option<serde_json::Value>,
     ) -> Result<RegisterClientResponse, HasnError> {
         let mut body = serde_json::json!({
             "client_type": client_type,
         });
         if let Some(name) = device_name {
             body["device_name"] = serde_json::Value::String(name.to_string());
+        }
+        if let Some(info) = device_info {
+            body["device_info"] = info;
         }
 
         let req = self

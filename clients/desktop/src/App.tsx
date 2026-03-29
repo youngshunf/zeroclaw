@@ -20,6 +20,7 @@ const HuanxingLogin = lazy(() => import('./huanxing/pages/Login'));
 const HasnChat = lazy(() => import('./huanxing/pages/HasnChat'));
 const Contacts = lazy(() => import('./huanxing/pages/Contacts'));
 const AgentManager = lazy(() => import('./huanxing/pages/AgentManager'));
+const Marketplace = lazy(() => import('./huanxing/pages/Marketplace'));
 const HuanxingLayout = lazy(() => import('./huanxing/components/layout/HuanxingLayout'));
 const SettingsPanel = lazy(() => import('./huanxing/components/layout/SettingsPanel'));
 const Engine = lazy(() => import('./huanxing/pages/Engine'));
@@ -57,6 +58,7 @@ function AppContent() {
   }, [locale]);
 
   const setAppLocale = (newLocale: Locale) => {
+    setLocale(newLocale); // 同步更新模块级 currentLocale，确保 t() 在同一次渲染中生效
     setLocaleState(newLocale);
   };
 
@@ -78,8 +80,74 @@ function AppContent() {
     }
   }, [isAuthenticated]);
 
+  // HASN 自动连接（由 Tauri 层管理，前端负责提供 token）
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const internals = (window as any).__TAURI_INTERNALS__;
+    if (!internals?.invoke) return;
+
+    let cancelled = false;
+
+    // 提供 token 给 Tauri 的共用逻辑
+    const provideToken = async () => {
+      if (cancelled) return;
+      try {
+        const { getHuanxingSession } = await import('./huanxing/config');
+        const session = getHuanxingSession();
+        if (!session?.accessToken) return;
+
+        // 确保 HASN 身份已注册（幂等）
+        const { registerHasnIdentity, registerHasnAgent } = await import('./huanxing/onboard');
+        const identity = await registerHasnIdentity(session);
+        if (!identity?.hasn_id || cancelled) return;
+
+        // 调用 hasn_connect（内部会保存 client.json）
+        console.log('[App] HASN 提供 token，hasn_id:', identity.hasn_id);
+        await internals.invoke('hasn_connect', {
+          platformToken: session.accessToken,
+          hasnId: identity.hasn_id,
+          starId: identity.star_id,
+        });
+        console.log('[App] HASN 已连接');
+
+        // 确保本地 Agent 的 HASN 身份已注册且 hasn_id 已写入 config.toml（幂等）
+        try {
+          const nickname = session.user?.nickname || '唤星用户';
+          await registerHasnAgent(session, 'default', `${nickname}的星灵`, 'local');
+        } catch (agentErr) {
+          console.warn('[App] Agent HASN 注册（非致命）:', agentErr);
+        }
+      } catch (err) {
+        console.warn('[App] HASN 连接失败（非致命）:', err);
+      }
+    };
+
+    // 1. 主动检查：如果未连接，立即提供 token
+    internals.invoke('hasn_status').then((s: string) => {
+      if (s !== 'connected' && !cancelled) {
+        provideToken();
+      }
+    }).catch(() => {
+      provideToken();
+    });
+
+    // 2. 被动监听：Tauri 断线重连时也可能再次请求 token
+    let unlisten: (() => void) | null = null;
+    import('@tauri-apps/api/event').then(({ listen }) => {
+      listen('hasn:request-token', provideToken)
+        .then(fn => { unlisten = fn; });
+    }).catch(() => {});
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [isAuthenticated]);
+
   // 唤星桌面端：主动检查配置有效性
-  // 如果 ~/.huanxing 被删除，强制退出登录，用户重新登录后重建
+  // config.toml 存在且有效 → 放行（sidecar 由 setup hook 管理）
+  // config.toml 不存在或无效 → 强制退出登录
   const [configChecked, setConfigChecked] = useState(false);
 
   useEffect(() => {
@@ -94,17 +162,19 @@ function AppContent() {
 
     (async () => {
       try {
-        const valid: boolean = await internals.invoke('check_huanxing_config');
+        // 返回 { config_exists: boolean, config_valid: boolean }
+        const result = await internals.invoke('check_huanxing_config');
         if (cancelled) return;
 
-        if (valid) {
+        if (result?.config_valid) {
           console.log('[huanxing] 配置有效');
           setConfigChecked(true);
           return;
         }
 
-        // 配置无效 → 强制退出登录，用户重新登录后通过 onboard 重建
-        console.log('[huanxing] 配置无效，强制退出登录');
+        // 配置无效 → 强制退出登录
+        console.log('[huanxing] 配置无效，强制退出登录',
+          `(exists=${result?.config_exists}, valid=${result?.config_valid})`);
         localStorage.removeItem('huanxing_session');
         logout();
       } catch (err) {
@@ -116,6 +186,25 @@ function AppContent() {
 
     return () => { cancelled = true; };
   }, [isAuthenticated, logout]);
+
+  // 监听 Tauri setup hook 发来的配置无效事件（二重保险）
+  useEffect(() => {
+    const internals = (window as any).__TAURI_INTERNALS__;
+    if (!internals) return;
+
+    let unlisten: (() => void) | null = null;
+
+    // Tauri v2 listen API
+    import('@tauri-apps/api/event').then(({ listen }) => {
+      listen('huanxing:config-invalid', () => {
+        console.log('[huanxing] Received config-invalid event, forcing logout');
+        localStorage.removeItem('huanxing_session');
+        logout();
+      }).then(fn => { unlisten = fn; });
+    }).catch(() => {});
+
+    return () => { unlisten?.(); };
+  }, [logout]);
 
   if (loading || (isAuthenticated && !configChecked)) {
     return (
@@ -155,6 +244,9 @@ function AppContent() {
 
           {/* Tab 4: Agent 管理 */}
           <Route path="/agents" element={<Suspense fallback={null}><AgentManager /></Suspense>} />
+
+          {/* 新增: 市场 */}
+          <Route path="/market" element={<Suspense fallback={null}><Marketplace /></Suspense>} />
 
           {/* 个人资料 */}
           <Route path="/profile" element={<Suspense fallback={null}><ProfilePage /></Suspense>} />

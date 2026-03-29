@@ -419,6 +419,119 @@ impl Tool for HxRegisterUser {
             steps.push("⚠️ Step3.5: 无 llm_token，跳过 LLM 配置".to_string());
         }
 
+        // Step 4: 注册 HASN 身份（Human + Agent）
+        // agent_type 根据 server_id 前缀推断：
+        //   - desktop-xxx → local（桌面端 sidecar 创建的 Agent）
+        //   - 其他 → cloud（云端服务器创建的 Agent）
+        let is_desktop = self.server_id.starts_with("desktop-");
+        let agent_type = if is_desktop { "local" } else { "cloud" };
+
+        if !access_token.is_empty() {
+            // 4a: 注册 Human HASN 身份（幂等）
+            match self
+                .api
+                .user_post(
+                    "/api/v1/hasn/app/auth/register",
+                    access_token,
+                    &json!({
+                        "name": nickname,
+                        "avatar_url": serde_json::Value::Null,
+                    }),
+                )
+                .await
+            {
+                Ok(resp) => {
+                    let human_hasn_id = resp["data"]["human"]["hasn_id"]
+                        .as_str()
+                        .unwrap_or_default();
+                    steps.push(format!(
+                        "✅ Step4a: HASN Human 身份注册完成 (hasn_id={human_hasn_id})"
+                    ));
+
+                    // 4b: 注册 Agent HASN 身份（幂等）
+                    if !human_hasn_id.is_empty() {
+                        let mut agent_body = json!({
+                            "agent_name": agent_id,
+                            "display_name": format!("{nickname}的{star_name}"),
+                            "agent_type": agent_type,
+                        });
+                        // 云端 Agent 绑定 server_id；本地 Agent 不设 server_id（由桌面端绑 client_id）
+                        if !is_desktop {
+                            agent_body["server_id"] = json!(self.server_id);
+                        }
+
+                        match self
+                            .api
+                            .user_post(
+                                "/api/v1/hasn/app/auth/register-agent",
+                                access_token,
+                                &agent_body,
+                            )
+                            .await
+                        {
+                            Ok(agent_resp) => {
+                                let agent_hasn_id = agent_resp["data"]["hasn_id"]
+                                    .as_str()
+                                    .unwrap_or_default()
+                                    .to_string();
+                                steps.push(format!(
+                                    "✅ Step4b: HASN Agent 身份注册完成 (hasn_id={agent_hasn_id})"
+                                ));
+
+                                // 将 hasn_id 写回 Agent 的 config.toml
+                                if !agent_hasn_id.is_empty() {
+                                    let config_path = workspace.join("config.toml");
+                                    if let Ok(content) =
+                                        tokio::fs::read_to_string(&config_path).await
+                                    {
+                                        let updated = if content.contains("hasn_id =") {
+                                            let re = regex::Regex::new(
+                                                r#"hasn_id\s*=\s*"[^"]*""#,
+                                            )
+                                            .unwrap();
+                                            re.replace(
+                                                &content,
+                                                &format!(r#"hasn_id = "{agent_hasn_id}""#),
+                                            )
+                                            .to_string()
+                                        } else if content.contains("[agent]") {
+                                            content.replace(
+                                                "[agent]",
+                                                &format!(
+                                                    "[agent]\nhasn_id = \"{agent_hasn_id}\""
+                                                ),
+                                            )
+                                        } else {
+                                            format!(
+                                                "{content}\nhasn_id = \"{agent_hasn_id}\"\n"
+                                            )
+                                        };
+                                        if let Err(e) =
+                                            tokio::fs::write(&config_path, &updated).await
+                                        {
+                                            tracing::warn!(
+                                                "[HASN] 写 hasn_id 到 config.toml 失败: {e}"
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                steps.push(format!(
+                                    "⚠️ Step4b: HASN Agent 注册失败（非致命）: {e}"
+                                ));
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    steps.push(format!("⚠️ Step4a: HASN Human 注册失败（非致命）: {e}"));
+                }
+            }
+        } else {
+            steps.push("⚠️ Step4: 无 access_token，跳过 HASN 注册".to_string());
+        }
+
         // Step 5: Invalidate router cache so next message routes correctly
         self.router.invalidate(channel_type, sender_id);
         steps.push("✅ Step5: 路由缓存已清除".to_string());

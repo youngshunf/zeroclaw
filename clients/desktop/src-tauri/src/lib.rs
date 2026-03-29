@@ -8,14 +8,40 @@
 mod commands;
 mod sidecar;
 
-use commands::{auth, hasn, zeroclaw};
+use commands::{auth, hasn, marketplace, zeroclaw};
 use hasn::HasnClientState;
 use sidecar::SidecarManager;
 use std::sync::Arc;
 use tauri::Emitter;
 
-/// HASN API 基础 URL
-const HASN_API_BASE: &str = "https://api.huanxing.dcfuture.cn";
+/// 默认 HASN API 地址（配置中未设置时使用）
+const HASN_API_BASE_DEFAULT: &str = "https://api.huanxing.dcfuture.cn";
+
+/// 从 ~/.huanxing/config.toml 读取 [huanxing] api_base_url
+fn read_hasn_api_base() -> String {
+    let config_path = dirs::home_dir()
+        .unwrap_or_default()
+        .join(".huanxing")
+        .join("config.toml");
+
+    if let Ok(content) = std::fs::read_to_string(&config_path) {
+        // 解析 TOML 获取 huanxing.api_base_url
+        if let Ok(table) = content.parse::<toml::Table>() {
+            if let Some(huanxing) = table.get("huanxing").and_then(|v| v.as_table()) {
+                if let Some(url) = huanxing.get("api_base_url").and_then(|v| v.as_str()) {
+                    let url = url.trim().trim_end_matches('/');
+                    if !url.is_empty() {
+                        eprintln!("[huanxing-desktop] HASN API: {} (from config.toml)", url);
+                        return url.to_string();
+                    }
+                }
+            }
+        }
+    }
+
+    eprintln!("[huanxing-desktop] HASN API: {} (default)", HASN_API_BASE_DEFAULT);
+    HASN_API_BASE_DEFAULT.to_string()
+}
 
 /// HASN 本地数据库路径
 fn hasn_db_path() -> String {
@@ -31,9 +57,12 @@ fn hasn_db_path() -> String {
 pub fn run() {
     let manager = Arc::new(SidecarManager::new());
 
+    // 从配置文件读取 HASN API 地址
+    let hasn_api_base = read_hasn_api_base();
+
     // 初始化 HASN 客户端状态
     let hasn_state = Arc::new(
-        HasnClientState::new(HASN_API_BASE, &hasn_db_path())
+        HasnClientState::new(&hasn_api_base, &hasn_db_path())
             .expect("初始化 HASN 客户端失败"),
     );
 
@@ -45,6 +74,7 @@ pub fn run() {
         .manage(hasn_state.clone())
         .setup({
             let mgr = manager.clone();
+            let hasn_st = hasn_state.clone();
             move |app| {
                 let handle = app.handle().clone();
 
@@ -53,49 +83,58 @@ pub fn run() {
                     let port = sidecar::HUANXING_PORT;
                     eprintln!("[huanxing-desktop] setup: checking config and sidecar...");
 
-                    // 1. 尝试连接已有的唤星 sidecar（上次 App 关闭后常驻的）
-                    if mgr.adopt_existing(port).await {
-                        eprintln!("[huanxing-desktop] Adopted existing sidecar on port {port}");
-                        let _ = handle.emit(
-                            "sidecar://status-changed",
-                            serde_json::json!({
-                                "running": true,
-                                "port": port,
-                            }),
-                        );
-                        return;
-                    }
+                    let config_valid = mgr.has_valid_huanxing_config();
 
-                    // 2. 检查是否有有效的唤星配置
-                    if mgr.has_valid_huanxing_config() {
-                        eprintln!("[huanxing-desktop] Valid huanxing config found, starting sidecar...");
-                        match mgr.start(handle.clone()).await {
-                            Ok(status) => {
-                                eprintln!(
-                                    "[huanxing-desktop] Sidecar started: PID={:?}, port={}",
-                                    status.pid, status.port
-                                );
-                            }
-                            Err(e) => {
-                                eprintln!("[huanxing-desktop] Sidecar start FAILED: {e}");
+                    if config_valid {
+                        // 配置有效 → 尝试连接已有 sidecar，或启动新的
+                        if mgr.adopt_existing(port).await {
+                            eprintln!("[huanxing-desktop] Adopted existing sidecar on port {port}");
+                            let _ = handle.emit(
+                                "sidecar://status-changed",
+                                serde_json::json!({
+                                    "running": true,
+                                    "port": port,
+                                }),
+                            );
+                        } else {
+                            eprintln!("[huanxing-desktop] Valid config, starting sidecar...");
+                            match mgr.start(handle.clone()).await {
+                                Ok(status) => {
+                                    eprintln!(
+                                        "[huanxing-desktop] Sidecar started: PID={:?}, port={}",
+                                        status.pid, status.port
+                                    );
+                                }
+                                Err(e) => {
+                                    eprintln!("[huanxing-desktop] Sidecar start FAILED: {e}");
+                                }
                             }
                         }
+
+                        // Sidecar 就绪后，尝试自动连接 HASN
+                        hasn::hasn_auto_connect(hasn_st, handle.clone()).await;
+
+                        // 异步更新后台缓存应用市场数据
+                        tauri::async_runtime::spawn(async move {
+                            marketplace::sync_marketplace_data().await;
+                        });
+
                         return;
                     }
 
-                    // 3. 配置无效或不存在 — 通知前端
-                    // 前端会检查 localStorage 中是否有 huanxing_session:
-                    //   - 有 session → 自动调用 onboard 修复（静默重建）
-                    //   - 无 session → 显示登录页面
+                    // 配置无效或不存在 → 杀掉可能残留的 sidecar 进程
                     eprintln!(
-                        "[huanxing-desktop] No valid huanxing config at {}, notifying frontend",
+                        "[huanxing-desktop] No valid huanxing config at {}",
                         mgr.config_dir().display()
                     );
+                    mgr.kill_orphan_sidecar(port).await;
+
+                    // 通知前端需要登录
                     let _ = handle.emit(
-                        "huanxing:needs-repair",
+                        "huanxing:config-invalid",
                         serde_json::json!({
                             "config_dir": mgr.config_dir().to_string_lossy(),
-                            "has_any_config": mgr.has_config(),
+                            "config_exists": mgr.has_config(),
                         }),
                     );
                 });
@@ -112,6 +151,8 @@ pub fn run() {
             hasn::hasn_connect,
             hasn::hasn_disconnect,
             hasn::hasn_status,
+            hasn::hasn_provide_token,
+            hasn::hasn_get_client_id,
             // HASN IM
             hasn::get_conversations,
             hasn::get_messages,
@@ -133,6 +174,11 @@ pub fn run() {
             zeroclaw::get_zeroclaw_logs,
             zeroclaw::get_zeroclaw_config,
             zeroclaw::update_zeroclaw_config,
+            // 市场安装与数据接口
+            marketplace::get_market_apps,
+            marketplace::get_market_skills,
+            marketplace::download_and_install_agent,
+            marketplace::download_and_install_skill,
             // Onboard（登录后创建配置+启动）
             zeroclaw::onboard_zeroclaw,
             // 配置有效性检查
