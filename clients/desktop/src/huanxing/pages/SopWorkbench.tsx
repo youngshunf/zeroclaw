@@ -6,6 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Workflow, Play, CheckCircle, AlertTriangle, FileText, Bot, History } from 'lucide-react';
 import { SopRunPanel } from '../components/sop/SopRunPanel';
 import { SopHistoryList } from '../components/sop/SopHistoryList';
+import { resolveApiUrl } from '../config';
 
 export default function SopWorkbench() {
   const [activeAgentName, setActiveAgentName] = useActiveAgent();
@@ -83,7 +84,7 @@ export default function SopWorkbench() {
                 <SelectItem key={a.name} value={a.name}>
                   <div className="flex items-center gap-2">
                     {a.icon_url ? (
-                      <img src={a.icon_url} alt={a.name} className="w-4 h-4 rounded object-cover" />
+                      <img src={resolveApiUrl(a.icon_url)} alt={a.name} className="w-4 h-4 rounded object-cover" />
                     ) : (
                       <Bot className="w-4 h-4" />
                     )}

@@ -199,7 +199,7 @@ export default function ProfilePage() {
           ref={fileInputRef}
           type="file"
           accept="image/jpeg,image/png,image/gif,image/webp"
-          style={{ display: 'none' }}
+          className="hidden"
           onChange={handleFileChange}
         />
       </div>
@@ -234,10 +234,10 @@ export default function ProfilePage() {
           <label>{t('profile.gender')}</label>
           <div className="hx-profile-field-value">
             {editField === 'gender' ? (
-              <div className="hx-profile-field-edit" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <div style={{ flex: 1, minWidth: 120 }}>
+              <div className="hx-profile-field-edit flex items-center gap-1.5">
+                <div className="flex-1 min-w-[120px]">
                   <Select value={editValue || 'none'} onValueChange={(val: string) => setEditValue(val === 'none' ? '' : val)}>
-                    <SelectTrigger className="hx-profile-select w-full" style={{ minWidth: 120 }}>
+                    <SelectTrigger className="hx-profile-select w-full min-w-[120px]">
                       <SelectValue placeholder={t('profile.not_set')} />
                     </SelectTrigger>
                     <SelectContent>

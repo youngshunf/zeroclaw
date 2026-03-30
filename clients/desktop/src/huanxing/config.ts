@@ -134,3 +134,27 @@ export function clearHuanxingSession(): void {
     // ignore
   }
 }
+
+/**
+ * 确保 API URL 是绝对路径
+ * Tauri 环境中，`<img src="/api/...">` 会请求 `tauri://localhost/api/...` 导致未能加载正确图片。
+ * 此函数用于将此类相对路径拼接上实际的后端 baseUrl。
+ */
+export function resolveApiUrl(url: string | null | undefined): string {
+  if (!url) return '';
+  if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:') || url.startsWith('blob:')) {
+    return url;
+  }
+  
+  // 判断是否为 Tauri 桌面端
+  const isDesktop = typeof window !== 'undefined' && 
+    (!!((window as any).__TAURI_INTERNALS__) || !!((window as any).__TAURI__));
+    
+  if (isDesktop) {
+    const base = HUANXING_CONFIG.backendBaseUrl.replace(/\/$/, '');
+    const path = url.startsWith('/') ? url : `/${url}`;
+    return `${base}${path}`;
+  }
+  
+  return url;
+}

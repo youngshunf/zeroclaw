@@ -5,6 +5,8 @@
 @import "./huanxing/styles/modules/chat.css";
 @import "./huanxing/styles/modules/components.css";
 
+/* Tailwind CSS v4 class-based dark mode configuration */
+@custom-variant dark (&:where(.dark, .dark *, [data-theme="dark"], [data-theme="dark"] *));
 /* Base semantic tokens mapping */
 @layer base {
   :root {

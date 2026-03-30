@@ -39,9 +39,9 @@ export function CollapsibleSection({
             'absolute -left-4 top-[5px] select-none transition-all duration-200',
             !hasContent && 'opacity-0',
             hasContent && isCollapsed && 'opacity-100',
-            hasContent && isExpanded && 'opacity-0 group-hover:opacity-100'
+            hasContent && isExpanded && 'opacity-0 group-hover:opacity-100',
+            isExpanded ? 'rotate-90' : 'rotate-0'
           )}
-          style={{ transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
         >
           <ChevronRight className="h-3 w-3 text-gray-400" />
         </div>

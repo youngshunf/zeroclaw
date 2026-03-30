@@ -20,6 +20,7 @@ import {
   AlertCircle,
   FolderOpen,
 } from 'lucide-react';
+import { resolveApiUrl } from '../config';
 import {
   listAgents,
   createAgent,
@@ -119,9 +120,9 @@ function CreateAgentDialog({ open, onClose, onCreate }: CreateDialogProps) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-sm">
       <form
         onSubmit={handleSubmit}
-        className="w-full max-w-lg rounded-2xl border border-[#7c3aed] bg-white p-6 shadow-2xl"
+        className="w-full max-w-lg rounded-2xl border border-[#7c3aed] bg-hx-bg-main p-6 shadow-2xl"
       >
-        <h3 className="mb-4 text-lg font-semibold text-gray-900 flex items-center gap-2">
+        <h3 className="mb-4 text-lg font-semibold text-hx-text-primary flex items-center gap-2">
           <Plus className="h-5 w-5 text-[#7c3aed]" />
           创建新 Agent
         </h3>
@@ -133,7 +134,7 @@ function CreateAgentDialog({ open, onClose, onCreate }: CreateDialogProps) {
           </div>
         )}
 
-        <label className="mb-2 block text-sm text-gray-600">选择模板</label>
+        <label className="mb-2 block text-sm text-hx-text-secondary">选择模板</label>
         {templatesLoading ? (
           <div className="mb-4 flex items-center justify-center py-6">
             <Loader2 className="h-5 w-5 animate-spin text-[#7c3aed]" />
@@ -149,7 +150,7 @@ function CreateAgentDialog({ open, onClose, onCreate }: CreateDialogProps) {
                   'flex flex-col items-center gap-1 rounded-xl border p-3 text-center transition-all',
                   selectedId === tpl.id
                     ? 'border-[#7c3aed] bg-[#7c3aed]/15 text-[#7c3aed]'
-                    : 'border-gray-200 bg-[#FAFAFA]/60 text-gray-600 hover:border-[#7c3aed]',
+                    : 'border-hx-border bg-hx-bg-panel/60 text-hx-text-secondary hover:border-[#7c3aed]',
                 ].join(' ')}
               >
                 <span className="text-xl">{tpl.icon}</span>
@@ -160,21 +161,21 @@ function CreateAgentDialog({ open, onClose, onCreate }: CreateDialogProps) {
         )}
 
         {selectedTemplate && (
-          <p className="mb-4 text-xs text-gray-400">{selectedTemplate.description}</p>
+          <p className="mb-4 text-xs text-hx-text-tertiary">{selectedTemplate.description}</p>
         )}
 
-        <label className="mb-1 block text-sm text-gray-600">名称（可选，支持中文）</label>
+        <label className="mb-1 block text-sm text-hx-text-secondary">名称（可选，支持中文）</label>
         <input
           type="text"
           value={displayName}
           onChange={(e) => setDisplayName(e.target.value)}
           placeholder={selectedTemplate?.name ?? '给你的 Agent 起个名字'}
-          className="mb-4 w-full rounded-lg border border-gray-300 bg-[#F9FAFB] px-3 py-2 text-gray-900 placeholder:text-gray-400 focus:border-[#7c3aed] focus:outline-none"
+          className="mb-4 w-full rounded-lg border border-hx-border bg-hx-bg-input px-3 py-2 text-hx-text-primary placeholder:text-hx-text-tertiary focus:border-[#7c3aed] focus:outline-none"
           autoFocus
         />
 
         {selectedTemplate?.model && (
-          <div className="mb-4 flex items-center gap-2 text-xs text-gray-400">
+          <div className="mb-4 flex items-center gap-2 text-xs text-hx-text-tertiary">
             <span>模型: {selectedTemplate.model}</span>
             <span>·</span>
             <span>温度: {selectedTemplate.temperature}</span>
@@ -185,7 +186,7 @@ function CreateAgentDialog({ open, onClose, onCreate }: CreateDialogProps) {
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg border border-[#7c3aed] px-4 py-2 text-sm text-gray-600 hover:bg-[#FAFAFA]"
+            className="rounded-lg border border-[#7c3aed] px-4 py-2 text-sm text-hx-text-secondary hover:bg-hx-bg-panel"
           >
             取消
           </button>
@@ -257,18 +258,18 @@ function FileEditor({ agentName, filename, onClose }: FileEditorProps) {
   const dirty = content !== original;
 
   return (
-    <div className="flex h-full w-full flex-col min-h-0 min-w-0 overflow-hidden bg-white">
+    <div className="flex h-full w-full flex-col min-h-0 min-w-0 overflow-hidden bg-hx-bg-main">
       {/* Header */}
       <div 
-        className="relative z-10 bg-white flex items-center justify-between border-b border-gray-200 px-5 py-3 shrink-0"
+        className="relative z-10 bg-hx-bg-main flex items-center justify-between border-b border-hx-border px-5 py-3 shrink-0"
         style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
         data-tauri-drag-region
       >
-        <div className="flex items-center gap-2 text-sm text-gray-900 min-w-0" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+        <div className="flex items-center gap-2 text-sm text-hx-text-primary min-w-0" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
           <FileText className="h-4 w-4 text-[#7c3aed] shrink-0" />
           <span className="font-semibold truncate">{agentName}</span>
-          <span className="text-gray-400">/</span>
-          <span className="font-medium text-gray-500">{filename}</span>
+          <span className="text-hx-text-tertiary">/</span>
+          <span className="font-medium text-hx-text-secondary">{filename}</span>
           {dirty && <span className="text-xs text-amber-600 shrink-0">• 未保存</span>}
         </div>
         <div className="flex items-center gap-2 shrink-0" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
@@ -282,7 +283,7 @@ function FileEditor({ agentName, filename, onClose }: FileEditorProps) {
           </button>
           <button
             onClick={onClose}
-            className="rounded-lg p-1.5 text-gray-600 hover:bg-[#FAFAFA] hover:text-gray-900 transition-colors"
+            className="rounded-lg p-1.5 text-hx-text-secondary hover:bg-hx-bg-panel hover:text-hx-text-primary transition-colors"
           >
             <X className="h-4 w-4" />
           </button>
@@ -305,7 +306,7 @@ function FileEditor({ agentName, filename, onClose }: FileEditorProps) {
         <textarea
           value={content}
           onChange={(e) => setContent(e.target.value)}
-          className="flex-1 min-h-0 w-full resize-none bg-white px-5 py-4 font-mono text-sm leading-relaxed text-gray-800 placeholder:text-gray-400 focus:outline-none overflow-auto"
+          className="flex-1 min-h-0 w-full resize-none bg-hx-bg-main px-5 py-4 font-mono text-sm leading-relaxed text-hx-text-primary placeholder:text-hx-text-tertiary focus:outline-none overflow-auto"
           spellCheck={false}
         />
       )}
@@ -333,15 +334,15 @@ function AgentCard({
   const ChevronIcon = expanded ? ChevronDown : ChevronRight;
 
   return (
-    <div className="rounded-2xl border border-gray-200 bg-[#FAFAFA]/60 overflow-hidden transition-all duration-200">
+    <div className="rounded-2xl border border-hx-border bg-hx-bg-panel/60 overflow-hidden transition-all duration-200">
       {/* Agent header */}
       <div
         className={[
           'flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors',
           agent.active
             ? 'bg-[#7c3aed]/10 border-b border-[#7c3aed]/20'
-            : 'hover:bg-white/80',
-          expanded && !agent.active ? 'border-b border-gray-200' : '',
+            : 'hover:bg-hx-bg-main/80',
+          expanded && !agent.active ? 'border-b border-hx-border' : '',
         ].join(' ')}
         onClick={onToggleExpand}
       >
@@ -350,21 +351,21 @@ function AgentCard({
           'flex h-9 w-9 items-center justify-center shrink-0 overflow-hidden',
           agent.icon_url ? '' : 'rounded-xl',
           !agent.icon_url && agent.active ? 'bg-[#7c3aed]/30' : '',
-          !agent.icon_url && !agent.active ? 'bg-gray-200' : '',
+          !agent.icon_url && !agent.active ? 'bg-hx-border' : '',
         ].join(' ')}>
           {agent.icon_url ? (
-            <img src={agent.icon_url} alt={agent.name} className="h-full w-full object-cover rounded-xl" />
+            <img src={resolveApiUrl(agent.icon_url)} alt={agent.name} className="h-full w-full object-cover rounded-xl" />
           ) : agent.active ? (
             <Star className="h-4 w-4 text-[#7c3aed]" />
           ) : (
-            <Bot className="h-4 w-4 text-gray-400" />
+            <Bot className="h-4 w-4 text-hx-text-tertiary" />
           )}
         </div>
 
         {/* Name + model */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <h3 className="text-sm font-semibold text-gray-900 truncate">{agent.display_name || agent.name}</h3>
+            <h3 className="text-sm font-semibold text-hx-text-primary truncate">{agent.display_name || agent.name}</h3>
             {agent.active && (
               <span className="flex items-center gap-1 shrink-0">
                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
@@ -372,7 +373,7 @@ function AgentCard({
               </span>
             )}
           </div>
-          <p className="text-xs text-gray-400 truncate">{agent.model || '未配置模型'}</p>
+          <p className="text-xs text-hx-text-tertiary truncate">{agent.model || '未配置模型'}</p>
         </div>
 
         {/* Actions */}
@@ -381,12 +382,12 @@ function AgentCard({
             <button
               onClick={(e) => { e.stopPropagation(); onDelete(); }}
               title="删除"
-              className="rounded-lg p-1.5 text-gray-400 hover:bg-red-500/20 hover:text-red-400 transition-colors"
+              className="rounded-lg p-1.5 text-hx-text-tertiary hover:bg-red-500/20 hover:text-red-400 transition-colors"
             >
               <Trash2 className="h-3.5 w-3.5" />
             </button>
           )}
-          <ChevronIcon className="h-4 w-4 text-gray-400 transition-transform" />
+          <ChevronIcon className="h-4 w-4 text-hx-text-tertiary transition-transform" />
         </div>
       </div>
 
@@ -395,10 +396,10 @@ function AgentCard({
         <div className="py-1">
           {filesLoading ? (
             <div className="flex items-center justify-center py-4">
-              <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
+              <Loader2 className="h-4 w-4 animate-spin text-hx-text-tertiary" />
             </div>
           ) : files.length === 0 ? (
-            <p className="px-4 py-3 text-xs text-gray-400">暂无工作区文件</p>
+            <p className="px-4 py-3 text-xs text-hx-text-tertiary">暂无工作区文件</p>
           ) : (
             files.map((f) => (
               <button
@@ -408,10 +409,10 @@ function AgentCard({
                   'flex w-full items-center gap-2 px-4 py-2 text-left text-xs transition-colors',
                   editingFile === f
                     ? 'bg-[#7c3aed]/15 text-[#7c3aed]'
-                    : 'text-gray-600 hover:bg-white hover:text-gray-900',
+                    : 'text-hx-text-secondary hover:bg-hx-bg-main hover:text-hx-text-primary',
                 ].join(' ')}
               >
-                <FileText className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+                <FileText className="h-3.5 w-3.5 shrink-0 text-hx-text-tertiary" />
                 <span className="truncate">{f}</span>
               </button>
             ))
@@ -495,15 +496,15 @@ export default function AgentManager() {
   };
 
   return (
-    <div className="flex flex-row h-full min-h-0 w-full min-w-0 overflow-hidden text-gray-900 bg-white">
+    <div className="flex flex-row h-full min-h-0 w-full min-w-0 overflow-hidden text-hx-text-primary bg-hx-bg-main">
       {/* ─── Left: Agent List ─── */}
-      <div className="flex w-72 shrink-0 flex-col border-r border-gray-200 min-h-0 bg-white">
+      <div className="flex w-72 shrink-0 flex-col border-r border-hx-border min-h-0 bg-hx-bg-main">
         <div 
-          className="relative z-10 bg-white flex items-center justify-between border-b border-gray-200 px-4 py-3 shrink-0"
+          className="relative z-10 bg-hx-bg-main flex items-center justify-between border-b border-hx-border px-4 py-3 shrink-0"
           style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
           data-tauri-drag-region
         >
-          <h2 className="text-sm font-semibold text-gray-900" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>Agent 管理</h2>
+          <h2 className="text-sm font-semibold text-hx-text-primary" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>Agent 管理</h2>
           <button
             onClick={() => setShowCreate(true)}
             style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
@@ -528,9 +529,9 @@ export default function AgentManager() {
             </div>
           ) : agents.length === 0 ? (
             <div className="py-12 text-center">
-              <Bot className="mx-auto mb-3 h-10 w-10 text-gray-300" />
-              <p className="text-sm text-gray-400">还没有 Agent</p>
-              <p className="mt-1 text-xs text-gray-400">点击"新建"创建你的第一个 AI 分身</p>
+              <Bot className="mx-auto mb-3 h-10 w-10 text-hx-text-tertiary" />
+              <p className="text-sm text-hx-text-tertiary">还没有 Agent</p>
+              <p className="mt-1 text-xs text-hx-text-tertiary">点击"新建"创建你的第一个 AI 分身</p>
             </div>
           ) : (
             agents.map((a) => (
@@ -562,8 +563,8 @@ export default function AgentManager() {
           <div className="flex flex-1 items-center justify-center">
             <div className="text-center">
               <FolderOpen className="mx-auto mb-3 h-12 w-12 text-[#1e2f5d]" />
-              <p className="text-sm text-gray-400">展开 Agent 选择文件编辑</p>
-              <p className="mt-1 text-xs text-gray-400">支持 Cmd+S 保存</p>
+              <p className="text-sm text-hx-text-tertiary">展开 Agent 选择文件编辑</p>
+              <p className="mt-1 text-xs text-hx-text-tertiary">支持 Cmd+S 保存</p>
             </div>
           </div>
         )}

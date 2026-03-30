@@ -121,64 +121,61 @@ export function SopRunPanel({ sessionId, agentName, sopName, onClose }: SopRunPa
     setInputStr('');
   };
 
-  const getLogStyle = (type: RunLog['type']): React.CSSProperties => {
-    const base: React.CSSProperties = {
-      padding: 10, borderRadius: 'var(--hx-radius-sm)', display: 'flex', gap: 12,
-      border: '1px solid var(--hx-border)', fontSize: 12, fontFamily: 'monospace',
-    };
+  const getLogStyle = (type: RunLog['type']): string => {
+    const base = "p-2.5 rounded-hx-radius-sm flex gap-3 border border-hx-border text-xs font-mono";
     switch (type) {
       case 'system':
-        return { ...base, background: 'var(--hx-purple-bg)', color: 'var(--hx-purple)', borderColor: 'var(--hx-border)' };
+        return `${base} bg-hx-purple-bg text-hx-purple`;
       case 'tool_call':
-        return { ...base, background: 'var(--hx-purple-bg)', color: 'var(--hx-blue)', borderColor: 'var(--hx-border)' };
+        return `${base} bg-hx-purple-bg text-hx-blue`;
       case 'tool_result':
-        return { ...base, background: 'rgba(16,185,129,0.06)', color: 'var(--hx-green)', borderColor: 'rgba(16,185,129,0.2)' };
+        return `${base} bg-emerald-500/5 text-hx-green border-emerald-500/20`;
       case 'error':
-        return { ...base, background: 'rgba(239,68,68,0.06)', color: 'var(--hx-red)', borderColor: 'rgba(239,68,68,0.2)' };
+        return `${base} bg-red-500/5 text-hx-red border-red-500/20`;
       case 'user':
-        return { ...base, background: 'var(--hx-bg-panel)', color: 'var(--hx-text-primary)', borderColor: 'var(--hx-border)', marginLeft: 48, textAlign: 'right' };
+        return `${base} bg-hx-bg-panel text-hx-text-primary ml-12 text-right`;
       case 'agent':
-        return { ...base, background: 'var(--hx-bg-panel)', color: 'var(--hx-text-primary)', borderColor: 'var(--hx-border)', marginRight: 48, boxShadow: 'var(--hx-shadow-sm)' };
+        return `${base} bg-hx-bg-panel text-hx-text-primary mr-12 shadow-hx-shadow-sm`;
       default:
         return base;
     }
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--hx-bg-main)', border: '1px solid var(--hx-border)', borderRadius: 'var(--hx-radius-md)', overflow: 'hidden', boxShadow: 'var(--hx-shadow-md)' }}>
+    <div className="flex flex-col h-full bg-hx-bg-main border border-hx-border rounded-hx-radius-md overflow-hidden shadow-hx-shadow-md">
       {/* Header */}
-      <div style={{ background: 'var(--hx-bg-panel)', borderBottom: '1px solid var(--hx-border)', padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--hx-text-primary)' }}>
-          <Zap style={{ width: 16, height: 16, color: 'var(--hx-amber)' }} />
-          <span style={{ fontWeight: 600, fontSize: 14 }}>{sopName} (运行中)</span>
-          {running && <Loader2 style={{ width: 14, height: 14, color: 'var(--hx-purple)', animation: 'hx-spin 1s linear infinite' }} />}
+      <div className="bg-hx-bg-panel border-b border-hx-border px-4 py-3 flex items-center justify-between">
+        <div className="flex items-center gap-2 text-hx-text-primary">
+          <Zap className="w-4 h-4 text-hx-amber" />
+          <span className="font-semibold text-sm">{sopName} (运行中)</span>
+          {running && <Loader2 className="w-3.5 h-3.5 text-hx-purple animate-spin" />}
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: connected ? 'var(--hx-green)' : 'var(--hx-text-tertiary)' }}>
-            <span style={{ width: 8, height: 8, borderRadius: '50%', background: connected ? 'var(--hx-green)' : 'var(--hx-text-tertiary)' }} />
+        <div className="flex items-center gap-3">
+          <span className={`flex items-center gap-1.5 text-xs ${connected ? 'text-hx-green' : 'text-hx-text-tertiary'}`}>
+            <span className={`w-2 h-2 rounded-full ${connected ? 'bg-hx-green' : 'bg-hx-text-tertiary'}`} />
             {connected ? '已连接' : '连接中...'}
           </span>
-          <button onClick={onClose} style={{ color: 'var(--hx-text-secondary)', fontSize: 13, padding: '4px 8px', background: 'var(--hx-bg-input)', borderRadius: 'var(--hx-radius-sm)', border: '1px solid var(--hx-border)', cursor: 'pointer' }}>
+          <button onClick={onClose} className="text-hx-text-secondary text-[13px] px-2 py-1 bg-hx-bg-input rounded-hx-radius-sm border border-hx-border cursor-pointer">
             关闭 / 隐藏
           </button>
         </div>
       </div>
 
       {/* Logs Area */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
         {logs.map(log => (
-          <div key={log.id} style={getLogStyle(log.type)}>
-            {log.type === 'tool_result' && <CheckCircle2 style={{ width: 14, height: 14, marginTop: 2, flexShrink: 0 }} />}
-            {log.type === 'error' && <AlertCircle style={{ width: 14, height: 14, marginTop: 2, flexShrink: 0 }} />}
-            {log.type === 'agent' && <Bot style={{ width: 16, height: 16, marginTop: 2, color: 'var(--hx-purple)', flexShrink: 0 }} />}
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-                {log.type === 'user' && <span style={{ fontSize: 10, background: 'var(--hx-bg-input)', padding: '2px 6px', borderRadius: 4, color: 'var(--hx-text-tertiary)', marginRight: 8 }}>人工指引</span>}
-                <span style={{ fontSize: 10, color: 'var(--hx-text-tertiary)' }}>{log.timestamp.toLocaleTimeString()}</span>
+          <div key={log.id} className={getLogStyle(log.type)}>
+            {log.type === 'tool_result' && <CheckCircle2 className="w-3.5 h-3.5 mt-0.5 shrink-0" />}
+            {log.type === 'error' && <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />}
+            {log.type === 'agent' && <Bot className="w-4 h-4 mt-0.5 text-hx-purple shrink-0" />}
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center justify-between mb-1">
+                {log.type === 'user' && <span className="text-[10px] bg-hx-bg-input px-1.5 py-0.5 rounded text-hx-text-tertiary mr-2">人工指引</span>}
+                <span className="text-[10px] text-hx-text-tertiary">{log.timestamp.toLocaleTimeString()}</span>
               </div>
-              <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{log.content}</div>
+              <div className="whitespace-pre-wrap break-words">{log.content}</div>
               {log.params?.args && (
-                <pre style={{ marginTop: 8, fontSize: 10, background: 'var(--hx-bg-input)', padding: 8, borderRadius: 'var(--hx-radius-sm)', overflowX: 'auto', color: 'var(--hx-text-secondary)' }}>
+                <pre className="mt-2 text-[10px] bg-hx-bg-input p-2 rounded-hx-radius-sm overflow-x-auto text-hx-text-secondary">
                   {log.params.args}
                 </pre>
               )}
@@ -189,29 +186,21 @@ export function SopRunPanel({ sessionId, agentName, sopName, onClose }: SopRunPa
       </div>
 
       {/* Input Area */}
-      <div style={{ background: 'var(--hx-bg-panel)', borderTop: '1px solid var(--hx-border)', padding: 12, display: 'flex', gap: 8 }}>
+      <div className="bg-hx-bg-panel border-t border-hx-border p-3 flex gap-2">
         <input
           type="text"
           value={inputStr}
           onChange={e => setInputStr(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') handleSend(); }}
           placeholder="提供审批意见或干预执行流..."
-          style={{
-            flex: 1, background: 'var(--hx-bg-input)', border: '1px solid var(--hx-border)',
-            borderRadius: 'var(--hx-radius-sm)', padding: '8px 12px', fontSize: 13,
-            color: 'var(--hx-text-primary)', outline: 'none',
-          }}
+          className="flex-1 bg-hx-bg-input border border-hx-border rounded-hx-radius-sm px-3 py-2 text-[13px] text-hx-text-primary outline-none focus:border-hx-purple"
         />
         <button
           onClick={handleSend}
           disabled={!inputStr.trim()}
-          style={{
-            background: 'var(--hx-purple)', color: '#fff', padding: '8px 16px',
-            borderRadius: 'var(--hx-radius-sm)', border: 'none', cursor: 'pointer',
-            opacity: inputStr.trim() ? 1 : 0.5, display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}
+          className="bg-hx-purple text-white px-4 py-2 rounded-hx-radius-sm border-none cursor-pointer flex items-center justify-center disabled:opacity-50"
         >
-          <Send style={{ width: 16, height: 16 }} />
+          <Send className="w-4 h-4" />
         </button>
       </div>
     </div>

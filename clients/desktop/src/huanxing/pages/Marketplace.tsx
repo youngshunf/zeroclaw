@@ -14,16 +14,17 @@ import {
 } from '../lib/marketplace-api';
 import { listAgents, type AgentInfo } from '../lib/agent-api';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/Select';
+import { resolveApiUrl } from '../config';
 
 // ── Icon 渲染组件 ────────────────────────────────────────────
 function ItemIcon({ iconUrl, emoji, fallback, size = 'md' }: { iconUrl?: string; emoji?: string; fallback: React.ReactNode; size?: 'md' | 'lg' }) {
   const cls = size === 'lg' ? 'w-10 h-10 rounded-xl' : 'w-7 h-7 rounded-lg';
   if (iconUrl) {
-    return <img src={iconUrl} alt="" className={`${cls} object-cover border border-gray-100 shadow-sm`} />;
+    return <img src={resolveApiUrl(iconUrl)} alt="" className={`${cls} object-cover border border-hx-border shadow-hx-shadow-sm`} />;
   }
   if (emoji) {
     return (
-      <div className={`${cls} flex items-center justify-center bg-indigo-50/50 border border-indigo-100/50 shadow-sm ${size === 'lg' ? 'text-2xl' : 'text-lg'}`}>
+      <div className={`${cls} flex items-center justify-center bg-indigo-50/50 dark:bg-indigo-500/10 border border-indigo-100/50 dark:border-indigo-500/20 shadow-sm ${size === 'lg' ? 'text-2xl' : 'text-lg'}`}>
         {emoji}
       </div>
     );
@@ -117,7 +118,7 @@ export function InstallModal({
 
           {installStatus === 'installing' && (
             <div className="space-y-3">
-              <div className="flex items-center gap-2 text-indigo-500 mb-2">
+              <div className="flex items-center gap-2 text-indigo-500 dark:text-indigo-400 mb-2">
                 <Loader2 className="w-4 h-4 animate-spin" />
                 <span className="text-sm font-medium text-hx-text-primary">正在拉取与配置资源...</span>
               </div>
@@ -128,9 +129,9 @@ export function InstallModal({
                 {installSteps.map((step, idx) => {
                   const isError = step.toLowerCase().includes('error') || step.includes('失败') || step.includes('中止');
                   const isSuccess = step.includes('完成') || step.includes('成功');
-                  const color = isError ? '#ef4444' : isSuccess ? '#10b981' : 'var(--hx-text-primary)';
+                  const colorClass = isError ? 'text-red-500' : isSuccess ? 'text-emerald-500' : 'text-hx-text-primary';
                   return (
-                    <div key={idx} style={{ color }} className={`mb-1.5 flex items-start gap-1.5 leading-tight`}>
+                    <div key={idx} className={`mb-1.5 flex items-start gap-1.5 leading-tight ${colorClass}`}>
                       <span className="text-hx-text-tertiary select-none shrink-0 font-medium">[{idx + 1 < 10 ? `0${idx+1}` : idx+1}]</span>
                       <span>{step}</span>
                     </div>
@@ -176,7 +177,7 @@ export function InstallModal({
           {installStatus === 'success' && (
             <button 
               onClick={onClose}
-              className="px-5 py-2 text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 rounded-lg shadow-sm transition-colors"
+              className="px-5 py-2 text-sm font-medium bg-hx-purple hover:bg-hx-purple-hover text-white rounded-lg shadow-sm transition-colors"
             >
               关闭
             </button>
@@ -184,7 +185,7 @@ export function InstallModal({
           {installStatus === 'idle' && (
             <button 
               onClick={onConfirm}
-              className="px-5 py-2 text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 rounded-lg shadow-sm transition-colors"
+              className="px-5 py-2 text-sm font-medium bg-hx-purple hover:bg-hx-purple-hover text-white rounded-lg shadow-sm transition-colors"
             >
               确认并安装
             </button>
@@ -192,7 +193,7 @@ export function InstallModal({
           {installStatus === 'error' && (
             <button 
               onClick={onConfirm}
-              className="px-5 py-2 text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 rounded-lg shadow-sm transition-colors"
+              className="px-5 py-2 text-sm font-medium bg-hx-purple hover:bg-hx-purple-hover text-white rounded-lg shadow-sm transition-colors"
             >
               重试安装
             </button>
@@ -264,7 +265,7 @@ function AgentPlaza() {
         <div key={app.id} className="rounded-hx-radius-md border border-hx-border bg-hx-bg-panel p-4 shadow-hx-shadow-sm flex flex-col">
           <div className="flex items-start justify-between mb-3">
             <div className="flex items-center gap-3">
-              <ItemIcon iconUrl={app.icon_url} emoji={app.emoji} fallback={<Bot className="w-10 h-10 text-indigo-400 p-2 bg-indigo-50 rounded-xl" />} size="lg" />
+              <ItemIcon iconUrl={app.icon_url} emoji={app.emoji} fallback={<Bot className="w-10 h-10 text-indigo-500 dark:text-indigo-400 p-2 bg-indigo-50 dark:bg-indigo-500/10 rounded-xl" />} size="lg" />
               <div>
                 <h3 className="font-semibold text-hx-text-primary text-[15px] leading-tight">{app.name}</h3>
                 {app.skill_dependencies && (
@@ -297,7 +298,7 @@ function AgentPlaza() {
           targetName={targetApp.name}
           iconUrl={targetApp.icon_url}
           emoji={targetApp.emoji}
-          iconFallback={<Bot className="w-8 h-8 text-indigo-400 p-1.5 bg-indigo-50 rounded-lg" />}
+          iconFallback={<Bot className="w-8 h-8 text-indigo-500 dark:text-indigo-400 p-1.5 bg-indigo-50 dark:bg-indigo-500/10 rounded-lg" />}
           agentNameInput={agentNameInput}
           setAgentNameInput={setAgentNameInput}
           installStatus={installStatus}
@@ -388,7 +389,7 @@ function SkillMarket() {
               <button
                 onClick={() => openInstallModal(skill)}
                 disabled={!selectedAgent}
-                className="px-3 py-1.5 bg-[#10b981] text-white text-xs font-medium rounded-lg hover:bg-[#059669] disabled:opacity-50 flex items-center gap-1 transition-colors"
+                className="px-3 py-1.5 bg-[#10b981] dark:bg-emerald-600/90 text-white text-xs font-medium rounded-lg hover:bg-[#059669] dark:hover:bg-emerald-500 disabled:opacity-50 flex items-center gap-1 transition-colors"
               >
                 <Download className="w-3.5 h-3.5" />
                 赋能 Agent
@@ -407,7 +408,7 @@ function SkillMarket() {
           targetName={targetSkill.name}
           iconUrl={targetSkill.icon_url}
           emoji={targetSkill.emoji}
-          iconFallback={<Wrench className="w-8 h-8 text-indigo-400 p-1.5 bg-indigo-50 rounded-lg" />}
+          iconFallback={<Wrench className="w-8 h-8 text-indigo-500 dark:text-indigo-400 p-1.5 bg-indigo-50 dark:bg-indigo-500/10 rounded-lg" />}
           installStatus={installStatus}
           installSteps={installSteps}
           installError={installError}
@@ -508,7 +509,7 @@ function SopMarket() {
               <div className="mb-3">
                 <span className="text-[10px] text-gray-400">依赖技能: </span>
                 {sop.skill_dependencies.split(',').map((dep) => (
-                  <span key={dep.trim()} className="inline-block text-[10px] bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded mr-1 mb-1">
+                  <span key={dep.trim()} className="inline-block text-[10px] bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 px-1.5 py-0.5 rounded mr-1 mb-1">
                     {dep.trim()}
                   </span>
                 ))}
@@ -538,7 +539,7 @@ function SopMarket() {
           targetName={targetSop.name}
           iconUrl={targetSop.icon_url}
           emoji={targetSop.emoji}
-          iconFallback={<Workflow className="w-8 h-8 text-indigo-400 p-1.5 bg-indigo-50 rounded-lg" />}
+          iconFallback={<Workflow className="w-8 h-8 text-indigo-500 dark:text-indigo-400 p-1.5 bg-indigo-50 dark:bg-indigo-500/10 rounded-lg" />}
           installStatus={installStatus}
           installSteps={installSteps}
           installError={installError}
@@ -565,7 +566,7 @@ function AgentSelector({ agents, selected, onChange, label }: { agents: AgentInf
             <SelectItem key={a.name} value={a.name}>
               <div className="flex items-center gap-2">
                 {a.icon_url ? (
-                  <img src={a.icon_url} alt={a.name} className="w-4 h-4 rounded object-cover" />
+                  <img src={resolveApiUrl(a.icon_url)} alt={a.name} className="w-4 h-4 rounded object-cover" />
                 ) : (
                   <Bot className="w-4 h-4" />
                 )}

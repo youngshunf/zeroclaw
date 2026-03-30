@@ -509,8 +509,7 @@ export function HxChatInput({
             {/* Status indicator */}
             <div className="hx-input-status">
               <span
-                className="hx-input-status-dot"
-                style={{ background: connected ? 'var(--hx-green)' : 'var(--hx-amber)' }}
+                className={`hx-input-status-dot ${connected ? 'bg-[var(--hx-green)]' : 'bg-[var(--hx-amber)]'}`}
               />
               <span className="hx-input-status-text">
                 {connected ? agentName : '连接中...'}

@@ -41,9 +41,9 @@ export function CodeBlock({ code, language = 'text', className, mode = 'full' }:
     let cancelled = false
 
     async function highlight() {
-      // Detect theme from .hx-app[data-theme]
-      const hxApp = document.querySelector('.hx-app')
-      const isDark = hxApp?.getAttribute('data-theme') === 'dark'
+      // Detect theme from documentElement[data-theme]
+      const root = document.documentElement
+      const isDark = root?.getAttribute('data-theme') === 'dark'
       const theme = isDark ? 'github-dark' : 'github-light'
       const cacheKey = `${theme}:${resolvedLang}:${code}`
 

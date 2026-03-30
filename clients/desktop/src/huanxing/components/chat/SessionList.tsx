@@ -18,6 +18,7 @@ import {
   Cloud,
   Monitor,
 } from 'lucide-react';
+import { resolveApiUrl } from '../../config';
 import {
   listSessions,
   createSession,
@@ -174,7 +175,7 @@ export default function SessionList({
   const getAgentIcon = (agentNameOrId: string) => {
     if (!agentNameOrId || agentNameOrId === 'default') return null;
     const found = agents?.find(a => a.name === agentNameOrId);
-    return found?.icon_url || null;
+    return resolveApiUrl(found?.icon_url) || null;
   };
 
   // Filter sessions by search query
@@ -250,27 +251,18 @@ export default function SessionList({
     <div className="hx-panel">
       {/* Header — 简洁标题 + 新建对话 */}
       <div className="hx-panel-header">
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 6,
-            padding: '4px 8px',
-            fontSize: 15,
-            fontWeight: 600,
-            color: 'var(--hx-text-primary)',
-          }}>
-            <MessageSquare size={18} style={{ color: 'var(--hx-purple)', flexShrink: 0 }} />
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1.5 px-2 py-1 text-[15px] font-semibold text-hx-text-primary">
+            <MessageSquare className="w-[18px] h-[18px] text-hx-purple shrink-0" />
             <span>会话</span>
           </div>
 
           <button
             onClick={() => handleCreate()}
-            className="hx-nav-item"
-            style={{ width: 32, height: 32, flexShrink: 0 }}
+            className="hx-nav-item w-8 h-8 shrink-0 flex items-center justify-center p-0"
             title="新建对话"
           >
-            <Plus size={18} />
+            <Plus className="w-[18px] h-[18px]" />
           </button>
         </div>
         <div className="hx-panel-search">
@@ -287,13 +279,13 @@ export default function SessionList({
       {/* Session list — grouped by Agent */}
       <div className="hx-conv-list">
         {loading && sessions.length === 0 && (agents ?? []).length === 0 ? (
-          <div className="hx-empty-state" style={{ padding: '40px 0' }}>
-            <Loader2 size={24} className="animate-spin" style={{ color: 'var(--hx-purple)' }} />
+          <div className="hx-empty-state py-10">
+            <Loader2 className="w-6 h-6 animate-spin text-hx-purple" />
           </div>
         ) : searchQuery && filteredSessions.length === 0 ? (
-          <div className="hx-empty-state" style={{ padding: '40px 0' }}>
-            <MessageSquare size={32} style={{ opacity: 0.4 }} />
-            <p style={{ fontSize: 13 }}>未找到匹配的对话</p>
+          <div className="hx-empty-state py-10">
+            <MessageSquare className="w-8 h-8 opacity-40" />
+            <p className="text-[13px] mt-2">未找到匹配的对话</p>
           </div>
         ) : (
           groupedSessions.map(({ agentId, displayName, location, sessions: agentSessions }) => {
@@ -311,78 +303,49 @@ export default function SessionList({
                 {hasMultipleAgents && (
                   <div
                     onClick={() => toggleAgentCollapse(agentId)}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 6,
-                      padding: '8px 12px 4px',
-                      cursor: 'pointer',
-                      userSelect: 'none',
-                    }}
+                    className="flex items-center gap-1.5 px-3 pt-2 pb-1 cursor-pointer select-none"
                   >
                     {isCollapsed ? (
-                      <ChevronRight size={14} style={{ opacity: 0.5, flexShrink: 0 }} />
+                      <ChevronRight className="w-3.5 h-3.5 opacity-50 shrink-0" />
                     ) : (
-                      <ChevronDown size={14} style={{ opacity: 0.5, flexShrink: 0 }} />
+                      <ChevronDown className="w-3.5 h-3.5 opacity-50 shrink-0" />
                     )}
                     {getAgentIcon(agentId) ? (
-                      <img src={getAgentIcon(agentId)!} alt={displayName} style={{ width: 14, height: 14, borderRadius: 4, flexShrink: 0, opacity: 0.8 }} />
+                      <img src={getAgentIcon(agentId)!} alt={displayName} className="w-3.5 h-3.5 rounded shrink-0 opacity-80 object-cover" />
                     ) : (
-                      <Bot size={14} style={{ color: getAgentColor(agentId), opacity: 0.8, flexShrink: 0 }} />
+                      <Bot className="w-3.5 h-3.5 opacity-80 shrink-0" style={{ color: getAgentColor(agentId) }} />
                     )}
-                    <span style={{
-                      fontSize: 12,
-                      fontWeight: 600,
-                      color: 'var(--hx-text-secondary)',
-                      flex: 1,
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.5px',
-                    }}>
+                    <span className="text-xs font-semibold text-hx-text-secondary flex-1 overflow-hidden text-ellipsis whitespace-nowrap uppercase tracking-wider">
                       {displayName}
                     </span>
                     {location === 'remote' && (
-                      <span title="云端" style={{ flexShrink: 0, lineHeight: 0 }}>
-                        <Cloud size={12} style={{ opacity: 0.4 }} />
+                      <span title="云端" className="shrink-0 leading-none">
+                        <Cloud className="w-3 h-3 opacity-40" />
                       </span>
                     )}
                     {location === 'local' && (
-                      <span title="本地" style={{ flexShrink: 0, lineHeight: 0 }}>
-                        <Monitor size={12} style={{ opacity: 0.4 }} />
+                      <span title="本地" className="shrink-0 leading-none">
+                        <Monitor className="w-3 h-3 opacity-40" />
                       </span>
                     )}
-                    <span style={{
-                      fontSize: 11,
-                      color: 'var(--hx-text-tertiary)',
-                      flexShrink: 0,
-                    }}>
+                    <span className="text-[11px] text-hx-text-tertiary shrink-0">
                       {agentSessions.length}
                     </span>
                     {isCollapsed && agentTypingCount > 0 && (
-                      <Loader2 size={12} className="animate-spin" style={{ color: 'var(--hx-yellow, #FFD93D)', flexShrink: 0 }} />
+                      <Loader2 className="w-3 h-3 animate-spin text-[#FFD93D] shrink-0" />
                     )}
                     {isCollapsed && agentUnreadTotal > 0 && (
-                      <span className="hx-conv-badge" style={{ fontSize: 10, padding: '1px 5px' }}>
+                      <span className="hx-conv-badge text-[10px] px-1.5 py-[1px]">
                         {agentUnreadTotal > 99 ? '99+' : agentUnreadTotal}
                       </span>
                     )}
                     {/* Quick-add button for this agent group */}
                     <button
                       onClick={(e) => { e.stopPropagation(); handleCreate(agentId); }}
-                      style={{
-                        background: 'none',
-                        border: 'none',
-                        padding: 2,
-                        cursor: 'pointer',
-                        color: 'var(--hx-text-secondary)',
-                        opacity: 0.5,
-                        flexShrink: 0,
-                      }}
+                      className="bg-transparent border-none p-0.5 cursor-pointer text-hx-text-secondary hover:text-hx-text-primary opacity-50 hover:opacity-100 shrink-0 ml-auto"
                       title={`在 ${displayName} 下新建对话`}
                     >
-                      <Plus size={14} />
+                      <Plus className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 )}
@@ -401,36 +364,31 @@ export default function SessionList({
                       onClick={() => !isEditing && onSelectSession(session.id, session.agent_id)}
                       className={`hx-conv-item${isActive ? ' active' : ''}`}
                     >
-                      <div className="hx-conv-avatar" style={{
-                        position: 'relative',
+                      <div className="hx-conv-avatar relative" style={{
                         background: getAgentIcon(session.agent_id) ? 'transparent' : `${getAgentColor(session.agent_id)}20`,
                         color: getAgentColor(session.agent_id),
                       }}>
                         {getAgentIcon(session.agent_id) ? (
-                          <img src={getAgentIcon(session.agent_id)!} alt="agent" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'inherit' }} />
+                          <img src={getAgentIcon(session.agent_id)!} alt="agent" className="w-full h-full object-cover rounded-inherit" />
                         ) : (
-                          <Bot size={18} />
+                          <Bot className="w-[18px] h-[18px]" />
                         )}
                         {/* Connection status dot */}
-                        <span style={{
-                          position: 'absolute',
-                          bottom: 0,
-                          right: 0,
-                          width: 8,
-                          height: 8,
-                          borderRadius: '50%',
-                          background: isTyping
-                            ? 'var(--hx-yellow, #FFD93D)'
-                            : isConnected
-                              ? 'var(--hx-green, #22C55E)'
-                              : 'var(--hx-text-tertiary, #6B7280)',
-                          border: '2px solid var(--hx-bg-panel, #1A1E2E)',
-                          transition: 'background 0.3s',
-                        }} title={isTyping ? '思考中...' : isConnected ? '在线' : '离线'} />
+                        <span 
+                          className="absolute bottom-0 right-0 w-2 h-2 rounded-full border-2 border-[var(--hx-bg-panel,#1A1E2E)] transition-colors duration-300"
+                          style={{
+                            background: isTyping
+                              ? 'var(--hx-yellow, #FFD93D)'
+                              : isConnected
+                                ? 'var(--hx-green, #22C55E)'
+                                : 'var(--hx-text-tertiary, #6B7280)',
+                          }} 
+                          title={isTyping ? '思考中...' : isConnected ? '在线' : '离线'} 
+                        />
                       </div>
 
                       {isEditing ? (
-                        <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
+                        <div className="flex-1 flex items-center gap-1 min-w-0">
                           <input
                             ref={editInputRef}
                             value={editTitle}
@@ -439,18 +397,13 @@ export default function SessionList({
                               if (e.key === 'Enter') handleSaveRename();
                               if (e.key === 'Escape') setEditingId(null);
                             }}
-                            style={{
-                              flex: 1, minWidth: 0, border: '1px solid var(--hx-purple)',
-                              borderRadius: 6, padding: '4px 8px', fontSize: 13,
-                              background: 'var(--hx-bg-main)', color: 'var(--hx-text-primary)',
-                              outline: 'none',
-                            }}
+                            className="flex-1 min-w-0 border border-hx-purple rounded-md px-2 py-1 text-[13px] bg-hx-bg-main text-hx-text-primary outline-none"
                           />
-                          <button onClick={handleSaveRename} style={{ color: 'var(--hx-green)', padding: 2, background: 'none', border: 'none', cursor: 'pointer' }}>
-                            <Check size={14} />
+                          <button onClick={handleSaveRename} className="text-hx-green p-0.5 bg-transparent border-none cursor-pointer">
+                            <Check className="w-3.5 h-3.5" />
                           </button>
-                          <button onClick={() => setEditingId(null)} style={{ color: 'var(--hx-red)', padding: 2, background: 'none', border: 'none', cursor: 'pointer' }}>
-                            <X size={14} />
+                          <button onClick={() => setEditingId(null)} className="text-hx-red p-0.5 bg-transparent border-none cursor-pointer">
+                            <X className="w-3.5 h-3.5" />
                           </button>
                         </div>
                       ) : (

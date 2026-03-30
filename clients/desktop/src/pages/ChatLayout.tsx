@@ -21,7 +21,7 @@ import { useAgentSkills } from '@/huanxing/hooks/useAgentSkills';
 import { Markdown } from '@/huanxing/components/markdown';
 import { HxImageMessage, containsImageMarkers } from '@/huanxing/components/chat/HxImageMessage';
 import { StreamingBubble } from '@/huanxing/components/chat/StreamingBubble';
-import { getHuanxingSession } from '@/huanxing/config';
+import { getHuanxingSession, resolveApiUrl } from '@/huanxing/config';
 
 const SessionList = lazy(() => import('@/huanxing/components/chat/SessionList'));
 
@@ -413,6 +413,8 @@ export default function ChatLayout() {
         }
         // 也刷新一下 Agent 列表
         loadAgents();
+        // 触发会话列表重新加载
+        setReloadKey(k => k + 1);
       } catch (err) {
         if (cancelled) return;
         if (attempt < MAX_RETRIES) {
@@ -600,7 +602,7 @@ export default function ChatLayout() {
             <div className="hx-chat-header-left">
               <div className="hx-chat-header-avatar" style={{ overflow: 'hidden' }}>
                 {activeAgentInfo?.icon_url ? (
-                  <img src={activeAgentInfo.icon_url} alt="agent" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'inherit' }} />
+                  <img src={resolveApiUrl(activeAgentInfo.icon_url)} alt="agent" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'inherit' }} />
                 ) : (
                   <Bot size={18} />
                 )}
@@ -650,7 +652,7 @@ export default function ChatLayout() {
                   )
                 ) : (
                   activeAgentInfo?.icon_url ? (
-                    <img src={activeAgentInfo.icon_url} alt="agent" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'inherit' }} />
+                    <img src={resolveApiUrl(activeAgentInfo.icon_url)} alt="agent" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'inherit' }} />
                   ) : (
                     <Bot size={16} />
                   )
@@ -687,7 +689,7 @@ export default function ChatLayout() {
             <div className="hx-msg agent">
               <div className="hx-msg-avatar" style={{ overflow: 'hidden', padding: activeAgentInfo?.icon_url ? 0 : undefined }}>
                 {activeAgentInfo?.icon_url ? (
-                  <img src={activeAgentInfo.icon_url} alt="agent" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'inherit' }} />
+                  <img src={resolveApiUrl(activeAgentInfo.icon_url)} alt="agent" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'inherit' }} />
                 ) : (
                   <Bot size={16} />
                 )}

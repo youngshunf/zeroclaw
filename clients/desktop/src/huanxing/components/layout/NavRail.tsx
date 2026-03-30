@@ -55,10 +55,10 @@ export default function NavRail({ activeTab, onTabChange, badges = {} }: NavRail
 
   // Apply theme attribute
   useEffect(() => {
-    const root = document.querySelector('.hx-app');
-    if (root) {
-      root.setAttribute('data-theme', isDark ? 'dark' : 'light');
-    }
+    const root = document.documentElement;
+    root.setAttribute('data-theme', isDark ? 'dark' : 'light');
+    if (isDark) root.classList.add('dark');
+    else root.classList.remove('dark');
     localStorage.setItem('huanxing_theme', isDark ? 'dark' : 'light');
   }, [isDark]);
 

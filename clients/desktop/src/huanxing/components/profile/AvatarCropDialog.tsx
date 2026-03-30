@@ -110,15 +110,12 @@ export default function AvatarCropDialog({ imageSrc, onCropComplete, onClose }: 
           <img
             src={imageSrc}
             onLoad={handleImgLoad}
+            className="absolute max-w-none select-none pointer-events-none"
             style={{
-              position: 'absolute',
               left: offset.x,
               top: offset.y,
               width: imgSize.w * scale,
               height: imgSize.h * scale,
-              maxWidth: 'none',
-              userSelect: 'none',
-              pointerEvents: 'none',
             }}
             draggable={false}
             alt=""

@@ -38,7 +38,12 @@ export interface CreateAgentParams {
 
 /** List all agents */
 export async function listAgents(): Promise<AgentListResponse> {
-  return apiFetch<AgentListResponse>('/api/agents');
+  const data = await apiFetch<AgentListResponse>('/api/agents');
+  data.agents = data.agents.map(a => ({
+    ...a,
+    icon_url: a.icon_url && !a.icon_url.startsWith('http') ? `${HUANXING_CONFIG.sidecarBaseUrl}${a.icon_url}` : a.icon_url
+  }));
+  return data;
 }
 
 /** Create a new agent — injects user's LLM token from login session + registers HASN identity */

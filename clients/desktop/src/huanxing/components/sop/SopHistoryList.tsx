@@ -35,28 +35,28 @@ export function SopHistoryList() {
   }, [activeAgentName]);
 
   if (!activeAgentName) {
-    return <div style={{ padding: 32, textAlign: 'center', color: 'var(--hx-text-tertiary)' }}>此模块需要选中一个 Agent</div>;
+    return <div className="p-8 text-center text-hx-text-tertiary">此模块需要选中一个 Agent</div>;
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--hx-bg-main)', color: 'var(--hx-text-primary)' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 16, borderBottom: '1px solid var(--hx-border)' }}>
-        <h2 style={{ fontSize: 13, fontWeight: 600, color: 'var(--hx-text-primary)', display: 'flex', alignItems: 'center', gap: 8, margin: 0 }}>
-          <Clock style={{ width: 16, height: 16, color: 'var(--hx-purple)' }} /> 
+    <div className="flex flex-col h-full bg-hx-bg-main text-hx-text-primary">
+      <div className="flex items-center justify-between p-4 border-b border-hx-border">
+        <h2 className="text-[13px] font-semibold text-hx-text-primary flex items-center gap-2 m-0">
+          <Clock className="w-4 h-4 text-hx-purple" /> 
           SOP 执行历史 ({runs.length})
         </h2>
         <button 
           onClick={loadRuns}
           disabled={loading}
-          style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--hx-text-tertiary)', padding: 4 }}
+          className="bg-transparent border-none cursor-pointer text-hx-text-tertiary p-1 disabled:opacity-50"
         >
-          <RefreshCw style={{ width: 16, height: 16, animation: loading ? 'hx-spin 1s linear infinite' : 'none' }} />
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
         </button>
       </div>
       
-      <div style={{ flex: 1, overflowY: 'auto', padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
         {runs.length === 0 && !loading ? (
-          <div style={{ textAlign: 'center', color: 'var(--hx-text-tertiary)', fontSize: 13, marginTop: 48 }}>
+          <div className="text-center text-hx-text-tertiary text-[13px] mt-12">
             暂无历史执行记录
           </div>
         ) : (
@@ -68,42 +68,38 @@ export function SopHistoryList() {
             return (
               <div 
                 key={run.run_id} 
-                style={{
-                  padding: 12,
-                  borderRadius: 'var(--hx-radius-md)',
-                  border: `1px solid ${isActive ? 'var(--hx-purple)' : 'var(--hx-border)'}`,
-                  background: isActive ? 'var(--hx-purple-bg)' : 'var(--hx-bg-panel)',
-                  transition: 'all 0.15s',
-                }}
+                className={`p-3 rounded-hx-radius-md border transition-all duration-150 ${
+                  isActive ? 'border-hx-purple bg-hx-purple-bg' : 'border-hx-border bg-hx-bg-panel'
+                }`}
               >
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    {isCompleted ? <CheckCircle2 style={{ width: 16, height: 16, color: 'var(--hx-green)' }} /> :
-                     isFailed ? <XCircle style={{ width: 16, height: 16, color: 'var(--hx-red)' }} /> :
-                     <RefreshCw style={{ width: 16, height: 16, color: 'var(--hx-purple)', animation: 'hx-spin 1s linear infinite' }} />}
-                    <span style={{ fontWeight: 500, fontSize: 13, color: 'var(--hx-text-primary)' }}>{run.sop_name}</span>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    {isCompleted ? <CheckCircle2 className="w-4 h-4 text-hx-green" /> :
+                     isFailed ? <XCircle className="w-4 h-4 text-hx-red" /> :
+                     <RefreshCw className="w-4 h-4 text-hx-purple animate-spin" />}
+                    <span className="font-medium text-[13px] text-hx-text-primary">{run.sop_name}</span>
                   </div>
-                  <span style={{ fontSize: 10, color: 'var(--hx-text-tertiary)', fontFamily: 'monospace' }}>
+                  <span className="text-[10px] text-hx-text-tertiary font-mono">
                     {run.run_id.slice(0, 8)}
                   </span>
                 </div>
                 
-                <div style={{ display: 'flex', alignItems: 'center', gap: 16, fontSize: 12, color: 'var(--hx-text-secondary)' }}>
+                <div className="flex items-center gap-4 text-xs text-hx-text-secondary">
                   <span>状态: 
-                    <span style={{ marginLeft: 4, color: isActive ? 'var(--hx-purple)' : isCompleted ? 'var(--hx-green)' : 'var(--hx-red)' }}>
+                    <span className={`ml-1 ${isActive ? 'text-hx-purple' : isCompleted ? 'text-hx-green' : 'text-hx-red'}`}>
                       {run.status}
                     </span>
                   </span>
                   <span>进度: {Math.min(run.current_step, run.total_steps)}/{run.total_steps}</span>
                   {run.llm_calls_saved > 0 && (
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--hx-amber)' }} title="节省了的 LLM 推理次数">
-                      <Zap style={{ width: 12, height: 12 }} />
+                    <span className="flex items-center gap-1 text-hx-amber" title="节省了的 LLM 推理次数">
+                      <Zap className="w-3 h-3" />
                       节约: {run.llm_calls_saved}
                     </span>
                   )}
                 </div>
                 
-                <div style={{ marginTop: 8, fontSize: 10, color: 'var(--hx-text-tertiary)', display: 'flex', justifyContent: 'space-between' }}>
+                <div className="mt-2 text-[10px] text-hx-text-tertiary flex justify-between">
                   <span>开始于 {new Date(run.started_at).toLocaleString()}</span>
                   {run.completed_at && <span>结束于 {new Date(run.completed_at).toLocaleString()}</span>}
                 </div>
