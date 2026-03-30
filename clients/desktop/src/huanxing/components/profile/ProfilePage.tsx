@@ -10,6 +10,8 @@ import AvatarCropDialog from './AvatarCropDialog';
 import { t } from '../../../lib/i18n';
 import { useLocaleContext } from '../../../App';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/Select';
+import { Input } from '../../../components/ui/Input';
+import { Textarea } from '../../../components/ui/Textarea';
 
 interface UserProfile {
   nickname: string;
@@ -273,9 +275,9 @@ export default function ProfilePage() {
           <div className="hx-profile-field-value">
             {editField === 'birthday' ? (
               <div className="hx-profile-field-edit">
-                <input
+                <Input
                   type="date"
-                  className="hx-profile-input"
+                  className="flex-1"
                   value={editValue}
                   onChange={(e) => setEditValue(e.target.value)}
                 />
@@ -364,8 +366,8 @@ function ProfileField({
         {editField === field ? (
           <div className="hx-profile-field-edit">
             {multiline ? (
-              <textarea
-                className="hx-profile-textarea"
+              <Textarea
+                className="w-full resize-none"
                 value={editValue}
                 onChange={(e) => onChange(e.target.value)}
                 placeholder={placeholder}
@@ -373,8 +375,8 @@ function ProfileField({
                 autoFocus
               />
             ) : (
-              <input
-                className="hx-profile-input"
+              <Input
+                className="flex-1"
                 value={editValue}
                 onChange={(e) => onChange(e.target.value)}
                 placeholder={placeholder}

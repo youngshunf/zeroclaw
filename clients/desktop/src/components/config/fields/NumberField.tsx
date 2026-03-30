@@ -1,10 +1,11 @@
 import type { FieldProps } from '../types';
+import { Input } from '../../ui/Input';
 
 export default function NumberField({ field, value, onChange }: FieldProps) {
   const numValue = value === undefined || value === null || value === '' ? '' : Number(value);
 
   return (
-    <input
+    <Input
       type="number"
       value={numValue}
       onChange={(e) => {
@@ -35,7 +36,7 @@ export default function NumberField({ field, value, onChange }: FieldProps) {
       max={field.max}
       step={field.step ?? 1}
       placeholder={field.description ?? ''}
-      className="w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none transition-colors"
+      className=""
     />
   );
 }

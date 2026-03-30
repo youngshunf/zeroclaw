@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { X } from 'lucide-react';
 import type { FieldProps } from '../types';
+import { Input } from '../../ui/Input';
 
 export default function TagListField({ field, value, onChange }: FieldProps) {
   const [input, setInput] = useState('');
@@ -46,14 +47,14 @@ export default function TagListField({ field, value, onChange }: FieldProps) {
           </span>
         ))}
       </div>
-      <input
+      <Input
         type="text"
         value={input}
         onChange={(e) => setInput(e.target.value)}
         onKeyDown={handleKeyDown}
         onBlur={() => { if (input.trim()) addTag(input); }}
         placeholder={field.tagPlaceholder ?? 'Type and press Enter to add'}
-        className="w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none transition-colors"
+        className=""
       />
     </div>
   );

@@ -21,6 +21,7 @@ import {
   FolderOpen,
 } from 'lucide-react';
 import { resolveApiUrl } from '../config';
+import { Input } from '../../components/ui/Input';
 import {
   listAgents,
   createAgent,
@@ -165,12 +166,12 @@ function CreateAgentDialog({ open, onClose, onCreate }: CreateDialogProps) {
         )}
 
         <label className="mb-1 block text-sm text-hx-text-secondary">名称（可选，支持中文）</label>
-        <input
+        <Input
           type="text"
           value={displayName}
           onChange={(e) => setDisplayName(e.target.value)}
           placeholder={selectedTemplate?.name ?? '给你的 Agent 起个名字'}
-          className="mb-4 w-full rounded-lg border border-hx-border bg-hx-bg-input px-3 py-2 text-hx-text-primary placeholder:text-hx-text-tertiary focus:border-[#7c3aed] focus:outline-none"
+          className="mb-4"
           autoFocus
         />
 

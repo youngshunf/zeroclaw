@@ -33,6 +33,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/AlertDialog';
+import { FolderTreeSelect } from '@/components/ui/FolderTreeSelect';
+import { Input } from '@/components/ui/Input';
 
 export default function Documents() {
   const [documents, setDocuments] = useState<HuanxingDocumentResult[]>([]);
@@ -59,7 +61,7 @@ export default function Documents() {
   const [folderCreateTarget, setFolderCreateTarget] = useState<{ parentId: number | null } | null>(null);
   const [moveDocTarget, setMoveDocTarget] = useState<HuanxingDocumentResult | null>(null);
   const [newFolderName, setNewFolderName] = useState('');
-  const [moveTargetFolderName, setMoveTargetFolderName] = useState('');
+  const [moveTargetFolderId, setMoveTargetFolderId] = useState<number | null>(null);
 
   const fetchFolders = useCallback(async () => {
     try {
@@ -246,34 +248,13 @@ export default function Documents() {
   const confirmMoveDocument = async () => {
     if (!moveDocTarget) return;
     
-    let targetId = null;
-    if (moveTargetFolderName.trim()) {
-      const lowerReq = moveTargetFolderName.trim().toLowerCase();
-      const findFolder = (nodes: any[]): any => {
-         for(const n of nodes) {
-           if(n.name.toLowerCase() === lowerReq) return n;
-           if(n.children) {
-             const res = findFolder(n.children);
-             if(res) return res;
-           }
-         }
-         return null;
-      }
-      const target = findFolder(folderTree);
-      if (!target) {
-        // 可以通过改变输入框颜色或显示错误信息来处理，这里先静默
-        return;
-      }
-      targetId = target.id;
-    }
-    
     try {
       const session = getHuanxingSession();
       if (!session?.accessToken) return;
-      await moveHuanxingDocumentApi(session.accessToken, moveDocTarget.id, targetId);
-      setDocuments(docs => docs.map(d => d.id === moveDocTarget.id ? { ...d, folder_id: targetId } : d));
+      await moveHuanxingDocumentApi(session.accessToken, moveDocTarget.id, moveTargetFolderId);
+      setDocuments(docs => docs.map(d => d.id === moveDocTarget.id ? { ...d, folder_id: moveTargetFolderId } : d));
       setMoveDocTarget(null);
-      setMoveTargetFolderName('');
+      setMoveTargetFolderId(null);
     } catch(err) {
       console.error('Move doc failed:', err);
     }
@@ -335,7 +316,7 @@ export default function Documents() {
             onClick={(e) => {
               e.stopPropagation();
               setMoveDocTarget(doc);
-              setMoveTargetFolderName('');
+              setMoveTargetFolderId(doc.folder_id || null);
             }}
             className="p-1 -mr-1 rounded bg-transparent text-hx-text-tertiary hover:bg-hx-purple/10 hover:text-hx-purple transition-colors border-none cursor-pointer"
             title="移动到目录"
@@ -437,11 +418,12 @@ export default function Documents() {
           </div>
           <div className="hx-panel-search">
             <Search size={16} />
-            <input
+            <Input
               type="text"
               placeholder="搜索文档快照..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-9"
             />
           </div>
         </div>
@@ -474,14 +456,14 @@ export default function Documents() {
             {/* Header 控制栏 */}
             <div data-tauri-drag-region="true" className="h-14 shrink-0 px-6 border-b border-hx-border flex items-center justify-between bg-hx-bg-panel/50 z-10 w-full">
               {isEditing ? (
-                 <input
+                 <Input
                  type="text"
                  value={editorTitle}
                  onChange={(e) => setEditorTitle(e.target.value)}
                  id="title-input-box"
                  placeholder="在此键入文档标题"
-                 className="flex-1 min-w-0 w-full rounded-md border border-hx-border bg-hx-bg-input px-3 py-1.5 text-lg font-bold text-hx-text-primary placeholder:text-hx-text-tertiary focus:border-[#7c3aed] transition-colors mr-4"
-                 style={{ boxShadow: 'none', outline: 'none' }}
+                 className="flex-1 text-lg font-bold !h-auto py-1.5"
+                 autoFocus
                />
               ) : (
                  <div data-tauri-drag-region="true" className="flex items-center h-full text-lg font-bold text-hx-text-primary flex-1 truncate mr-4">
@@ -601,11 +583,11 @@ export default function Documents() {
                 <div className="flex flex-col gap-2">
                   <span className="text-[12px] font-medium text-hx-text-secondary">外部访问链接</span>
                   <div className="flex border border-hx-border rounded-hx-radius-sm bg-hx-bg-panel overflow-hidden">
-                    <input 
+                    <Input 
                       type="text" 
                       readOnly 
                       value={`https://huanxing.cloud/docs/share/${selectedDoc.share_token}`} 
-                      className="flex-1 bg-transparent border-none text-[13px] px-3 py-2 text-hx-text-primary outline-none"
+                      className="flex-1 bg-transparent border-none shadow-none focus:ring-0"
                     />
                     <button 
                       className="px-3 border-l border-hx-border bg-hx-bg-hover hover:bg-hx-purple/10 text-hx-text-secondary hover:text-hx-purple cursor-pointer transition-colors"
@@ -668,13 +650,13 @@ export default function Documents() {
             <DialogDescription>为您的知识库添加一个新的分类层级。</DialogDescription>
           </DialogHeader>
           <div className="py-4">
-            <input
+            <Input
               type="text"
               autoFocus
               placeholder="请输入目录名称..."
               value={newFolderName}
               onChange={(e) => setNewFolderName(e.target.value)}
-              className="w-full rounded-md border border-hx-border bg-hx-bg-input px-3 py-2 text-[14px] text-hx-text-primary focus:border-hx-purple focus:ring-0 focus:outline-none transition-colors"
+              className="w-full"
               onKeyDown={(e) => e.key === 'Enter' && confirmCreateFolder()}
             />
           </div>
@@ -693,18 +675,13 @@ export default function Documents() {
             <DialogDescription>将文档 "{moveDocTarget?.title}" 移动到指定的目录中。</DialogDescription>
           </DialogHeader>
           <div className="py-4">
-             <div className="flex flex-col gap-2">
-                <label className="text-[12px] font-medium text-hx-text-secondary">目标目录全称</label>
-                <input
-                  type="text"
-                  autoFocus
-                  placeholder="输入目录名称 (如移出至根目录请留空)..."
-                  value={moveTargetFolderName}
-                  onChange={(e) => setMoveTargetFolderName(e.target.value)}
-                  className="w-full rounded-md border border-hx-border bg-hx-bg-input px-3 py-2 text-[14px] text-hx-text-primary focus:border-hx-purple focus:ring-0 focus:outline-none transition-colors"
-                  onKeyDown={(e) => e.key === 'Enter' && confirmMoveDocument()}
+             <div className="flex flex-col gap-3">
+                <label className="text-[12px] font-medium text-hx-text-secondary">请选择目标目录</label>
+                <FolderTreeSelect 
+                  tree={folderTree}
+                  selectedId={moveTargetFolderId}
+                  onSelect={setMoveTargetFolderId}
                 />
-                <p className="text-[11px] text-hx-text-tertiary">提示：目前支持输入目录名称的精确匹配进行移动。</p>
              </div>
           </div>
           <DialogFooter>

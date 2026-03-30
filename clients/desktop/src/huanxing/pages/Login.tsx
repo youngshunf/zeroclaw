@@ -9,6 +9,7 @@ import { StarfieldCanvas } from "../../components/effects/StarfieldCanvas";
 import { SupernovaCanvas } from "../../components/effects/SupernovaCanvas";
 import { GlowingStar } from "../../components/effects/GlowingStar";
 import { OnboardProgress, type OnboardStep } from "../components/onboard/OnboardProgress";
+import { Input } from "../../components/ui/Input";
 
 interface LoginProps {
   onLoginSuccess: (token: string) => void;
@@ -272,7 +273,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
                     <span className="absolute left-4 top-1/2 -translate-y-1/2 text-sm text-brand">
                       +86
                     </span>
-                    <input
+                    <Input
                       type="tel"
                       value={phone}
                       onChange={(e) =>
@@ -280,7 +281,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
                       }
                       onKeyDown={handleKeyDown}
                       placeholder="手机号"
-                      className="w-full rounded-xl border border-border-subtle bg-surface-hover pl-14 pr-4 py-3 text-base text-content-base placeholder-content-muted focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand/30 transition-all"
+                      className="pl-14 pr-4 py-3 !text-base rounded-xl border-border-subtle bg-surface-hover"
                       maxLength={11}
                       autoFocus
                     />
@@ -303,7 +304,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
                     验证码已发送到{" "}
                     {phone.replace(/(\d{3})\d{4}(\d{4})/, "$1****$2")}
                   </p>
-                  <input
+                  <Input
                     type="text"
                     value={code}
                     onChange={(e) =>
@@ -311,7 +312,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
                     }
                     onKeyDown={handleKeyDown}
                     placeholder="6位验证码"
-                    className="w-full rounded-xl border border-border-subtle bg-surface-hover px-4 py-3 text-center text-2xl tracking-[0.4em] text-content-base placeholder-content-muted focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand/30 transition-all shadow-inner"
+                    className="text-center !text-2xl tracking-[0.4em] py-3 rounded-xl border-border-subtle bg-surface-hover shadow-inner"
                     maxLength={6}
                     autoFocus
                   />

@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
 import { Search } from 'lucide-react';
+import { Input } from '../ui/Input';
 import { CONFIG_SECTIONS } from './configSections';
 import { useTranslatedConfigSections } from './useTranslatedConfigSections';
 import { useLocaleContext } from '@/App';
@@ -76,12 +77,12 @@ export default function ConfigFormEditor({
       {/* Search */}
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500" />
-        <input
+        <Input
           type="text"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder={t_config('Search config fields...', locale)}
-          className="w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg pl-9 pr-3 py-2 text-sm focus:outline-none transition-colors"
+          className="pl-9 pr-3 py-2"
         />
       </div>
 

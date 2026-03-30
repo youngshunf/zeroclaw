@@ -3,6 +3,7 @@ import { Eye, EyeOff, Lock } from 'lucide-react';
 import type { FieldProps } from '../types';
 import { useLocaleContext } from '@/App';
 import { t_config } from '../configTranslations';
+import { Input } from '../../ui/Input';
 
 export default function TextField({ field, value, onChange, isMasked }: FieldProps) {
   const { locale } = useLocaleContext();
@@ -12,12 +13,12 @@ export default function TextField({ field, value, onChange, isMasked }: FieldPro
 
   return (
     <div className="relative">
-      <input
+      <Input
         type={isPassword && !showPassword ? 'password' : 'text'}
         value={strValue}
         onChange={(e) => onChange(e.target.value)}
         placeholder={isMasked ? t_config('Configured (masked)', locale) : field.description ?? ''}
-        className="w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none pr-16 transition-colors"
+        className="pr-16"
       />
       <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
         {isMasked && (

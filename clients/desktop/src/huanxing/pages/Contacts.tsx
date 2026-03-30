@@ -12,6 +12,8 @@ import {
   MessageSquare,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { Input } from '@/components/ui/Input';
+import { Textarea } from '@/components/ui/Textarea';
 import { useHasnContacts } from '@/huanxing/hooks/useHasn';
 import * as hasnApi from '@/huanxing/lib/hasn-api';
 import type { Contact } from '@/huanxing/lib/hasn-api';
@@ -133,12 +135,12 @@ export default function Contacts() {
           {tab === 'friends' && (
             <div className="hx-panel-search">
               <Search size={16} className="text-hx-text-tertiary" />
-              <input
+              <Input
                 type="text"
                 placeholder="搜索联系人..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="bg-transparent border-none outline-none text-[13px] text-hx-text-primary w-full"
+                className="pl-9"
               />
             </div>
           )}
@@ -293,19 +295,19 @@ export default function Contacts() {
               添加好友
             </h3>
             <div className="flex flex-col gap-3">
-              <input
+              <Input
                 type="text"
                 placeholder="输入对方 Star ID"
                 value={addStarId}
                 onChange={(e) => setAddStarId(e.target.value)}
-                className="px-3 py-2 rounded-hx-radius-sm border border-hx-border bg-hx-bg-main text-hx-text-primary text-[13px] outline-none focus:border-hx-purple transition-colors"
+                className="w-full"
               />
-              <textarea
+              <Textarea
                 placeholder="附言（可选）"
                 value={addMessage}
                 onChange={(e) => setAddMessage(e.target.value)}
                 rows={2}
-                className="px-3 py-2 rounded-hx-radius-sm border border-hx-border bg-hx-bg-main text-hx-text-primary text-[13px] outline-none resize-none focus:border-hx-purple transition-colors"
+                className="w-full resize-none"
               />
               <div className="flex gap-2 justify-end mt-1">
                 <button
