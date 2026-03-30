@@ -57,7 +57,7 @@
     --hx-panel-width: 280px;
   }
 
-  .dark {
+  .dark, [data-theme="dark"] {
     /* Semantic Colors - Dark Mode Override */
     --color-brand: #7C3AED;
     --color-brand-light: #8B5CF6;
