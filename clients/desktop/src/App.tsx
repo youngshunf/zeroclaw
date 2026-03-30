@@ -11,6 +11,7 @@ import Config from './pages/Config';
 import Cost from './pages/Cost';
 import Logs from './pages/Logs';
 import Doctor from './pages/Doctor';
+const ImageViewer = lazy(() => import('./pages/ImageViewer'));
 import { AuthProvider, useAuth } from './hooks/useAuth';
 import { coerceLocale, setLocale, type Locale } from './lib/i18n';
 import { startTokenRefresh, stopTokenRefresh } from './huanxing/lib/token-refresh';
@@ -231,6 +232,9 @@ function AppContent() {
   return (
     <LocaleContext.Provider value={{ locale, setAppLocale }}>
       <Routes>
+        {/* 单独窗口: 图片预览 */}
+        <Route path="/image-viewer" element={<Suspense fallback={null}><ImageViewer /></Suspense>} />
+
         {/* ===== 唤星三栏布局 ===== */}
         <Route element={<Suspense fallback={null}><HuanxingLayout /></Suspense>}>
           {/* Tab 1: AI Agent */}

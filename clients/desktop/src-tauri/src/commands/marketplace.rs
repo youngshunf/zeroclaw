@@ -3,7 +3,16 @@ use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use serde_json::Value;
 use toml::Table;
-use tauri::command;
+use tauri::{command, Emitter, AppHandle};
+
+#[derive(Clone, serde::Serialize)]
+struct ProgressPayload {
+    message: String,
+}
+
+fn emit_progress(app: &AppHandle, msg: &str) {
+    let _ = app.emit("agent-install-progress", ProgressPayload { message: msg.to_string() });
+}
 
 /// 获取 Marketplace API Base URL
 fn read_marketplace_api_base() -> String {
@@ -225,17 +234,21 @@ async fn get_download_info(api_base: &str, item_type: &str, item_id: &str) -> Re
 
 #[command]
 pub async fn download_and_install_agent(
+    app: tauri::AppHandle,
     _app_id: String,
     agent_name: String,
     display_name: String,
     package_url: String,
 ) -> Result<(), String> {
-    eprintln!("[huanxing-desktop] Installing Agent '{}' from: {}", agent_name, package_url);
+    emit_progress(&app, "初始化安装环境...");
+    eprintln!("[huanxing-desktop] Installing Agent '{}' (template: {})", agent_name, _app_id);
     
     let api_base = read_marketplace_api_base();
     
-    // Resolve package URL
+    // ── Step 1: 获取下载地址并下载模板包 ──
+    // 市场包已包含完整的 _base + _base_desktop + template 层级文件
     let final_url = if package_url.is_empty() || package_url.contains(":8000") {
+        emit_progress(&app, "正在获取下载地址...");
         let info = get_download_info(&api_base, "app", &_app_id).await
             .map_err(|e| format!("无法获取 Agent 下载地址: {}", e))?;
         info.get("package_url").and_then(|v| v.as_str()).unwrap_or_default().to_string()
@@ -244,15 +257,17 @@ pub async fn download_and_install_agent(
     };
     
     if final_url.is_empty() {
+        emit_progress(&app, "Error: 无效的下载地址");
         return Err("无法解析有效的 package_url".to_string());
     }
     
-    // 1. 下载并解压到临时目录
+    emit_progress(&app, "正在下载 Agent 模板包...");
     let bytes = download_bytes(&final_url).await?;
+    emit_progress(&app, "正在解压并解析核心配置...");
     let tmpdir = tempfile::tempdir().map_err(|e| e.to_string())?;
     unzip_buffer(&bytes, tmpdir.path())?;
     
-    // 2. 解析 template.yaml（如果存在）获取 skills 和 sops 依赖
+    // ── Step 2: 解析 template.yaml 获取依赖和模型配置 ──
     let mut skill_deps: Vec<String> = Vec::new();
     let mut sop_deps: Vec<String> = Vec::new();
     let mut template_model: Option<String> = None;
@@ -262,7 +277,6 @@ pub async fn download_and_install_agent(
     if template_yaml_path.exists() {
         if let Ok(content) = fs::read_to_string(&template_yaml_path) {
             if let Ok(yaml_val) = serde_yaml::from_str::<Value>(&content) {
-                // 技能列表
                 if let Some(skills) = yaml_val.get("skills").and_then(|v| v.as_array()) {
                     for s in skills {
                         if let Some(sid) = s.as_str() {
@@ -270,7 +284,6 @@ pub async fn download_and_install_agent(
                         }
                     }
                 }
-                // SOP 列表
                 if let Some(sops) = yaml_val.get("sops").and_then(|v| v.as_array()) {
                     for s in sops {
                         if let Some(sid) = s.as_str() {
@@ -278,14 +291,15 @@ pub async fn download_and_install_agent(
                         }
                     }
                 }
-                // 模型和温度
                 template_model = yaml_val.get("model").and_then(|v| v.as_str()).map(|s| s.to_string());
                 template_temperature = yaml_val.get("temperature").and_then(|v| v.as_f64());
             }
         }
     }
     
-    // 3. 创建 Agent 工作区
+    // ── Step 3: 创建 Agent 工作区（与 TemplateEngine::create_workspace 对齐）──
+    // 包结构为目录型：_base/ + _base_desktop/ + 根目录模板文件
+    emit_progress(&app, "正在配置 Agent 工作区...");
     let target_dir = dirs::home_dir()
         .unwrap_or_default()
         .join(".huanxing")
@@ -295,42 +309,107 @@ pub async fn download_and_install_agent(
     if target_dir.exists() {
         return Err(format!("Agent 目录已存在: {}", agent_name));
     }
-    fs::create_dir_all(&target_dir).map_err(|e| e.to_string())?;
     
-    // 4. 处理 config.toml.template → 替换占位符 → 生成 config.toml
+    // 3a. 创建与 TemplateEngine 一致的目录结构
+    fs::create_dir_all(&target_dir).map_err(|e| e.to_string())?;
+    fs::create_dir_all(target_dir.join("memory")).map_err(|e| e.to_string())?;
+    fs::create_dir_all(target_dir.join("files")).map_err(|e| e.to_string())?;
+    fs::create_dir_all(target_dir.join("files/ideas")).map_err(|e| e.to_string())?;
+    fs::create_dir_all(target_dir.join("files/drafts")).map_err(|e| e.to_string())?;
+    fs::create_dir_all(target_dir.join("files/published")).map_err(|e| e.to_string())?;
+    
+    // 3b. 占位符替换参数
     let (global_model, global_temp) = read_global_llm_config();
     let final_model = template_model.unwrap_or(global_model);
     let final_temp = template_temperature.unwrap_or(global_temp);
+    let now = chrono::Utc::now().format("%Y-%m-%d %H:%M").to_string();
     
-    let template_config_path = tmpdir.path().join("config.toml.template");
-    if template_config_path.exists() {
-        let template_content = fs::read_to_string(&template_config_path).map_err(|e| e.to_string())?;
-        let config_content = template_content
+    // 辅助闭包：对文件内容做占位符替换
+    let substitute = |content: &str| -> String {
+        content
             .replace("{{star_name}}", &display_name)
             .replace("{{nickname}}", &display_name)
             .replace("{{default_model}}", &final_model)
-            .replace("{{default_temperature}}", &format!("{}", final_temp));
-        fs::write(target_dir.join("config.toml"), config_content).map_err(|e| e.to_string())?;
-    }
+            .replace("{{default_temperature}}", &format!("{}", final_temp))
+            .replace("{{user_id}}", &agent_name)
+            .replace("{{agent_id}}", &agent_name)
+            .replace("{{template}}", &_app_id)
+            .replace("{{created_at}}", &now)
+            .replace("{{createdAt}}", &now)
+    };
     
-    // 5. 复制人格文件和其他 md 文件
-    let copy_files = ["SOUL.md", "IDENTITY.md", "BOOTSTRAP.md", "AGENTS.md", 
-                       "HEARTBEAT.md", "MEMORY.md", "TOOLS.md", "USER.md", "USER.md.template",
-                       "TASK_LEDGER.md", "template.yaml"];
-    for fname in &copy_files {
-        let src = tmpdir.path().join(fname);
-        if src.exists() {
-            let dst = target_dir.join(fname);
-            fs::copy(&src, &dst).map_err(|e| e.to_string())?;
+    // 辅助闭包：处理单个文件（.template → 去后缀 + 替换，.md → 替换，其他 → 直接复制）
+    let process_file = |src_path: &std::path::Path, file_name: &str, dest_dir: &std::path::Path| -> Result<(), String> {
+        if file_name.ends_with(".template") {
+            let dest_name = file_name.trim_end_matches(".template");
+            let content = fs::read_to_string(src_path).map_err(|e| e.to_string())?;
+            fs::write(dest_dir.join(dest_name), substitute(&content)).map_err(|e| e.to_string())?;
+        } else if file_name.ends_with(".md") || file_name == "template.yaml" {
+            let content = fs::read_to_string(src_path).map_err(|e| e.to_string())?;
+            fs::write(dest_dir.join(file_name), substitute(&content)).map_err(|e| e.to_string())?;
+        } else {
+            fs::copy(src_path, dest_dir.join(file_name)).map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    };
+    
+    // 3c. Layer 1: 从 _base/ 复制基础人格 .md 文件（跳过 config.toml.template，桌面端不用云端配置）
+    let base_dir = tmpdir.path().join("_base");
+    if base_dir.is_dir() {
+        if let Ok(entries) = fs::read_dir(&base_dir) {
+            for entry in entries.flatten() {
+                let file_name = entry.file_name().to_string_lossy().to_string();
+                if file_name.starts_with('.') || file_name == "config.toml.template" {
+                    continue; // 桌面端跳过云端 config 模板
+                }
+                if entry.path().is_file() {
+                    process_file(&entry.path(), &file_name, &target_dir)?;
+                }
+            }
         }
     }
     
-    // 6. 按需下载 skills
+    // 3d. Layer 2: 从 _base_desktop/ 取桌面端专用 config.toml.template
+    let base_desktop_dir = tmpdir.path().join("_base_desktop");
+    if base_desktop_dir.is_dir() {
+        if let Ok(entries) = fs::read_dir(&base_desktop_dir) {
+            for entry in entries.flatten() {
+                let file_name = entry.file_name().to_string_lossy().to_string();
+                if file_name.starts_with('.') {
+                    continue;
+                }
+                if entry.path().is_file() {
+                    process_file(&entry.path(), &file_name, &target_dir)?;
+                }
+            }
+        }
+    }
+    
+    // 3e. Layer 3: 根目录模板特有文件覆盖（SOUL.md, IDENTITY.md 等）
+    if let Ok(entries) = fs::read_dir(tmpdir.path()) {
+        for entry in entries.flatten() {
+            let file_name = entry.file_name().to_string_lossy().to_string();
+            let src_path = entry.path();
+            
+            if file_name.starts_with('.') || file_name.starts_with('_') {
+                continue; // 跳过 _base/ _base_desktop/ 子目录
+            }
+            if src_path.is_dir() {
+                continue; // 跳过其他子目录
+            }
+            
+            process_file(&src_path, &file_name, &target_dir)?;
+        }
+    }
+    
+    // ── Step 4: 从市场下载并安装 Skills ──
     if !skill_deps.is_empty() {
         let skills_dir = target_dir.join("skills");
         fs::create_dir_all(&skills_dir).map_err(|e| e.to_string())?;
         
         for skill_id in &skill_deps {
+            let msg = format!("正在下发依赖技能: {}", skill_id);
+            emit_progress(&app, &msg);
             eprintln!("[huanxing-desktop]   Installing skill: {}", skill_id);
             match get_download_info(&api_base, "skill", skill_id).await {
                 Ok(info) => {
@@ -352,12 +431,14 @@ pub async fn download_and_install_agent(
         }
     }
     
-    // 7. 按需下载 SOPs
+    // ── Step 5: 从市场下载并安装 SOPs ──
     if !sop_deps.is_empty() {
         let sops_dir = target_dir.join("sops");
         fs::create_dir_all(&sops_dir).map_err(|e| e.to_string())?;
         
         for sop_id in &sop_deps {
+            let msg = format!("正在下发依赖工作流: {}", sop_id);
+            emit_progress(&app, &msg);
             eprintln!("[huanxing-desktop]   Installing SOP: {}", sop_id);
             match get_download_info(&api_base, "sop", sop_id).await {
                 Ok(info) => {
@@ -379,7 +460,8 @@ pub async fn download_and_install_agent(
         }
     }
     
-    // 8. 写入安装元数据
+    // ── Step 6: 写入安装元数据 ──
+    emit_progress(&app, "全部依赖下载完毕，正在完成安装初始化...");
     let metadata = serde_json::json!({
         "app_id": _app_id,
         "agent_name": agent_name,
@@ -396,15 +478,18 @@ pub async fn download_and_install_agent(
     eprintln!("[huanxing-desktop] Agent '{}' installed successfully ({} skills, {} sops)", 
              agent_name, skill_deps.len(), sop_deps.len());
     
+    emit_progress(&app, "Agent 赋能安装全部完成！");
     Ok(())
 }
 
 #[command]
 pub async fn download_and_install_skill(
+    app: tauri::AppHandle,
     agent_name: String,
     skill_id: String,
     package_url: String,
 ) -> Result<(), String> {
+    emit_progress(&app, &format!("准备获取技能 '{}' ...", skill_id));
     eprintln!("[huanxing-desktop] Downloading Skill {} for Agent {}", skill_id, agent_name);
     
     let api_base = read_marketplace_api_base();
@@ -417,8 +502,12 @@ pub async fn download_and_install_skill(
     } else {
         package_url
     };
-    if final_url.is_empty() { return Err("无法解析有效的 package_url".to_string()); }
+    if final_url.is_empty() { 
+        emit_progress(&app, "Error: 无法解析有效的 package_url");
+        return Err("无法解析有效的 package_url".to_string()); 
+    }
 
+    emit_progress(&app, "正在下载技能包...");
     // 1. Download
     let response = reqwest::get(&final_url)
         .await
@@ -441,9 +530,11 @@ pub async fn download_and_install_skill(
     fs::create_dir_all(&target_dir).map_err(|e| e.to_string())?;
     
     // 3. Extract
+    emit_progress(&app, "正在安装和解压...");
     unzip_buffer(&bytes, &target_dir)?;
     
     // 4. Update the agent's config.toml skills list
+    emit_progress(&app, "更新 Agent 配置依赖...");
     let config_path = dirs::home_dir()
         .unwrap_or_default()
         .join(".huanxing")
@@ -478,16 +569,18 @@ pub async fn download_and_install_skill(
         }
     }
     
+    emit_progress(&app, "✅ 技能安装成功！");
     Ok(())
 }
 
 #[command]
 pub async fn download_and_install_sop(
+    app: tauri::AppHandle,
     agent_name: String,
     sop_id: String,
     package_url: String,
 ) -> Result<(), String> {
-    eprintln!("[huanxing-desktop] Downloading SOP {} for Agent {}", sop_id, agent_name);
+    emit_progress(&app, &format!("准备获取 SOP 工作流 '{}' ...", sop_id));
     
     let api_base = read_marketplace_api_base();
     
@@ -499,9 +592,15 @@ pub async fn download_and_install_sop(
     } else {
         package_url
     };
-    if final_url.is_empty() { return Err("无法解析有效的 package_url".to_string()); }
+    if final_url.is_empty() { 
+        emit_progress(&app, "Error: 无法解析有效的 package_url");
+        return Err("无法解析有效的 package_url".to_string()); 
+    }
 
+    emit_progress(&app, "正在下载 SOP 工作流包...");
     let bytes = download_bytes(&final_url).await?;
+    
+    emit_progress(&app, "正在初始化安装目录...");
     
     let target_dir = dirs::home_dir()
         .unwrap_or_default()
@@ -516,9 +615,11 @@ pub async fn download_and_install_sop(
     }
     fs::create_dir_all(&target_dir).map_err(|e| e.to_string())?;
     
+    emit_progress(&app, "正在解压资产...");
     unzip_buffer(&bytes, &target_dir)?;
     
     // 解析 SOP.md 中引用的技能，检查是否已安装
+    emit_progress(&app, "解析并确认能力依赖 (Requirements)...");
     let sop_md_path = target_dir.join("SOP.md");
     if sop_md_path.exists() {
         if let Ok(md_content) = fs::read_to_string(&sop_md_path) {
@@ -546,6 +647,7 @@ pub async fn download_and_install_sop(
                         }
                         // 检查是否已安装
                         if !skills_dir.join(tool).exists() {
+                            emit_progress(&app, &format!("缺少能力依赖 '{}'，开始自动安装...", tool));
                             eprintln!("[huanxing-desktop]   SOP 依赖技能 '{}' 未安装，尝试自动安装...", tool);
                             match get_download_info(&api_base, "skill", tool).await {
                                 Ok(info) => {
@@ -555,8 +657,10 @@ pub async fn download_and_install_sop(
                                                 let skill_dir = skills_dir.join(tool);
                                                 let _ = fs::create_dir_all(&skill_dir);
                                                 if let Err(e) = unzip_buffer(&skill_bytes, &skill_dir) {
+                                                    emit_progress(&app, &format!("Error: 依赖 '{}' 安装失败: {}", tool, e));
                                                     eprintln!("[huanxing-desktop]   ⚠ 技能 '{}' 安装失败: {}", tool, e);
                                                 } else {
+                                                    emit_progress(&app, &format!("✓ 依赖 '{}' 安装完备", tool));
                                                     eprintln!("[huanxing-desktop]   ✓ 技能 '{}' 自动安装成功", tool);
                                                 }
                                             }
@@ -574,6 +678,6 @@ pub async fn download_and_install_sop(
     }
     
     eprintln!("[huanxing-desktop] SOP '{}' installed for Agent '{}'", sop_id, agent_name);
-    
+    emit_progress(&app, "✅ SOP 工作流安装成功！");
     Ok(())
 }

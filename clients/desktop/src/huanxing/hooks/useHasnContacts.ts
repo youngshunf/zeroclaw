@@ -53,13 +53,17 @@ export function useHasnContacts(): UseHasnContactsReturn {
       ]);
 
       if (contactList.status === 'fulfilled') {
-        setContacts(contactList.value.map(contactToMention));
+        const val = contactList.value as any;
+        const arr = Array.isArray(val) ? val : (val.contacts || []);
+        setContacts(arr.map(contactToMention));
       } else {
         console.warn('[useHasnContacts] Failed to fetch contacts:', contactList.reason);
       }
 
       if (agentList.status === 'fulfilled') {
-        setAgents(agentList.value.map(agentToMention));
+        const val = agentList.value as any;
+        const arr = Array.isArray(val) ? val : (val.agents || val.data || []);
+        setAgents(arr.map(agentToMention));
       } else {
         console.warn('[useHasnContacts] Failed to fetch agents:', agentList.reason);
       }

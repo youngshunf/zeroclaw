@@ -1,13 +1,18 @@
 {
   "identifier": "default",
   "description": "唤星桌面端默认权限",
-  "windows": ["main"],
+  "windows": ["*"],
   "permissions": [
     "core:default",
     "shell:allow-open",
     "shell:allow-execute",
     "process:default",
     "notification:default",
-    "core:window:allow-start-dragging"
+    "core:window:allow-start-dragging",
+    "core:window:allow-create",
+    "core:window:allow-close",
+    "core:webview:allow-create-webview-window",
+    "core:window:allow-set-size",
+    "core:window:allow-center"
   ]
 }

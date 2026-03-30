@@ -170,6 +170,13 @@ export default function SessionList({
     return agentNameOrId;
   };
 
+  /** Get icon url for an agent */
+  const getAgentIcon = (agentNameOrId: string) => {
+    if (!agentNameOrId || agentNameOrId === 'default') return null;
+    const found = agents?.find(a => a.name === agentNameOrId);
+    return found?.icon_url || null;
+  };
+
   // Filter sessions by search query
   const filteredSessions = searchQuery
     ? sessions.filter(s => s.title.toLowerCase().includes(searchQuery.toLowerCase()))
@@ -318,7 +325,11 @@ export default function SessionList({
                     ) : (
                       <ChevronDown size={14} style={{ opacity: 0.5, flexShrink: 0 }} />
                     )}
-                    <Bot size={14} style={{ color: getAgentColor(agentId), opacity: 0.8, flexShrink: 0 }} />
+                    {getAgentIcon(agentId) ? (
+                      <img src={getAgentIcon(agentId)!} alt={displayName} style={{ width: 14, height: 14, borderRadius: 4, flexShrink: 0, opacity: 0.8 }} />
+                    ) : (
+                      <Bot size={14} style={{ color: getAgentColor(agentId), opacity: 0.8, flexShrink: 0 }} />
+                    )}
                     <span style={{
                       fontSize: 12,
                       fontWeight: 600,
@@ -392,10 +403,14 @@ export default function SessionList({
                     >
                       <div className="hx-conv-avatar" style={{
                         position: 'relative',
-                        background: `${getAgentColor(session.agent_id)}20`,
+                        background: getAgentIcon(session.agent_id) ? 'transparent' : `${getAgentColor(session.agent_id)}20`,
                         color: getAgentColor(session.agent_id),
                       }}>
-                        <Bot size={18} />
+                        {getAgentIcon(session.agent_id) ? (
+                          <img src={getAgentIcon(session.agent_id)!} alt="agent" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'inherit' }} />
+                        ) : (
+                          <Bot size={18} />
+                        )}
                         {/* Connection status dot */}
                         <span style={{
                           position: 'absolute',
@@ -445,14 +460,13 @@ export default function SessionList({
                               <span className="hx-conv-name">{sessionTitles?.get(session.id) || session.title}</span>
                             </div>
                             <div className="hx-conv-preview" style={isTyping ? { color: 'var(--hx-yellow, #FFD93D)', fontStyle: 'italic' } : undefined}>
-                              {isTyping
-                                ? '正在思考...'
-                                : lastMessages?.get(session.id)
-                                  ? (lastMessages.get(session.id)!.length > 30
-                                    ? lastMessages.get(session.id)!.slice(0, 30) + '...'
-                                    : lastMessages.get(session.id)!)
-                                  : '点击开始对话'
-                              }
+                              {(() => {
+                                if (isTyping) return '正在思考...';
+                                let msg = lastMessages?.get(session.id);
+                                if (!msg) return '点击开始对话';
+                                msg = msg.replace(/\[IMAGE:[^\]]+\]/g, '[图片]');
+                                return msg.length > 30 ? msg.slice(0, 30) + '...' : msg;
+                              })()}
                             </div>
                           </div>
                           {unread > 0 && !isActive && (

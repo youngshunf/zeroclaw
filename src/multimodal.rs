@@ -295,9 +295,15 @@ fn normalize_data_uri(source: &str, max_bytes: usize) -> anyhow::Result<String> 
             reason: format!("invalid base64 payload: {error}"),
         })?;
 
-    validate_size(source, decoded.len(), max_bytes)?;
+    let (final_bytes, final_mime) = compress_image(&decoded)
+        .unwrap_or_else(|err| {
+            tracing::warn!("Image compression skipped for data URI: {err}");
+            (decoded, mime)
+        });
 
-    Ok(format!("data:{mime};base64,{}", STANDARD.encode(decoded)))
+    validate_size(source, final_bytes.len(), max_bytes)?;
+
+    Ok(format!("data:{final_mime};base64,{}", STANDARD.encode(final_bytes)))
 }
 
 fn compress_image(bytes: &[u8]) -> anyhow::Result<(Vec<u8>, String)> {

@@ -7,6 +7,7 @@
  */
 import React, { useMemo } from 'react';
 import { HxPhotoProvider, PhotoView, localPathToSrc } from './HxImageLightbox';
+import { isTauri } from '@tauri-apps/api/core';
 
 const IMAGE_MARKER_RE = /\[IMAGE:([^\]]+)\]/g;
 
@@ -93,25 +94,57 @@ export function HxImageMessage({ content, renderText }: HxImageMessageProps) {
           );
         }
 
-        // Image part — 原始比例，限制最大宽度
         const src = localPathToSrc(part.content);
+
+        const ImageComponent = (
+          <img
+            src={src}
+            className="hx-msg-image"
+            loading="lazy"
+            onClick={async (e) => {
+              if (isTauri()) {
+                e.preventDefault();
+                e.stopPropagation();
+                try {
+                  const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+                  const tauriWin = new WebviewWindow(`preview-${Date.now()}`, {
+                    url: `/image-viewer?src=${encodeURIComponent(src)}`,
+                    title: '图片预览',
+                    width: 800,
+                    height: 600,
+                    center: true,
+                    decorations: true,
+                  });
+                  tauriWin.once('tauri://error', (e) => {
+                    console.error('Window error:', e);
+                    alert('弹窗失败。请务必停止并重新运行 Tauri (比如 npm run tauri dev)，因为我们刚刚修改了底层的 capabilities 权限！错误信息: ' + JSON.stringify(e));
+                  });
+                } catch (err: any) {
+                  console.error('Failed to create preview window', err);
+                  alert('尝试创建窗口时出错: ' + err.message);
+                }
+              }
+            }}
+            style={{ cursor: isTauri() ? 'pointer' : undefined }}
+            onError={(e) => {
+              // 图片加载失败时显示 fallback
+              const target = e.currentTarget;
+              target.style.display = 'none';
+              const fallback = target.parentElement?.querySelector('.hx-msg-image-fallback') as HTMLElement;
+              if (fallback) fallback.style.display = 'flex';
+            }}
+          />
+        );
 
         return (
           <div key={i} className="hx-msg-image-container">
-            <PhotoView src={src}>
-              <img
-                src={src}
-                className="hx-msg-image"
-                loading="lazy"
-                onError={(e) => {
-                  // 图片加载失败时显示 fallback
-                  const target = e.currentTarget;
-                  target.style.display = 'none';
-                  const fallback = target.parentElement?.querySelector('.hx-msg-image-fallback') as HTMLElement;
-                  if (fallback) fallback.style.display = 'flex';
-                }}
-              />
-            </PhotoView>
+            {isTauri() ? (
+              ImageComponent
+            ) : (
+              <PhotoView src={src}>
+                {ImageComponent}
+              </PhotoView>
+            )}
             <div className="hx-msg-image-fallback" style={{ display: 'none' }}>
               <span>📷 图片无法加载</span>
             </div>

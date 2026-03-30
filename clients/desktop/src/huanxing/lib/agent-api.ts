@@ -15,6 +15,7 @@ export interface AgentInfo {
   active: boolean;
   is_default: boolean;
   location?: 'local' | 'remote';
+  icon_url?: string;
 }
 
 export interface AgentListResponse {

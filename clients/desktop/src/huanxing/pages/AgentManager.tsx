@@ -347,10 +347,14 @@ function AgentCard({
       >
         {/* Icon */}
         <div className={[
-          'flex h-9 w-9 items-center justify-center rounded-xl shrink-0',
-          agent.active ? 'bg-[#7c3aed]/30' : 'bg-gray-200',
+          'flex h-9 w-9 items-center justify-center shrink-0 overflow-hidden',
+          agent.icon_url ? '' : 'rounded-xl',
+          !agent.icon_url && agent.active ? 'bg-[#7c3aed]/30' : '',
+          !agent.icon_url && !agent.active ? 'bg-gray-200' : '',
         ].join(' ')}>
-          {agent.active ? (
+          {agent.icon_url ? (
+            <img src={agent.icon_url} alt={agent.name} className="h-full w-full object-cover rounded-xl" />
+          ) : agent.active ? (
             <Star className="h-4 w-4 text-[#7c3aed]" />
           ) : (
             <Bot className="h-4 w-4 text-gray-400" />

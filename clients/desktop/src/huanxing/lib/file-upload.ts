@@ -228,16 +228,37 @@ export async function handleFiles(
     const tauriPath = (file as any).path;
 
     if (tauriPath && typeof tauriPath === 'string') {
-      // Tauri 环境下拖拽文件，直接使用原始路径
+      // Tauri 环境下拖拽文件或选择文件
       const mime = file.type || getMimeType(file.name);
-      results.push({
-        relativePath: tauriPath, // 对于本地路径就是绝对路径
-        absolutePath: tauriPath,
-        originalName: file.name,
-        mimeType: mime,
-        size: file.size,
-        isImage: isImageMime(mime),
-      });
+      const isImage = isImageMime(mime);
+
+      if (isImage) {
+        // 对于图片，转换为 Base64 Data URI 以支持跨设备 (HASN Remote Agent) 发送及处理
+        const buffer = await file.arrayBuffer();
+        const bytes = new Uint8Array(buffer);
+        const base64 = uint8ArrayToBase64(bytes);
+        const dataUri = `data:${mime};base64,${base64}`;
+
+        results.push({
+          relativePath: dataUri,
+          absolutePath: dataUri,
+          originalName: file.name,
+          mimeType: mime,
+          size: file.size,
+          isImage: true,
+          blobUrl: URL.createObjectURL(file), // 使用 blobUrl 提高预览性能
+        });
+      } else {
+        // 非图片文件，保留绝对路径（供本地 Agent 使用 file_read 等工具读取）
+        results.push({
+          relativePath: tauriPath, // 对于本地路径就是绝对路径
+          absolutePath: tauriPath,
+          originalName: file.name,
+          mimeType: mime,
+          size: file.size,
+          isImage: false,
+        });
+      }
     } else {
       // 浏览器 File API，需要复制到 workspace
       const uploaded = await copyFileToWorkspace(file, workspaceDir);

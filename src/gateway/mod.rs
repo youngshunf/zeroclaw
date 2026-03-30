@@ -1000,7 +1000,10 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
 
     // ── HuanXing SOP API（桌面端，requires huanxing feature）──
     #[cfg(feature = "huanxing")]
-    let inner = inner.merge(crate::huanxing::sop_api::sop_routes());
+    let inner = inner.merge(
+        crate::huanxing::sop_api::sop_routes()
+            .layer(axum::Extension(Arc::new(tokio::sync::Mutex::new(crate::sop::engine::SopEngine::new(config.sop.clone())))))
+    );
 
     // ── HuanXing Session REST API（桌面端，requires huanxing feature）──
     #[cfg(feature = "huanxing")]

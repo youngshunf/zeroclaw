@@ -72,7 +72,7 @@ export default function SopWorkbench() {
       <div style={{ width: 320, minWidth: 320, borderRight: '1px solid var(--hx-border)', display: 'flex', flexDirection: 'column' }}>
         <div style={{ padding: 16, borderBottom: '1px solid var(--hx-border)' }}>
           <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--hx-text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>
-            当前 Agent Context
+            当前智能体
           </label>
           <Select value={activeAgentName || ''} onValueChange={(v) => { setActiveAgentName(v); setSelectedSopName(null); }}>
             <SelectTrigger style={{ width: '100%', background: 'var(--hx-bg-input)', borderColor: 'var(--hx-border)', color: 'var(--hx-text-primary)' }}>
@@ -81,7 +81,14 @@ export default function SopWorkbench() {
             <SelectContent>
               {agents.map(a => (
                 <SelectItem key={a.name} value={a.name}>
-                  {a.display_name || a.name}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    {a.icon_url ? (
+                      <img src={a.icon_url} alt={a.name} style={{ width: 16, height: 16, borderRadius: 4, objectFit: 'cover' }} />
+                    ) : (
+                      <Bot size={16} />
+                    )}
+                    <span>{a.display_name || a.name}</span>
+                  </div>
                 </SelectItem>
               ))}
             </SelectContent>
@@ -92,7 +99,7 @@ export default function SopWorkbench() {
           {loading && <div style={{ textAlign: 'center', fontSize: 13, padding: '32px 0', color: 'var(--hx-text-tertiary)' }}>加载中...</div>}
           {!loading && sops.length === 0 && (
             <div style={{ textAlign: 'center', fontSize: 13, padding: '32px 0', color: 'var(--hx-text-tertiary)' }}>
-              无可用 SOP。<br />
+              无可用工作流。<br />
               请前往应用市场安装。
             </div>
           )}
@@ -140,7 +147,7 @@ export default function SopWorkbench() {
 
         {/* Tab bar */}
         {activeAgentName && (
-          <div style={{ display: 'flex', alignItems: 'center', borderBottom: '1px solid var(--hx-border)', background: 'var(--hx-bg-panel)', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', borderBottom: '1px solid var(--hx-border)', background: 'var(--hx-bg-panel)', flexShrink: 0, WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
             <button
               onClick={() => setRightTab('detail')}
               style={{
@@ -181,11 +188,11 @@ export default function SopWorkbench() {
           <SopHistoryList />
         ) : !selectedSopName ? (
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--hx-text-secondary)' }}>
-            ← 请选择一个 SOP 查看详情
+            ← 请选择一个工作流查看详情
           </div>
         ) : loadingDetail ? (
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--hx-text-secondary)' }}>
-            加载 SOP 详情中...
+            加载工作流详情中...
           </div>
         ) : sopDetail ? (
           <div style={{ flex: 1, overflowY: 'auto', padding: 32, maxWidth: 960, margin: '0 auto', width: '100%' }}>

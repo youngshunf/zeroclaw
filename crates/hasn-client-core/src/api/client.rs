@@ -156,7 +156,8 @@ impl HasnApiClient {
         let req = self
             .hasn_request(Method::GET, "/conversations")
             .query(&[("limit", limit.to_string()), ("offset", offset.to_string())]);
-        self.send_hasn(req).await
+        let val: serde_json::Value = self.send_hasn(req).await?;
+        Self::extract_array(val)
     }
 
     /// 获取消息历史 (游标分页)
@@ -177,7 +178,8 @@ impl HasnApiClient {
                 &format!("/conversations/{}/messages", conversation_id),
             )
             .query(&params);
-        self.send_hasn(req).await
+        let val: serde_json::Value = self.send_hasn(req).await?;
+        Self::extract_array(val)
     }
 
     /// 标记会话已读
@@ -239,7 +241,8 @@ impl HasnApiClient {
             .hasn_request(Method::GET, "/ws/sync")
             .query(&[("conversation_id", conversation_id)])
             .query(&params);
-        self.send_hasn(req).await
+        let val: serde_json::Value = self.send_hasn(req).await?;
+        Self::extract_array(val)
     }
 
     // ═══════════════════════════════════
@@ -251,7 +254,8 @@ impl HasnApiClient {
         let req = self
             .hasn_request(Method::GET, "/contacts")
             .query(&[("relation_type", relation_type)]);
-        self.send_hasn(req).await
+        let val: serde_json::Value = self.send_hasn(req).await?;
+        Self::extract_array(val)
     }
 
     /// 发送好友请求
@@ -273,7 +277,8 @@ impl HasnApiClient {
     /// 待处理好友请求
     pub async fn list_pending_requests(&self) -> Result<Vec<FriendRequest>, HasnError> {
         let req = self.hasn_request(Method::GET, "/contacts/requests");
-        self.send_hasn(req).await
+        let val: serde_json::Value = self.send_hasn(req).await?;
+        Self::extract_array(val)
     }
 
     /// 接受/拒绝好友请求
@@ -348,7 +353,22 @@ impl HasnApiClient {
     /// 获取我的 Agent 列表（含在线状态）
     pub async fn list_my_agents(&self) -> Result<Vec<AgentInfo>, HasnError> {
         let req = self.hasn_request(Method::GET, "/me/agents");
-        self.send_hasn(req).await
+        let val: serde_json::Value = self.send_hasn(req).await?;
+        Self::extract_array(val)
+    }
+
+    // ═══════════════════════════════════
+    // Helper
+    // ═══════════════════════════════════
+
+    fn extract_array<T: DeserializeOwned>(val: serde_json::Value) -> Result<Vec<T>, HasnError> {
+        if let Some(items) = val.get("items") {
+            serde_json::from_value(items.clone()).map_err(|e| HasnError::Parse(e.to_string()))
+        } else if val.is_array() {
+            serde_json::from_value(val).map_err(|e| HasnError::Parse(e.to_string()))
+        } else {
+            Ok(vec![])
+        }
     }
 }
 

@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { Bot, Wrench, Workflow, Download, Loader2 } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Bot, Wrench, Workflow, Download, Loader2, CheckCircle, XCircle } from 'lucide-react';
+import { listen } from '@tauri-apps/api/event';
 import {
   getMarketApps,
   getMarketSkills,
@@ -30,6 +31,181 @@ function ItemIcon({ iconUrl, emoji, fallback, size = 'md' }: { iconUrl?: string;
   return <>{fallback}</>;
 }
 
+export function useInstallManager() {
+  const [showModal, setShowModal] = useState(false);
+  const [installStatus, setInstallStatus] = useState<'idle' | 'installing' | 'success' | 'error'>('idle');
+  const [installSteps, setInstallSteps] = useState<string[]>([]);
+  const [installError, setInstallError] = useState('');
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [installSteps]);
+
+  useEffect(() => {
+    const unlisten = listen<{ message: string }>('agent-install-progress', (event) => {
+      setInstallSteps(prev => [...prev, event.payload.message]);
+    });
+    return () => { unlisten.then(f => f()); };
+  }, []);
+
+  return {
+    showModal, setShowModal, installStatus, setInstallStatus,
+    installSteps, setInstallSteps, installError, setInstallError, scrollRef
+  };
+}
+
+export function InstallModal({
+  isOpen, onClose, targetName, iconUrl, emoji, iconFallback,
+  type, // 'agent'|'skill'|'sop'
+  agentNameInput, setAgentNameInput,
+  installStatus, installSteps, installError,
+  onConfirm,
+  scrollRef
+}: {
+  isOpen: boolean; onClose: () => void; targetName: string; iconUrl?: string; emoji?: string; iconFallback: React.ReactNode;
+  type: 'agent'|'skill'|'sop';
+  agentNameInput?: string; setAgentNameInput?: (v: string) => void;
+  installStatus: 'idle' | 'installing' | 'success' | 'error';
+  installSteps: string[]; installError: string;
+  onConfirm: () => void;
+  scrollRef: React.RefObject<HTMLDivElement | null>;
+}) {
+  if (!isOpen) return null;
+
+  const titlePrefix = type === 'agent' ? '配置 Agent' : type === 'skill' ? '技能赋能' : '安装工作流';
+  const desc = type === 'agent' 
+    ? '系统将自动执行：下载模板、解压环境、安装所需的技能和 SOP 依赖。'
+    : type === 'skill' 
+    ? '正在提取技能代码和环境配置，应用到目标 Agent。'
+    : '正在装载 SOP 工作流配置，并自动补全局部技能依赖。';
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+      <div style={{ background: 'var(--hx-bg-panel)' }} className="rounded-2xl w-[460px] max-w-[90vw] shadow-2xl flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200 border border-[var(--hx-border)]">
+        {/* Header */}
+        <div style={{ borderColor: 'var(--hx-border)' }} className="px-6 py-4 border-b flex items-center gap-3">
+          <ItemIcon iconUrl={iconUrl} emoji={emoji} fallback={iconFallback} />
+          <div>
+            <h2 style={{ color: 'var(--hx-text-primary)' }} className="text-base font-bold leading-tight">{titlePrefix}：{targetName}</h2>
+            <p style={{ color: 'var(--hx-text-secondary)' }} className="text-xs">智能自动化部署</p>
+          </div>
+        </div>
+
+        {/* Body */}
+        <div className="p-6">
+          {installStatus === 'idle' && (
+            <div className="space-y-4">
+              {type === 'agent' && (
+                <div>
+                  <label style={{ color: 'var(--hx-text-primary)' }} className="block text-sm font-medium mb-1">为您的新 Agent 命名</label>
+                  <input 
+                    type="text" 
+                    value={agentNameInput || ''}
+                    onChange={(e) => setAgentNameInput && setAgentNameInput(e.target.value)}
+                    placeholder={targetName}
+                    autoFocus
+                    style={{ background: 'var(--hx-bg-input)', borderColor: 'var(--hx-border)', color: 'var(--hx-text-primary)' }}
+                    className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/50 text-sm"
+                  />
+                </div>
+              )}
+              <p style={{ background: 'var(--hx-purple-bg)', color: 'var(--hx-text-secondary)', borderColor: 'var(--hx-border)' }} className="text-xs p-2.5 rounded-md border text-center">
+                {desc}
+              </p>
+            </div>
+          )}
+
+          {installStatus === 'installing' && (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 text-indigo-500 mb-2">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span className="text-sm font-medium" style={{ color: 'var(--hx-text-primary)' }}>正在拉取与配置资源...</span>
+              </div>
+              <div 
+                ref={scrollRef}
+                style={{ background: 'var(--hx-bg-input)', color: 'var(--hx-text-secondary)', border: '1px solid var(--hx-border)' }}
+                className="rounded-lg p-3 h-48 overflow-y-auto font-mono text-xs shadow-inner whitespace-pre-wrap"
+              >
+                {installSteps.map((step, idx) => {
+                  const isError = step.toLowerCase().includes('error') || step.includes('失败') || step.includes('中止');
+                  const isSuccess = step.includes('完成') || step.includes('成功');
+                  const color = isError ? '#ef4444' : isSuccess ? '#10b981' : 'var(--hx-text-primary)';
+                  return (
+                    <div key={idx} style={{ color }} className={`mb-1.5 flex items-start gap-1.5 leading-tight`}>
+                      <span style={{ color: 'var(--hx-text-tertiary)' }} className="select-none shrink-0 font-medium">[{idx + 1 < 10 ? `0${idx+1}` : idx+1}]</span>
+                      <span>{step}</span>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {installStatus === 'success' && (
+            <div className="py-6 flex flex-col items-center justify-center text-center">
+              <div className="w-12 h-12 bg-green-500/10 text-green-500 border border-green-500/20 rounded-full flex items-center justify-center mb-3">
+                <CheckCircle className="w-7 h-7" />
+              </div>
+              <h3 style={{ color: 'var(--hx-text-primary)' }} className="text-lg font-bold mb-1">安装完成！</h3>
+              <p style={{ color: 'var(--hx-text-secondary)' }} className="text-sm max-w-[80%]">组件已赋能成功，现在可以前往工作台查看与使用。</p>
+            </div>
+          )}
+
+          {installStatus === 'error' && (
+            <div className="py-4 flex flex-col items-center justify-center text-center">
+              <div className="w-12 h-12 bg-red-500/10 text-red-500 border border-red-500/20 rounded-full flex items-center justify-center mb-3">
+                <XCircle className="w-7 h-7" />
+              </div>
+              <h3 style={{ color: 'var(--hx-text-primary)' }} className="text-lg font-bold mb-2">安装意外中止</h3>
+              <p className="text-xs text-red-600 bg-red-50/10 p-3 rounded-md border border-red-500/20 max-w-full overflow-hidden text-ellipsis text-left whitespace-pre-wrap">
+                {installError}
+              </p>
+            </div>
+          )}
+        </div>
+
+        {/* Footer Buttons */}
+        <div style={{ background: 'var(--hx-bg-main)', borderColor: 'var(--hx-border)' }} className="px-6 py-4 border-t flex justify-end gap-2">
+          {(installStatus === 'idle' || installStatus === 'error') && (
+            <button 
+              onClick={onClose}
+              style={{ color: 'var(--hx-text-secondary)' }}
+              className="px-4 py-2 text-sm font-medium hover:text-[var(--hx-text-primary)] hover:bg-[var(--hx-bg-input)] rounded-lg transition-colors"
+            >
+              取消
+            </button>
+          )}
+          {installStatus === 'success' && (
+            <button 
+              onClick={onClose}
+              className="px-5 py-2 text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 rounded-lg shadow-sm transition-colors"
+            >
+              关闭
+            </button>
+          )}
+          {installStatus === 'idle' && (
+            <button 
+              onClick={onConfirm}
+              className="px-5 py-2 text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 rounded-lg shadow-sm transition-colors"
+            >
+              确认并安装
+            </button>
+          )}
+          {installStatus === 'error' && (
+            <button 
+              onClick={onConfirm}
+              className="px-5 py-2 text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 rounded-lg shadow-sm transition-colors"
+            >
+              重试安装
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Agent 广场 ──────────────────────────────────────────────
 
 function AgentPlaza() {
@@ -44,32 +220,41 @@ function AgentPlaza() {
       .finally(() => setLoading(false));
   }, []);
 
-  const handleInstall = async (app: MarketApp) => {
-    const appId = app.app_id || app.id;
+  // Modal States
+  const { showModal, setShowModal, installStatus, setInstallStatus, installSteps, setInstallSteps, installError, setInstallError, scrollRef } = useInstallManager();
+  const [targetApp, setTargetApp] = useState<MarketApp | null>(null);
+  const [agentNameInput, setAgentNameInput] = useState('');
+
+  const openInstallModal = (app: MarketApp) => {
+    setTargetApp(app);
+    setAgentNameInput(app.name);
+    setInstallStatus('idle');
+    setInstallSteps([]);
+    setInstallError('');
+    setShowModal(true);
+  };
+
+  const closeModal = () => {
+    if (installStatus === 'installing') return;
+    setShowModal(false);
+    setTargetApp(null);
+  };
+
+  const confirmInstall = async () => {
+    if (!targetApp) return;
+    const appId = targetApp.app_id || targetApp.id;
     const defaultName = `${appId.toString().replace(/[^a-zA-Z0-9-]/g, "")}-${Math.floor(Math.random() * 1000)}`;
-    
-    // In Tauri v2, window.prompt might be blocked or absent in some environments.
-    // If it returns null/empty immediately (or user cancels), we'll fallback to auto naming instead of aborting.
-    let displayName = app.name;
-    try {
-      const userRes = window.prompt('为新 Agent 起个名字 (留空默认使用应用名):', app.name);
-      if (userRes && userRes.trim() !== '') {
-        displayName = userRes.trim();
-      }
-    } catch {
-      // Ignored if prompt throws
-    }
+    const displayName = agentNameInput.trim() || targetApp.name;
+    const pkgUrl = targetApp.package_url || ""; // Let Rust resolve it via backend
 
-    const pkgUrl = app.package_url || ""; // Let Rust resolve it via backend
-
-    setInstalling(String(app.id));
+    setInstallStatus('installing');
+    setInstallSteps(['🚀 开始配置 Agent...']);
     try {
       await installMarketAgent(appId, defaultName, displayName, pkgUrl);
-      alert('Agent 安装成功！你可以去左侧 Agent 管理查看。');
+      setInstallStatus('success');
     } catch (err: any) {
-      alert(`安装失败: ${err.message || err}`);
-    } finally {
-      setInstalling(null);
+      setInstallError(err.message || String(err));
+      setInstallStatus('error');
     }
   };
 
@@ -96,16 +281,35 @@ function AgentPlaza() {
           <div className="flex justify-between items-center mt-auto">
             <span style={{ fontSize: 12, color: 'var(--hx-text-tertiary)' }}>v{app.latest_version || '1.0.0'}</span>
             <button
-              onClick={() => handleInstall(app)}
-              disabled={!!installing}
-              className="px-3 py-1.5 bg-[#7c3aed] text-white text-xs font-medium rounded-lg hover:bg-[#6d28d9] disabled:opacity-50 flex items-center gap-1 transition-colors"
+              onClick={() => openInstallModal(app)}
+              className="px-3 py-1.5 bg-[#7c3aed] text-white text-xs font-medium rounded-lg hover:bg-[#6d28d9] flex items-center gap-1 transition-colors"
             >
-              {installing === String(app.id) ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+              <Download className="w-3.5 h-3.5" />
               下载安装
             </button>
           </div>
         </div>
       ))}
+
+      {/* ── Install Modal ── */}
+      {targetApp && (
+        <InstallModal
+          isOpen={showModal}
+          onClose={closeModal}
+          type="agent"
+          targetName={targetApp.name}
+          iconUrl={targetApp.icon_url}
+          emoji={targetApp.emoji}
+          iconFallback={<Bot className="w-8 h-8 text-indigo-400 p-1.5 bg-indigo-50 rounded-lg" />}
+          agentNameInput={agentNameInput}
+          setAgentNameInput={setAgentNameInput}
+          installStatus={installStatus}
+          installSteps={installSteps}
+          installError={installError}
+          onConfirm={confirmInstall}
+          scrollRef={scrollRef}
+        />
+      )}
     </div>
   );
 }
@@ -117,7 +321,9 @@ function SkillMarket() {
   const [localAgents, setLocalAgents] = useState<AgentInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedAgent, setSelectedAgent] = useState<string>('');
-  const [installing, setInstalling] = useState<string | null>(null);
+  
+  const { showModal, setShowModal, installStatus, setInstallStatus, installSteps, setInstallSteps, installError, setInstallError, scrollRef } = useInstallManager();
+  const [targetSkill, setTargetSkill] = useState<MarketSkill | null>(null);
 
   useEffect(() => {
     Promise.all([getMarketSkills(), listAgents()])
@@ -132,19 +338,34 @@ function SkillMarket() {
       .finally(() => setLoading(false));
   }, []);
 
-  const handleInstall = async (skill: MarketSkill) => {
+  const openInstallModal = (skill: MarketSkill) => {
     if (!selectedAgent) { alert('请先选择一个本地 Agent'); return; }
-    const skillId = skill.skill_id || skill.id;
-    const pkgUrl = skill.package_url || ""; // Let Rust resolve it via backend
+    setTargetSkill(skill);
+    setInstallStatus('idle');
+    setInstallSteps([]);
+    setInstallError('');
+    setShowModal(true);
+  };
 
-    setInstalling(String(skill.id));
+  const closeModal = () => {
+    if (installStatus === 'installing') return;
+    setShowModal(false);
+    setTargetSkill(null);
+  };
+
+  const confirmInstall = async () => {
+    if (!targetSkill || !selectedAgent) return;
+    const skillId = targetSkill.skill_id || targetSkill.id;
+    const pkgUrl = targetSkill.package_url || ""; // Let Rust resolve it via backend
+
+    setInstallStatus('installing');
+    setInstallSteps([`🚀 开始将技能 ${targetSkill.name} 赋能给 Agent...`]);
     try {
       await installMarketSkill(selectedAgent, String(skillId), pkgUrl);
-      alert('技能安装成功！');
+      setInstallStatus('success');
     } catch (err: any) {
-      alert(`安装失败: ${err.message || err}`);
-    } finally {
-      setInstalling(null);
+      setInstallError(err.message || String(err));
+      setInstallStatus('error');
     }
   };
 
@@ -168,17 +389,35 @@ function SkillMarket() {
             <div className="flex justify-between items-center mt-auto">
               <span style={{ fontSize: 12, color: 'var(--hx-text-tertiary)' }}>v{skill.latest_version || '1.0.0'}</span>
               <button
-                onClick={() => handleInstall(skill)}
-                disabled={!!installing || !selectedAgent}
+                onClick={() => openInstallModal(skill)}
+                disabled={!selectedAgent}
                 className="px-3 py-1.5 bg-[#10b981] text-white text-xs font-medium rounded-lg hover:bg-[#059669] disabled:opacity-50 flex items-center gap-1 transition-colors"
               >
-                {installing === String(skill.id) ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+                <Download className="w-3.5 h-3.5" />
                 赋能 Agent
               </button>
             </div>
           </div>
         ))}
       </div>
+
+      {/* ── Install Modal ── */}
+      {targetSkill && (
+        <InstallModal
+          isOpen={showModal}
+          onClose={closeModal}
+          type="skill"
+          targetName={targetSkill.name}
+          iconUrl={targetSkill.icon_url}
+          emoji={targetSkill.emoji}
+          iconFallback={<Wrench className="w-8 h-8 text-indigo-400 p-1.5 bg-indigo-50 rounded-lg" />}
+          installStatus={installStatus}
+          installSteps={installSteps}
+          installError={installError}
+          onConfirm={confirmInstall}
+          scrollRef={scrollRef}
+        />
+      )}
     </div>
   );
 }
@@ -190,7 +429,9 @@ function SopMarket() {
   const [localAgents, setLocalAgents] = useState<AgentInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedAgent, setSelectedAgent] = useState<string>('');
-  const [installing, setInstalling] = useState<string | null>(null);
+  
+  const { showModal, setShowModal, installStatus, setInstallStatus, installSteps, setInstallSteps, installError, setInstallError, scrollRef } = useInstallManager();
+  const [targetSop, setTargetSop] = useState<MarketSop | null>(null);
 
   useEffect(() => {
     Promise.all([getMarketSops(), listAgents()])
@@ -205,19 +446,34 @@ function SopMarket() {
       .finally(() => setLoading(false));
   }, []);
 
-  const handleInstall = async (sop: MarketSop) => {
+  const openInstallModal = (sop: MarketSop) => {
     if (!selectedAgent) { alert('请先选择一个本地 Agent'); return; }
-    const sopId = sop.sop_id || sop.id;
-    const pkgUrl = sop.package_url || ""; // Let Rust resolve it via backend
+    setTargetSop(sop);
+    setInstallStatus('idle');
+    setInstallSteps([]);
+    setInstallError('');
+    setShowModal(true);
+  };
 
-    setInstalling(String(sop.id));
+  const closeModal = () => {
+    if (installStatus === 'installing') return;
+    setShowModal(false);
+    setTargetSop(null);
+  };
+
+  const confirmInstall = async () => {
+    if (!targetSop || !selectedAgent) return;
+    const sopId = targetSop.sop_id || targetSop.id;
+    const pkgUrl = targetSop.package_url || ""; // Let Rust resolve it via backend
+
+    setInstallStatus('installing');
+    setInstallSteps([`🚀 开始将工作流 ${targetSop.name} 配置给 Agent...`]);
     try {
       await installMarketSop(selectedAgent, String(sopId), pkgUrl);
-      alert('SOP 工作流安装成功！依赖的技能已自动安装。');
+      setInstallStatus('success');
     } catch (err: any) {
-      alert(`安装失败: ${err.message || err}`);
-    } finally {
-      setInstalling(null);
+      setInstallError(err.message || String(err));
+      setInstallStatus('error');
     }
   };
 
@@ -264,17 +520,35 @@ function SopMarket() {
             <div className="flex justify-between items-center mt-auto">
               <span style={{ fontSize: 12, color: 'var(--hx-text-tertiary)' }}>v{sop.latest_version || '1.0.0'}</span>
               <button
-                onClick={() => handleInstall(sop)}
-                disabled={!!installing || !selectedAgent}
+                onClick={() => openInstallModal(sop)}
+                disabled={!selectedAgent}
                 className="px-3 py-1.5 bg-[#3b82f6] text-white text-xs font-medium rounded-lg hover:bg-[#2563eb] disabled:opacity-50 flex items-center gap-1 transition-colors"
               >
-                {installing === String(sop.id) ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+                <Download className="w-3.5 h-3.5" />
                 安装工作流
               </button>
             </div>
           </div>
         ))}
       </div>
+
+      {/* ── Install Modal ── */}
+      {targetSop && (
+        <InstallModal
+          isOpen={showModal}
+          onClose={closeModal}
+          type="sop"
+          targetName={targetSop.name}
+          iconUrl={targetSop.icon_url}
+          emoji={targetSop.emoji}
+          iconFallback={<Workflow className="w-8 h-8 text-indigo-400 p-1.5 bg-indigo-50 rounded-lg" />}
+          installStatus={installStatus}
+          installSteps={installSteps}
+          installError={installError}
+          onConfirm={confirmInstall}
+          scrollRef={scrollRef}
+        />
+      )}
     </div>
   );
 }
@@ -292,7 +566,14 @@ function AgentSelector({ agents, selected, onChange, label }: { agents: AgentInf
         <SelectContent>
           {agents.map(a => (
             <SelectItem key={a.name} value={a.name}>
-              {a.display_name || a.name}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                {a.icon_url ? (
+                  <img src={a.icon_url} alt={a.name} style={{ width: 16, height: 16, borderRadius: 4, objectFit: 'cover' }} />
+                ) : (
+                  <Bot size={16} />
+                )}
+                <span>{a.display_name || a.name}</span>
+              </div>
             </SelectItem>
           ))}
         </SelectContent>

@@ -31,7 +31,9 @@
         "scope": [
           "$APPDATA/**/*",
           "$HOME/**/*",
+          "$HOME/.huanxing/**/*",
           "/tmp/**/*",
+          "/private/tmp/**/*",
           "/var/**/*"
         ]
       }

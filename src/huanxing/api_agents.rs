@@ -46,6 +46,8 @@ pub struct AgentInfo {
     pub active: bool,
     /// 是否为默认 Agent（预留，当前始终 false）
     pub is_default: bool,
+    /// 代理图标 URL
+    pub icon_url: Option<String>,
 }
 
 /// 列出 Agent 响应
@@ -133,6 +135,12 @@ async fn list_agents(State(state): State<AppState>) -> impl IntoResponse {
                 }
 
                 let ws_cfg = load_workspace_config(&path).await;
+                let icon_url = if path.join("icon.svg").exists() {
+                    Some(format!("/api/agents/{}/files/icon.svg", urlencoding::encode(&name)))
+                } else {
+                    None
+                };
+
                 agents.push(AgentInfo {
                     config_dir: path.to_string_lossy().to_string(),
                     model: ws_cfg.default_model,
@@ -140,6 +148,7 @@ async fn list_agents(State(state): State<AppState>) -> impl IntoResponse {
                     hasn_id: ws_cfg.hasn_id,
                     active: true,
                     is_default: false,
+                    icon_url,
                     name,
                 });
             }

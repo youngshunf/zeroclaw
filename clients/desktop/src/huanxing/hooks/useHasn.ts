@@ -231,10 +231,12 @@ export function useHasnContacts() {
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const [c, fr] = await Promise.all([
+      const [cRes, frRes] = await Promise.all([
         hasnApi.getContacts(),
         hasnApi.getFriendRequests(),
       ]);
+      const c = Array.isArray(cRes) ? cRes : ((cRes as any).contacts || []);
+      const fr = Array.isArray(frRes) ? frRes : ((frRes as any).requests || []);
       setContacts(c);
       setFriendRequests(fr);
       setError(null);

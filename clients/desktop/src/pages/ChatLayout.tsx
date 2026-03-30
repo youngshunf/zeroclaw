@@ -559,13 +559,12 @@ export default function ChatLayout() {
   // 当前会话标题
   const activeSessionTitle = activeSessionId ? (sessionTitles.get(activeSessionId) ?? '新对话') : '';
 
-  // Resolve display name for the active agent
-  const activeAgentDisplayName = (() => {
-    if (!activeAgent) return 'AI';
-    const found = agents.find(a => a.name === activeAgent);
-    if (found?.display_name) return found.display_name;
-    return activeAgent === 'default' ? '默认 Agent' : activeAgent;
-  })();
+  // Resolve active agent info (for display name and icon)
+  const activeAgentInfo = useMemo(() => {
+    if (!activeAgent) return null;
+    return agents.find(a => a.name === activeAgent) || null;
+  }, [activeAgent, agents]);
+  const activeAgentDisplayName = activeAgentInfo?.display_name || activeAgent || 'AI';
 
   return (
     <>
@@ -592,8 +591,12 @@ export default function ChatLayout() {
         {activeSessionId && activeAgent && (
           <div className="hx-chat-header">
             <div className="hx-chat-header-left">
-              <div className="hx-chat-header-avatar">
-                <Bot size={18} />
+              <div className="hx-chat-header-avatar" style={{ overflow: 'hidden' }}>
+                {activeAgentInfo?.icon_url ? (
+                  <img src={activeAgentInfo.icon_url} alt="agent" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'inherit' }} />
+                ) : (
+                  <Bot size={18} />
+                )}
               </div>
               <div className="hx-chat-header-info">
                 <h3>{activeAgentDisplayName}</h3>
@@ -631,8 +634,14 @@ export default function ChatLayout() {
 
           {currentMessages.map((msg) => (
             <div key={msg.id} className={`hx-msg ${msg.role === 'user' ? 'user' : 'agent'}`}>
-              <div className="hx-msg-avatar">
-                {msg.role === 'user' ? '杨' : <Bot size={16} />}
+              <div className="hx-msg-avatar" style={{ overflow: 'hidden', padding: activeAgentInfo?.icon_url && msg.role !== 'user' ? 0 : undefined }}>
+                {msg.role === 'user' ? '杨' : (
+                  activeAgentInfo?.icon_url ? (
+                    <img src={activeAgentInfo.icon_url} alt="agent" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'inherit' }} />
+                  ) : (
+                    <Bot size={16} />
+                  )
+                )}
               </div>
               <div className="hx-msg-content">
                 <div className="hx-msg-bubble">
@@ -663,7 +672,13 @@ export default function ChatLayout() {
             />
           ) : currentTyping ? (
             <div className="hx-msg agent">
-              <div className="hx-msg-avatar"><Bot size={16} /></div>
+              <div className="hx-msg-avatar" style={{ overflow: 'hidden', padding: activeAgentInfo?.icon_url ? 0 : undefined }}>
+                {activeAgentInfo?.icon_url ? (
+                  <img src={activeAgentInfo.icon_url} alt="agent" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'inherit' }} />
+                ) : (
+                  <Bot size={16} />
+                )}
+              </div>
               <div className="hx-msg-content">
                 <div className="hx-typing-dots">
                   <span /><span /><span />

@@ -23,6 +23,8 @@
   --hx-text-tertiary: #9CA3AF;
   --hx-text-on-purple: #FFFFFF;
 
+  --hx-bg-bubble-user-light: #E0E7FF;
+
   --hx-border: #E5E7EB;
   --hx-border-light: #F3F4F6;
 
@@ -54,6 +56,8 @@
   --hx-text-primary: #F9FAFB;
   --hx-text-secondary: #9CA3AF;
   --hx-text-tertiary: #6B7280;
+
+  --hx-bg-bubble-user-light: #2A2F45;
 
   --hx-border: #374151;
   --hx-border-light: #1F2937;
@@ -826,8 +830,8 @@ html:has(.hx-app) body {
 }
 
 .hx-msg.user .hx-msg-bubble {
-  background: var(--hx-bg-bubble-user);
-  color: var(--hx-text-on-purple);
+  background: var(--hx-bg-bubble-user-light);
+  color: var(--hx-text-primary);
   border-top-right-radius: 4px;
 }
 
