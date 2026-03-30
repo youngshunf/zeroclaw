@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { useActiveAgent } from '@/hooks/useActiveAgent';
-import { listAgents, type AgentInfo } from '../lib/agent-api';
-import { listSops, getSopDetail, executeSop, type SopInfo, type SopDetailResponse } from '../lib/sop-api';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/Select';
+import { listAgents, type AgentInfo } from '@/lib/agent-api';
+import { listSops, getSopDetail, executeSop, type SopInfo, type SopDetailResponse } from '@/lib/sop-api';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/Select';
 import { Workflow, Play, CheckCircle, AlertTriangle, FileText, Bot, History } from 'lucide-react';
-import { SopRunPanel } from '../components/sop/SopRunPanel';
-import { SopHistoryList } from '../components/sop/SopHistoryList';
-import { resolveApiUrl } from '../config';
+import { SopRunPanel } from '@/components/sop/SopRunPanel';
+import { SopHistoryList } from '@/components/sop/SopHistoryList';
+import { resolveApiUrl } from '@/config';
 
 export default function SopWorkbench() {
   const [activeAgentName, setActiveAgentName] = useActiveAgent();

@@ -21,7 +21,7 @@ import "./app.css";
 // 自定义样式（.app-shell / .electric-button 等）
 import "@/index.css";
 // 唤星主题覆盖
-import "@/huanxing/styles/huanxing-theme.css";
+import "@/styles/huanxing-theme.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

@@ -11,11 +11,11 @@ import {
   type MarketApp,
   type MarketSkill,
   type MarketSop,
-} from '../lib/marketplace-api';
-import { listAgents, type AgentInfo } from '../lib/agent-api';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/Select';
-import { resolveApiUrl } from '../config';
-import { Input } from '../../components/ui/Input';
+} from '@/lib/marketplace-api';
+import { listAgents, type AgentInfo } from '@/lib/agent-api';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/Select';
+import { resolveApiUrl } from '@/config';
+import { Input } from '@/components/ui/Input';
 
 // ── Icon 渲染组件 ────────────────────────────────────────────
 function ItemIcon({ iconUrl, emoji, fallback, size = 'md' }: { iconUrl?: string; emoji?: string; fallback: React.ReactNode; size?: 'md' | 'lg' }) {

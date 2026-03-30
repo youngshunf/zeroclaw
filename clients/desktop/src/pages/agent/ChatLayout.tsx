@@ -11,19 +11,19 @@ import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } fro
 import { wsMultiplexer } from '@/lib/ws';
 import type { WsMessage } from '@/types/api';
 import { useActiveAgent } from '@/hooks/useActiveAgent';
-import { listAgents, switchAgent, type AgentInfo } from '@/huanxing/lib/agent-api';
+import { listAgents, switchAgent, type AgentInfo } from '@/lib/agent-api';
 import { listSessions, getSessionMessages, generateSessionTitle, type SessionInfo } from '@/lib/session-api';
 import { Search, Plus, Bot } from 'lucide-react';
-import { HxChatInput } from '@/huanxing/components/chat/input';
-import { HUANXING_SLASH_SECTIONS } from '@/huanxing/components/chat/input/HxSlashMenu';
-import { useHasnContacts } from '@/huanxing/hooks/useHasnContacts';
-import { useAgentSkills } from '@/huanxing/hooks/useAgentSkills';
-import { Markdown } from '@/huanxing/components/markdown';
-import { HxImageMessage, containsImageMarkers } from '@/huanxing/components/chat/HxImageMessage';
-import { StreamingBubble } from '@/huanxing/components/chat/StreamingBubble';
-import { getHuanxingSession, resolveApiUrl } from '@/huanxing/config';
+import { HxChatInput } from '@/components/chat/input';
+import { HUANXING_SLASH_SECTIONS } from '@/components/chat/input/HxSlashMenu';
+import { useHasnContacts } from '@/hooks/useHasnContacts';
+import { useAgentSkills } from '@/hooks/useAgentSkills';
+import { Markdown } from '@/components/markdown';
+import { HxImageMessage, containsImageMarkers } from '@/components/chat/HxImageMessage';
+import { StreamingBubble } from '@/components/chat/StreamingBubble';
+import { getHuanxingSession, resolveApiUrl } from '@/config';
 
-const SessionList = lazy(() => import('@/huanxing/components/chat/SessionList'));
+const SessionList = lazy(() => import('@/components/chat/SessionList'));
 
 interface ChatMessage {
   id: string;
@@ -511,7 +511,7 @@ export default function ChatLayout() {
   // ── SSE: Agent 切换 + 会话标题更新 ─────────────────────────
   useEffect(() => {
     let cleanup: (() => void) | undefined;
-    import('@/huanxing/lib/sse-events').then(({ connectSseEvents }) => {
+    import('@/lib/sse-events').then(({ connectSseEvents }) => {
       cleanup = connectSseEvents({
         onAgentSwitched: ({ agent }) => {
           // ✅ 不再 disconnectAll，只切换前台显示

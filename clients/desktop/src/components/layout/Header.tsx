@@ -72,7 +72,7 @@ export default function Header({
   const handleToggleDropdown = async () => {
     if (!dropdownOpen) {
       try {
-        const { listAgents } = await import('@/huanxing/lib/agent-api');
+        const { listAgents } = await import('@/lib/agent-api');
         const data = await listAgents();
         setAgents(data.agents.map(a => ({ name: a.name, active: a.active })));
       } catch {
@@ -86,7 +86,7 @@ export default function Header({
   const handleSwitchAgent = async (name: string) => {
     setDropdownOpen(false);
     try {
-      const { switchAgent } = await import('@/huanxing/lib/agent-api');
+      const { switchAgent } = await import('@/lib/agent-api');
       await switchAgent(name);
       // SSE event will handle the rest (ChatLayout listens)
     } catch (err) {

@@ -22,7 +22,7 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react';
 import { Paperclip, Send, Slash, AtSign, Square, X, Image, FileText } from 'lucide-react';
 import { HxVoiceButton } from './HxVoiceButton';
-import { HxPhotoProvider, PhotoView, localPathToSrc } from '@/huanxing/components/chat/HxImageLightbox';
+import { HxPhotoProvider, PhotoView, localPathToSrc } from '@/components/chat/HxImageLightbox';
 import { HxSlashMenu, useHxSlashCommand, type SlashInputElement, type SlashCommandSection } from './HxSlashMenu';
 import { HxMentionMenu, useHxMention, type MentionItem, type UseMentionInputElement, type MentionSection } from './HxMentionMenu';
 import {
@@ -31,7 +31,7 @@ import {
   formatFileReferences,
   getWorkspaceDir,
   type UploadedFile,
-} from '@/huanxing/lib/file-upload';
+} from '@/lib/file-upload';
 
 export interface HxChatInputProps {
   /** 发送消息回调 */

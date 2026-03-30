@@ -10,7 +10,7 @@
  */
 import React, { useCallback, useState } from 'react';
 import { Mic, MicOff, X, Send, Loader2 } from 'lucide-react';
-import { useVoiceRecorder, formatDuration, transcribeAudio } from '@/huanxing/hooks/useVoiceRecorder';
+import { useVoiceRecorder, formatDuration, transcribeAudio } from '@/hooks/useVoiceRecorder';
 
 export interface HxVoiceButtonProps {
   /** 转录完成回调 — 将文字填入输入框 */

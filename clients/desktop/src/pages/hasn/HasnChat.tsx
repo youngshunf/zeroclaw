@@ -13,19 +13,19 @@ import {
   Loader2,
   ChevronUp,
 } from 'lucide-react';
-import { Markdown } from '@/huanxing/components/markdown';
-import { HxImageMessage, containsImageMarkers } from '@/huanxing/components/chat/HxImageMessage';
-import { getHuanxingSession } from '@/huanxing/config';
+import { Markdown } from '@/components/markdown';
+import { HxImageMessage, containsImageMarkers } from '@/components/chat/HxImageMessage';
+import { getHuanxingSession } from '@/config';
 import {
   useHasnConnection,
   useHasnConversations,
   useHasnMessages,
-} from '@/huanxing/hooks/useHasn';
-import { useHasnContacts } from '@/huanxing/hooks/useHasnContacts';
-import { useAgentSkills } from '@/huanxing/hooks/useAgentSkills';
-import { HxChatInput } from '@/huanxing/components/chat/input';
-import { HUANXING_SLASH_SECTIONS } from '@/huanxing/components/chat/input/HxSlashMenu';
-import * as hasnApi from '@/huanxing/lib/hasn-api';
+} from '@/hooks/useHasn';
+import { useHasnContacts } from '@/hooks/useHasnContacts';
+import { useAgentSkills } from '@/hooks/useAgentSkills';
+import { HxChatInput } from '@/components/chat/input';
+import { HUANXING_SLASH_SECTIONS } from '@/components/chat/input/HxSlashMenu';
+import * as hasnApi from '@/lib/hasn-api';
 
 function getInitial(name: string): string {
   return name.charAt(0) || '?';

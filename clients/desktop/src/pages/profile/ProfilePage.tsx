@@ -4,14 +4,14 @@
  */
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Camera, Save, ArrowLeft, Check, X } from 'lucide-react';
-import { getHuanxingSession, type HuanxingSession } from '../../config';
-import { uploadAvatar, updateAvatar, updateProfile, getUserProfile } from '../../lib/huanxing-api';
-import AvatarCropDialog from './AvatarCropDialog';
-import { t } from '../../../lib/i18n';
-import { useLocaleContext } from '../../../App';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/Select';
-import { Input } from '../../../components/ui/Input';
-import { Textarea } from '../../../components/ui/Textarea';
+import { getHuanxingSession, type HuanxingSession } from '@/config';
+import { uploadAvatar, updateAvatar, updateProfile, getUserProfile } from '@/lib/huanxing-api';
+import AvatarCropDialog from '@/components/profile/AvatarCropDialog';
+import { t } from '@/lib/i18n';
+import { useLocaleContext } from '@/App';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/Select';
+import { Input } from '@/components/ui/Input';
+import { Textarea } from '@/components/ui/Textarea';
 
 interface UserProfile {
   nickname: string;

@@ -9,9 +9,9 @@
  * 如果 agent-api 不可用，降级到空列表。
  */
 import { useState, useEffect, useCallback } from 'react';
-import { listFiles, readFile, listAgents } from '@/huanxing/lib/agent-api';
-import type { SlashCommandItem } from '@/huanxing/components/chat/input/HxSlashMenu';
-import type { MentionItem } from '@/huanxing/components/chat/input/HxMentionMenu';
+import { listFiles, readFile, listAgents } from '@/lib/agent-api';
+import type { SlashCommandItem } from '@/components/chat/input/HxSlashMenu';
+import type { MentionItem } from '@/components/chat/input/HxMentionMenu';
 
 export interface SkillInfo {
   /** 技能 ID（目录名） */

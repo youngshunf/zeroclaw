@@ -29,7 +29,7 @@ function isHuanxingDesktop(): boolean {
 }
 
 // 唤星连接状态组件 (lazy)
-const ZeroClawStatus = lazy(() => import('@/huanxing/components/ZeroClawStatus'));
+const ZeroClawStatus = lazy(() => import('@/components/ZeroClawStatus'));
 
 // --- 唤星分组导航 ---
 interface NavGroup {

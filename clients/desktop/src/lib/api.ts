@@ -19,7 +19,7 @@ let _refreshTokenNow: (() => Promise<boolean>) | null = null;
 async function getRefreshFn() {
   if (!_refreshTokenNow) {
     try {
-      const mod = await import('../huanxing/lib/token-refresh');
+      const mod = await import('./token-refresh');
       _refreshTokenNow = mod.refreshTokenNow;
     } catch {
       // 非唤星环境

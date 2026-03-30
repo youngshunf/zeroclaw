@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { DollarSign, Star, Coins } from 'lucide-react';
-import UsageStats from '../huanxing/components/billing/UsageStats';
-import SubscriptionTab from '../huanxing/components/billing/SubscriptionTab';
-import CreditsTab from '../huanxing/components/billing/CreditsTab';
+import UsageStats from '@/components/billing/UsageStats';
+import SubscriptionTab from '@/components/billing/SubscriptionTab';
+import CreditsTab from '@/components/billing/CreditsTab';
 
 type Tab = 'usage' | 'subscription' | 'credits';
 

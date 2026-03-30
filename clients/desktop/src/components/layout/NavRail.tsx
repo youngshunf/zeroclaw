@@ -1,12 +1,12 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Bot, MessageSquare, Users, Grid2X2, Settings, User, LogOut, Sun, Moon, Globe, Check, Store, Workflow, FileText } from 'lucide-react';
-import logoDark from '../../assets/logo-v2-dark.svg';
-import logoLight from '../../assets/logo-v2-light.svg';
-import { getHuanxingSession, clearHuanxingSession } from '../../config';
-import { useAuth } from '../../../hooks/useAuth';
-import { LANGUAGE_BUTTON_LABELS, LANGUAGE_SWITCH_ORDER, type Locale } from '../../../lib/i18n';
-import { useLocaleContext } from '../../../App';
+import logoDark from '@/assets/logo-v2-dark.svg';
+import logoLight from '@/assets/logo-v2-light.svg';
+import { getHuanxingSession, clearHuanxingSession } from '@/config';
+import { useAuth } from '@/hooks/useAuth';
+import { LANGUAGE_BUTTON_LABELS, LANGUAGE_SWITCH_ORDER, type Locale } from '@/lib/i18n';
+import { useLocaleContext } from '@/App';
 
 export type TabKey = 'agent' | 'hasn' | 'contacts' | 'agents' | 'market' | 'docs' | 'sop' | 'settings';
 

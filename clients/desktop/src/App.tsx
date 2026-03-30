@@ -1,33 +1,33 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useState, useEffect, createContext, useContext, lazy, Suspense } from 'react';
-import Dashboard from './pages/Dashboard';
-const ChatLayout = lazy(() => import('./pages/ChatLayout'));
-import Tools from './pages/Tools';
-import Cron from './pages/Cron';
-import Integrations from './pages/Integrations';
-import Memory from './pages/Memory';
-import Devices from './pages/Devices';
-import Config from './pages/Config';
-import Cost from './pages/Cost';
-import Logs from './pages/Logs';
-import Doctor from './pages/Doctor';
+import Dashboard from './pages/settings/Dashboard';
+const ChatLayout = lazy(() => import('./pages/agent/ChatLayout'));
+import Tools from './pages/settings/Tools';
+import Cron from './pages/settings/Cron';
+import Integrations from './pages/settings/Integrations';
+import Memory from './pages/settings/Memory';
+import Devices from './pages/settings/Devices';
+import Config from './pages/settings/Config';
+import Cost from './pages/settings/Cost';
+import Logs from './pages/settings/Logs';
+import Doctor from './pages/settings/Doctor';
 const ImageViewer = lazy(() => import('./pages/ImageViewer'));
 import { AuthProvider, useAuth } from './hooks/useAuth';
 import { coerceLocale, setLocale, type Locale } from './lib/i18n';
-import { startTokenRefresh, stopTokenRefresh } from './huanxing/lib/token-refresh';
+import { startTokenRefresh, stopTokenRefresh } from './lib/token-refresh';
 
 // --- 唤星页面 ---
-const HuanxingLogin = lazy(() => import('./huanxing/pages/Login'));
-const HasnChat = lazy(() => import('./huanxing/pages/HasnChat'));
-const Contacts = lazy(() => import('./huanxing/pages/Contacts'));
-const AgentManager = lazy(() => import('./huanxing/pages/AgentManager'));
-const Marketplace = lazy(() => import('./huanxing/pages/Marketplace'));
-const Documents = lazy(() => import('./huanxing/pages/Documents'));
-const HuanxingLayout = lazy(() => import('./huanxing/components/layout/HuanxingLayout'));
-const SettingsPanel = lazy(() => import('./huanxing/components/layout/SettingsPanel'));
-const Engine = lazy(() => import('./huanxing/pages/Engine'));
-const ProfilePage = lazy(() => import('./huanxing/components/profile/ProfilePage'));
-const SopWorkbench = lazy(() => import('./huanxing/pages/SopWorkbench'));
+const HuanxingLogin = lazy(() => import('./pages/auth/Login'));
+const HasnChat = lazy(() => import('./pages/hasn/HasnChat'));
+const Contacts = lazy(() => import('./pages/contacts/Contacts'));
+const AgentManager = lazy(() => import('./pages/agents/AgentManager'));
+const Marketplace = lazy(() => import('./pages/market/Marketplace'));
+const Documents = lazy(() => import('./pages/docs/Documents'));
+const HuanxingLayout = lazy(() => import('./components/layout/HuanxingLayout'));
+const SettingsPanel = lazy(() => import('./components/layout/SettingsPanel'));
+const Engine = lazy(() => import('./pages/engine/Engine'));
+const ProfilePage = lazy(() => import('./pages/profile/ProfilePage'));
+const SopWorkbench = lazy(() => import('./pages/sop/SopWorkbench'));
 
 const LOCALE_STORAGE_KEY = 'zeroclaw:locale';
 
@@ -96,12 +96,12 @@ function AppContent() {
     const provideToken = async () => {
       if (cancelled) return;
       try {
-        const { getHuanxingSession } = await import('./huanxing/config');
+        const { getHuanxingSession } = await import('./config');
         const session = getHuanxingSession();
         if (!session?.accessToken) return;
 
         // 确保 HASN 身份已注册（幂等）
-        const { registerHasnIdentity, registerHasnAgent } = await import('./huanxing/onboard');
+        const { registerHasnIdentity, registerHasnAgent } = await import('./onboard');
         const identity = await registerHasnIdentity(session);
         if (!identity?.hasn_id || cancelled) return;
 

@@ -2,7 +2,7 @@ import React from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useState, useEffect, Suspense } from 'react';
 import NavRail, { type TabKey } from './NavRail';
-import { useHasnConversations, useHasnContacts } from '@/huanxing/hooks/useHasn';
+import { useHasnConversations, useHasnContacts } from '@/hooks/useHasn';
 
 // Settings-related paths
 const settingsPaths = ['/dashboard', '/config', '/cost', '/logs', '/doctor', '/devices', '/integrations', '/tools', '/cron', '/memory', '/about'];

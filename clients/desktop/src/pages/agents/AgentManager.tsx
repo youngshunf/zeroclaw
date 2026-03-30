@@ -20,8 +20,8 @@ import {
   AlertCircle,
   FolderOpen,
 } from 'lucide-react';
-import { resolveApiUrl } from '../config';
-import { Input } from '../../components/ui/Input';
+import { resolveApiUrl } from '@/config';
+import { Input } from '@/components/ui/Input';
 import {
   listAgents,
   createAgent,
@@ -31,8 +31,8 @@ import {
   writeFile,
   type AgentInfo,
   type CreateAgentParams,
-} from '../lib/agent-api';
-import { AGENT_TEMPLATES, listAvailableTemplates } from '../lib/agent-templates';
+} from '@/lib/agent-api';
+import { AGENT_TEMPLATES, listAvailableTemplates } from '@/lib/agent-templates';
 
 // ── 模板类型（兼容 hub 模板和本地模板）──────────────────────────
 

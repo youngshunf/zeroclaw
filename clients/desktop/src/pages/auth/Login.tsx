@@ -1,15 +1,15 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { saveHuanxingSession, type HuanxingLoginData } from "../config";
-import { autoOnboard, registerHasnIdentity, registerHasnAgent, connectHasn } from "../onboard";
-import { sendVerifyCode, phoneLogin } from "../lib/huanxing-api";
-import { startTokenRefresh } from "../lib/token-refresh";
+import { saveHuanxingSession, type HuanxingLoginData } from "@/config";
+import { autoOnboard, registerHasnIdentity, registerHasnAgent, connectHasn } from "@/onboard";
+import { sendVerifyCode, phoneLogin } from "@/lib/huanxing-api";
+import { startTokenRefresh } from "@/lib/token-refresh";
 
 // Import refactored components
-import { StarfieldCanvas } from "../../components/effects/StarfieldCanvas";
-import { SupernovaCanvas } from "../../components/effects/SupernovaCanvas";
-import { GlowingStar } from "../../components/effects/GlowingStar";
-import { OnboardProgress, type OnboardStep } from "../components/onboard/OnboardProgress";
-import { Input } from "../../components/ui/Input";
+import { StarfieldCanvas } from "@/components/effects/StarfieldCanvas";
+import { SupernovaCanvas } from "@/components/effects/SupernovaCanvas";
+import { GlowingStar } from "@/components/effects/GlowingStar";
+import { OnboardProgress, type OnboardStep } from "@/components/onboard/OnboardProgress";
+import { Input } from "@/components/ui/Input";
 
 interface LoginProps {
   onLoginSuccess: (token: string) => void;

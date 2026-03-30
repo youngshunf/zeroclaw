@@ -6,9 +6,9 @@
  * - 我的 Agent 列表 (agents)
  */
 import { useState, useEffect, useCallback } from 'react';
-import * as hasnApi from '@/huanxing/lib/hasn-api';
-import type { Contact, AgentInfo } from '@/huanxing/lib/hasn-api';
-import type { MentionItem, MentionSection } from '@/huanxing/components/chat/input/HxMentionMenu';
+import * as hasnApi from '@/lib/hasn-api';
+import type { Contact, AgentInfo } from '@/lib/hasn-api';
+import type { MentionItem, MentionSection } from '@/components/chat/input/HxMentionMenu';
 
 /** 将 HASN Contact 转为 MentionItem */
 function contactToMention(c: Contact): MentionItem {

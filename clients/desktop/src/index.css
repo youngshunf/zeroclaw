@@ -1,10 +1,10 @@
 @import "tailwindcss";
-@import "./huanxing/styles/huanxing.css";
-@import "./huanxing/styles/modules/layout.css";
-@import "./huanxing/styles/modules/contacts.css";
-@import "./huanxing/styles/modules/chat.css";
-@import "./huanxing/styles/modules/components.css";
-@import "./huanxing/styles/modules/markdown.css";
+@import "./styles/huanxing.css";
+@import "./styles/modules/layout.css";
+@import "./styles/modules/contacts.css";
+@import "./styles/modules/chat.css";
+@import "./styles/modules/components.css";
+@import "./styles/modules/markdown.css";
 
 /* Tailwind CSS v4 class-based dark mode configuration */
 @custom-variant dark (&:where(.dark, .dark *, [data-theme="dark"], [data-theme="dark"] *));

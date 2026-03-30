@@ -1,5 +1,5 @@
 import React from "react";
-import starSvg from "../../huanxing/assets/huanxing-star.svg";
+import starSvg from "@/assets/huanxing-star.svg";
 
 export function GlowingStar() {
   return (

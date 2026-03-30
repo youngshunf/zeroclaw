@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useMemo } from 'react';
 import { FileText, Plus, Search, Loader2, Save, Trash2, Globe, Lock, Clock, Edit3, Share2, BookOpen, ExternalLink, X, Copy, ChevronRight, ChevronDown, Folder, FolderPlus, FilePlus, ArrowRightLeft } from 'lucide-react';
 import TipTapEditor from '@/components/TipTapEditor';
 import MarkdownPreview from '@/components/MarkdownPreview';
-import { getHuanxingSession } from '@/huanxing/config';
+import { getHuanxingSession } from '@/config';
 import {
   getHuanxingDocumentListApi,
   createHuanxingDocumentApi,
@@ -14,7 +14,7 @@ import {
   moveHuanxingDocumentApi,
   type HuanxingDocumentResult,
   type HuanxingFolderTreeNode,
-} from '@/huanxing/lib/document-api';
+} from '@/lib/document-api';
 import {
   Dialog,
   DialogContent,

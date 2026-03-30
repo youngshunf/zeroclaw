@@ -14,9 +14,9 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { Input } from '@/components/ui/Input';
 import { Textarea } from '@/components/ui/Textarea';
-import { useHasnContacts } from '@/huanxing/hooks/useHasn';
-import * as hasnApi from '@/huanxing/lib/hasn-api';
-import type { Contact } from '@/huanxing/lib/hasn-api';
+import { useHasnContacts } from '@/hooks/useHasn';
+import * as hasnApi from '@/lib/hasn-api';
+import type { Contact } from '@/lib/hasn-api';
 
 function getInitial(name: string): string {
   return name.charAt(0) || '?';

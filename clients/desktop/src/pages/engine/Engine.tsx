@@ -11,7 +11,7 @@ import {
   Cpu, Clock, Database, Zap, AlertTriangle,
   Trash2, Download, Settings,
 } from 'lucide-react';
-import { useSidecar, type QuickConfig } from '../hooks/useSidecar';
+import { useSidecar, type QuickConfig } from '@/hooks/useSidecar';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/Select';
 import { t } from '@/lib/i18n';
 import { useLocaleContext } from '@/App';
