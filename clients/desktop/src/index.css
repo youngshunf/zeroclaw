@@ -23,35 +23,35 @@
     --color-content-muted: #94a3b8;
 
     /* Huanxing Light Theme (Default) */
-    --color-hx-bg-rail: #F3F4F6;
-    --color-hx-bg-panel: #FFFFFF;
-    --color-hx-bg-main: #F9FAFB;
-    --color-hx-bg-input: #FFFFFF;
-    --color-hx-bg-bubble-agent: #FFFFFF;
-    --color-hx-bg-hover: rgba(124, 58, 237, 0.05);
-    --color-hx-text-primary: #111827;
-    --color-hx-text-secondary: #4B5563;
-    --color-hx-text-tertiary: #9CA3AF;
-    --color-hx-bg-bubble-user-light: #E0E7FF;
-    --color-hx-border: #E5E7EB;
-    --color-hx-border-light: #F3F4F6;
-    --shadow-hx-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
-    --shadow-hx-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    --hx-bg-rail: #F3F4F6;
+    --hx-bg-panel: #FFFFFF;
+    --hx-bg-main: #F9FAFB;
+    --hx-bg-input: #FFFFFF;
+    --hx-bg-bubble-agent: #FFFFFF;
+    --hx-bg-hover: rgba(124, 58, 237, 0.05);
+    --hx-text-primary: #111827;
+    --hx-text-secondary: #4B5563;
+    --hx-text-tertiary: #9CA3AF;
+    --hx-bg-bubble-user-light: #E0E7FF;
+    --hx-border: #E5E7EB;
+    --hx-border-light: #F3F4F6;
+    --hx-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+    --hx-shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
     
     /* Common primitive variables (shared) */
-    --color-hx-purple: #7C3AED;
-    --color-hx-purple-hover: #6D28D9;
-    --color-hx-purple-bg: rgba(124, 58, 237, 0.1);
-    --color-hx-purple-bg-hover: rgba(124, 58, 237, 0.15);
-    --color-hx-blue: #3B82F6;
-    --color-hx-blue-hover: #2563EB;
-    --color-hx-green: #10B981;
-    --color-hx-red: #EF4444;
+    --hx-purple: #7C3AED;
+    --hx-purple-hover: #6D28D9;
+    --hx-purple-bg: rgba(124, 58, 237, 0.1);
+    --hx-purple-bg-hover: rgba(124, 58, 237, 0.15);
+    --hx-blue: #3B82F6;
+    --hx-blue-hover: #2563EB;
+    --hx-green: #10B981;
+    --hx-red: #EF4444;
     
-    --radius-hx-sm: 6px;
-    --radius-hx-md: 8px;
-    --radius-hx-lg: 12px;
-    --radius-hx-full: 9999px;
+    --hx-radius-sm: 6px;
+    --hx-radius-md: 8px;
+    --hx-radius-lg: 12px;
+    --hx-radius-full: 9999px;
 
     --hx-rail-width: 64px;
     --hx-panel-width: 280px;
@@ -73,22 +73,22 @@
     --color-content-muted: #4a5f8f;
 
     /* Huanxing Dark Theme Overrides */
-    --color-hx-bg-rail: #0B0F1A;
-    --color-hx-bg-panel: #111827;
-    --color-hx-bg-main: #1A1F2E;
-    --color-hx-bg-input: #1F2937;
-    --color-hx-bg-bubble-agent: #1F2937;
-    --color-hx-bg-hover: rgba(124, 58, 237, 0.08);
-    --color-hx-text-primary: #F9FAFB;
-    --color-hx-text-secondary: #9CA3AF;
-    --color-hx-text-tertiary: #6B7280;
-    --color-hx-bg-bubble-user-light: #2A2F45;
-    --color-hx-border: #374151;
-    --color-hx-border-light: #1F2937;
-    --shadow-hx-sm: 0 1px 3px rgba(0,0,0,0.3);
-    --shadow-hx-md: 0 4px 12px rgba(0,0,0,0.4);
-    --color-hx-purple-bg: rgba(124, 58, 237, 0.12);
-    --color-hx-purple-bg-hover: rgba(124, 58, 237, 0.18);
+    --hx-bg-rail: #0B0F1A;
+    --hx-bg-panel: #111827;
+    --hx-bg-main: #1A1F2E;
+    --hx-bg-input: #1F2937;
+    --hx-bg-bubble-agent: #1F2937;
+    --hx-bg-hover: rgba(124, 58, 237, 0.08);
+    --hx-text-primary: #F9FAFB;
+    --hx-text-secondary: #9CA3AF;
+    --hx-text-tertiary: #6B7280;
+    --hx-bg-bubble-user-light: #2A2F45;
+    --hx-border: #374151;
+    --hx-border-light: #1F2937;
+    --hx-shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
+    --hx-shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+    --hx-purple-bg: rgba(124, 58, 237, 0.12);
+    --hx-purple-bg-hover: rgba(124, 58, 237, 0.18);
   }
 }
 
@@ -112,41 +112,43 @@
   --color-content-muted: var(--color-content-muted);
 
   /* Huanxing Base Tokens exposure */
-  --color-hx-bg-rail: var(--color-hx-bg-rail);
-  --color-hx-bg-panel: var(--color-hx-bg-panel);
-  --color-hx-bg-main: var(--color-hx-bg-main);
-  --color-hx-bg-input: var(--color-hx-bg-input);
-  --color-hx-bg-bubble-agent: var(--color-hx-bg-bubble-agent);
-  --color-hx-bg-hover: var(--color-hx-bg-hover);
-  --color-hx-text-primary: var(--color-hx-text-primary);
-  --color-hx-text-secondary: var(--color-hx-text-secondary);
-  --color-hx-text-tertiary: var(--color-hx-text-tertiary);
-  --color-hx-bg-bubble-user-light: var(--color-hx-bg-bubble-user-light);
-  --color-hx-border: var(--color-hx-border);
-  --color-hx-border-light: var(--color-hx-border-light);
-  --shadow-hx-shadow-sm: var(--shadow-hx-sm);
-  --shadow-hx-shadow-md: var(--shadow-hx-md);
+  --color-hx-bg-rail: var(--hx-bg-rail);
+  --color-hx-bg-panel: var(--hx-bg-panel);
+  --color-hx-bg-main: var(--hx-bg-main);
+  --color-hx-bg-input: var(--hx-bg-input);
+  --color-hx-bg-bubble-agent: var(--hx-bg-bubble-agent);
+  --color-hx-bg-hover: var(--hx-bg-hover);
   
-  /* Primary / Semantic mappings for legacy support */
-  --color-hx-primary: var(--color-hx-purple);
-  --color-hx-primary-hover: var(--color-hx-purple-hover);
-  --color-hx-bg-primary: var(--color-hx-purple-bg);
-  --color-hx-bg-primary-hover: var(--color-hx-purple-bg-hover);
+  --color-hx-text-primary: var(--hx-text-primary);
+  --color-hx-text-secondary: var(--hx-text-secondary);
+  --color-hx-text-tertiary: var(--hx-text-tertiary);
   
-  --color-hx-purple: var(--color-hx-purple);
-  --color-hx-purple-hover: var(--color-hx-purple-hover);
-  --color-hx-purple-bg: var(--color-hx-purple-bg);
-  --color-hx-purple-bg-hover: var(--color-hx-purple-bg-hover);
+  --color-hx-bg-bubble-user-light: var(--hx-bg-bubble-user-light);
+  --color-hx-border: var(--hx-border);
+  --color-hx-border-light: var(--hx-border-light);
   
-  --color-hx-blue: var(--color-hx-blue);
-  --color-hx-blue-hover: var(--color-hx-blue-hover);
-  --color-hx-green: var(--color-hx-green);
-  --color-hx-red: var(--color-hx-red);
+  --shadow-hx-shadow-sm: var(--hx-shadow-sm);
+  --shadow-hx-shadow-md: var(--hx-shadow-md);
   
-  --radius-hx-radius-sm: var(--radius-hx-sm);
-  --radius-hx-radius-md: var(--radius-hx-md);
-  --radius-hx-radius-lg: var(--radius-hx-lg);
-  --radius-hx-radius-full: var(--radius-hx-full);
+  --color-hx-purple: var(--hx-purple);
+  --color-hx-purple-hover: var(--hx-purple-hover);
+  --color-hx-purple-bg: var(--hx-purple-bg);
+  --color-hx-purple-bg-hover: var(--hx-purple-bg-hover);
+  
+  --color-hx-blue: var(--hx-blue);
+  --color-hx-blue-hover: var(--hx-blue-hover);
+  --color-hx-green: var(--hx-green);
+  --color-hx-red: var(--hx-red);
+
+  --color-hx-primary: var(--hx-purple);
+  --color-hx-primary-hover: var(--hx-purple-hover);
+  --color-hx-bg-primary: var(--hx-purple-bg);
+  --color-hx-bg-primary-hover: var(--hx-purple-bg-hover);
+  
+  --radius-hx-radius-sm: var(--hx-radius-sm);
+  --radius-hx-radius-md: var(--hx-radius-md);
+  --radius-hx-radius-lg: var(--hx-radius-lg);
+  --radius-hx-radius-full: var(--hx-radius-full);
 }
 
 html {
