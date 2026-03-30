@@ -1,4 +1,4 @@
-use zeroclawlabs::sop::{SopExecutionMode, load_sops_from_directory};
+use zeroclaw::sop::{SopExecutionMode, load_sops_from_directory};
 use std::path::PathBuf;
 
 fn main() {

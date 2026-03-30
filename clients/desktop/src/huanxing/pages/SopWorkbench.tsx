@@ -67,25 +67,25 @@ export default function SopWorkbench() {
   };
 
   return (
-    <div className="hx-sop-workbench" style={{ display: 'flex', height: '100%', width: '100%', overflow: 'hidden', background: 'var(--hx-bg-main)', color: 'var(--hx-text-primary)' }}>
+    <div className="flex h-full w-full overflow-hidden bg-hx-bg-main text-hx-text-primary">
       {/* ── 左侧侧边栏 ── */}
-      <div style={{ width: 320, minWidth: 320, borderRight: '1px solid var(--hx-border)', display: 'flex', flexDirection: 'column' }}>
-        <div style={{ padding: 16, borderBottom: '1px solid var(--hx-border)' }}>
-          <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--hx-text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>
+      <div className="w-[320px] min-w-[320px] border-r border-hx-border flex flex-col">
+        <div className="p-4 border-b border-hx-border">
+          <label className="block text-[11px] font-semibold text-hx-text-tertiary uppercase tracking-wider mb-2">
             当前智能体
           </label>
           <Select value={activeAgentName || ''} onValueChange={(v) => { setActiveAgentName(v); setSelectedSopName(null); }}>
-            <SelectTrigger style={{ width: '100%', background: 'var(--hx-bg-input)', borderColor: 'var(--hx-border)', color: 'var(--hx-text-primary)' }}>
+            <SelectTrigger className="w-full bg-hx-bg-input border-hx-border text-hx-text-primary">
               <SelectValue placeholder="选择 Agent" />
             </SelectTrigger>
             <SelectContent>
               {agents.map(a => (
                 <SelectItem key={a.name} value={a.name}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div className="flex items-center gap-2">
                     {a.icon_url ? (
-                      <img src={a.icon_url} alt={a.name} style={{ width: 16, height: 16, borderRadius: 4, objectFit: 'cover' }} />
+                      <img src={a.icon_url} alt={a.name} className="w-4 h-4 rounded object-cover" />
                     ) : (
-                      <Bot size={16} />
+                      <Bot className="w-4 h-4" />
                     )}
                     <span>{a.display_name || a.name}</span>
                   </div>
@@ -95,10 +95,10 @@ export default function SopWorkbench() {
           </Select>
         </div>
 
-        <div style={{ flex: 1, overflowY: 'auto', padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {loading && <div style={{ textAlign: 'center', fontSize: 13, padding: '32px 0', color: 'var(--hx-text-tertiary)' }}>加载中...</div>}
+        <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-2">
+          {loading && <div className="text-center text-[13px] py-8 text-hx-text-tertiary">加载中...</div>}
           {!loading && sops.length === 0 && (
-            <div style={{ textAlign: 'center', fontSize: 13, padding: '32px 0', color: 'var(--hx-text-tertiary)' }}>
+            <div className="text-center text-[13px] py-8 text-hx-text-tertiary">
               无可用工作流。<br />
               请前往应用市场安装。
             </div>
@@ -107,35 +107,28 @@ export default function SopWorkbench() {
             <button
               key={sop.name}
               onClick={() => setSelectedSopName(sop.name)}
-              style={{
-                width: '100%',
-                display: 'flex',
-                flexDirection: 'column',
-                textAlign: 'left',
-                padding: '12px 16px',
-                borderRadius: 'var(--hx-radius-md)',
-                transition: 'all 0.15s',
-                border: selectedSopName === sop.name ? '1px solid var(--hx-purple)' : '1px solid var(--hx-border)',
-                background: selectedSopName === sop.name ? 'var(--hx-purple-bg)' : 'transparent',
-                cursor: 'pointer',
-              }}
+              className={`w-full flex flex-col text-left p-3 px-4 rounded-hx-radius-md transition-all duration-150 border cursor-pointer ${
+                selectedSopName === sop.name 
+                  ? 'border-hx-purple bg-hx-purple-bg'
+                  : 'border-hx-border bg-transparent hover:bg-hx-bg-panel'
+              }`}
             >
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4, color: 'var(--hx-text-primary)' }}>
-                <span style={{ fontWeight: 500, fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sop.name}</span>
+              <div className="flex items-center justify-between mb-1 text-hx-text-primary w-full">
+                <span className="font-medium text-sm overflow-hidden text-ellipsis whitespace-nowrap">{sop.name}</span>
                 {sop.active_runs > 0 && (
-                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--hx-green)', boxShadow: '0 0 8px rgba(16,185,129,0.8)' }} title={`运行中: ${sop.active_runs}`} />
+                  <span className="w-2 h-2 rounded-full bg-hx-green shadow-[0_0_8px_rgba(16,185,129,0.8)] shrink-0" title={`运行中: ${sop.active_runs}`} />
                 )}
               </div>
-              <p style={{ fontSize: 12, color: 'var(--hx-text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', margin: 0 }}>{sop.description}</p>
+              <p className="text-[12px] text-hx-text-secondary overflow-hidden text-ellipsis whitespace-nowrap m-0 w-full">{sop.description}</p>
             </button>
           ))}
         </div>
       </div>
 
       {/* ── 右侧主内容 ── */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, position: 'relative' }}>
+      <div className="flex-1 flex flex-col min-w-0 relative">
         {activeSessionId && activeAgentName && sopDetail ? (
-          <div style={{ position: 'absolute', inset: 0, zIndex: 20, background: 'var(--hx-bg-main)', padding: 24 }}>
+          <div className="absolute inset-0 z-20 bg-hx-bg-main p-6">
              <SopRunPanel
                sessionId={activeSessionId}
                agentName={activeAgentName}
@@ -147,32 +140,28 @@ export default function SopWorkbench() {
 
         {/* Tab bar */}
         {activeAgentName && (
-          <div style={{ display: 'flex', alignItems: 'center', borderBottom: '1px solid var(--hx-border)', background: 'var(--hx-bg-panel)', flexShrink: 0, WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+          <div 
+            className="flex items-center border-b border-hx-border bg-hx-bg-panel shrink-0"
+            style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+          >
             <button
               onClick={() => setRightTab('detail')}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 8, padding: '12px 20px', fontSize: 14, fontWeight: 500,
-                borderBottom: rightTab === 'detail' ? '2px solid var(--hx-purple)' : '2px solid transparent',
-                color: rightTab === 'detail' ? 'var(--hx-purple)' : 'var(--hx-text-tertiary)',
-                background: 'transparent', border: 'none', cursor: 'pointer',
-                borderBottomStyle: 'solid', borderBottomWidth: 2,
-                borderBottomColor: rightTab === 'detail' ? 'var(--hx-purple)' : 'transparent',
-                transition: 'all 0.15s',
-              }}
+              className={`flex items-center gap-2 px-5 py-3 text-sm font-medium bg-transparent border-none cursor-pointer border-b-2 transition-all duration-150 ${
+                rightTab === 'detail' 
+                  ? 'border-b-hx-purple text-hx-purple' 
+                  : 'border-b-transparent text-hx-text-tertiary hover:text-hx-text-primary'
+              }`}
             >
               <Workflow className="w-4 h-4" />
               工作流详情
             </button>
             <button
               onClick={() => setRightTab('history')}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 8, padding: '12px 20px', fontSize: 14, fontWeight: 500,
-                color: rightTab === 'history' ? 'var(--hx-purple)' : 'var(--hx-text-tertiary)',
-                background: 'transparent', border: 'none', cursor: 'pointer',
-                borderBottomStyle: 'solid', borderBottomWidth: 2,
-                borderBottomColor: rightTab === 'history' ? 'var(--hx-purple)' : 'transparent',
-                transition: 'all 0.15s',
-              }}
+              className={`flex items-center gap-2 px-5 py-3 text-sm font-medium bg-transparent border-none cursor-pointer border-b-2 transition-all duration-150 ${
+                rightTab === 'history' 
+                  ? 'border-b-hx-purple text-hx-purple' 
+                  : 'border-b-transparent text-hx-text-tertiary hover:text-hx-text-primary'
+              }`}
             >
               <History className="w-4 h-4" />
               执行历史
@@ -181,85 +170,81 @@ export default function SopWorkbench() {
         )}
 
         {!activeAgentName ? (
-          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--hx-text-secondary)' }}>
+          <div className="flex-1 flex items-center justify-center text-hx-text-secondary">
             ← 请先在左侧选择 Agent
           </div>
         ) : rightTab === 'history' ? (
           <SopHistoryList />
         ) : !selectedSopName ? (
-          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--hx-text-secondary)' }}>
+          <div className="flex-1 flex items-center justify-center text-hx-text-secondary">
             ← 请选择一个工作流查看详情
           </div>
         ) : loadingDetail ? (
-          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--hx-text-secondary)' }}>
+          <div className="flex-1 flex items-center justify-center text-hx-text-secondary">
             加载工作流详情中...
           </div>
         ) : sopDetail ? (
-          <div style={{ flex: 1, overflowY: 'auto', padding: 32, maxWidth: 960, margin: '0 auto', width: '100%' }}>
+          <div className="flex-1 overflow-y-auto p-8 max-w-[960px] mx-auto w-full">
             
-            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 32 }}>
+            <div className="flex items-start justify-between mb-8">
               <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
-                  <Workflow style={{ width: 32, height: 32, color: 'var(--hx-purple)' }} />
-                  <h1 style={{ fontSize: 28, fontWeight: 700, color: 'var(--hx-text-primary)', margin: 0 }}>{sopDetail.name}</h1>
-                  <span style={{ padding: '4px 10px', borderRadius: 'var(--hx-radius-sm)', background: 'var(--hx-purple-bg)', fontSize: 12, fontFamily: 'monospace', border: '1px solid var(--hx-border)', color: 'var(--hx-text-secondary)' }}>
+                <div className="flex items-center gap-3 mb-2">
+                  <Workflow className="w-8 h-8 text-hx-purple shrink-0" />
+                  <h1 className="text-2xl font-bold text-hx-text-primary m-0">{sopDetail.name}</h1>
+                  <span className="px-2.5 py-1 rounded-hx-radius-sm bg-hx-purple-bg text-[12px] font-mono border border-hx-border text-hx-text-secondary">
                     v{sopDetail.version}
                   </span>
                 </div>
-                <p style={{ color: 'var(--hx-text-secondary)', fontSize: 16, marginTop: 12 }}>{sopDetail.description}</p>
+                <p className="text-hx-text-secondary text-base mt-3">{sopDetail.description}</p>
               </div>
               
               <button
                 onClick={handleExecute}
                 disabled={executing}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 8, padding: '12px 24px',
-                  background: 'var(--hx-purple)', color: '#fff', fontWeight: 500,
-                  borderRadius: 'var(--hx-radius-md)', border: 'none', cursor: executing ? 'not-allowed' : 'pointer',
-                  opacity: executing ? 0.5 : 1, boxShadow: '0 4px 14px rgba(124,58,237,0.3)', transition: 'all 0.2s',
-                  flexShrink: 0,
-                }}
+                className={`flex items-center gap-2 px-6 py-3 bg-hx-purple text-white font-medium rounded-hx-radius-md border-none shrink-0 shadow-[0_4px_14px_rgba(124,58,237,0.3)] transition-all duration-200 ${
+                  executing ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:bg-hx-purple-hover'
+                }`}
               >
-                <Play style={{ width: 20, height: 20, fill: 'currentColor' }} />
+                <Play className="w-5 h-5 fill-current" />
                 {executing ? '启动中...' : '启动工作流'}
               </button>
             </div>
 
             {/* Tags / Metadata */}
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 32 }}>
+            <div className="flex flex-wrap gap-3 mb-8">
               {[
                 { label: '执行模式', value: sopDetail.execution_mode },
                 { label: '并发限制', value: String(sopDetail.max_concurrent) },
                 { label: '优先级', value: sopDetail.priority },
               ].map(tag => (
-                <div key={tag.label} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 'var(--hx-radius-sm)', background: 'var(--hx-bg-panel)', border: '1px solid var(--hx-border)', fontSize: 13 }}>
-                  <span style={{ color: 'var(--hx-text-tertiary)' }}>{tag.label}:</span>
-                  <span style={{ color: 'var(--hx-text-primary)', textTransform: 'capitalize' }}>{tag.value}</span>
+                <div key={tag.label} className="flex items-center gap-1.5 px-3 py-1.5 rounded-hx-radius-sm bg-hx-bg-panel border border-hx-border text-[13px]">
+                  <span className="text-hx-text-tertiary">{tag.label}:</span>
+                  <span className="text-hx-text-primary capitalize">{tag.value}</span>
                 </div>
               ))}
             </div>
 
             {/* Requirements Check */}
             {sopDetail.requirements && (
-              <div style={{ marginBottom: 32, background: 'var(--hx-bg-panel)', border: '1px solid var(--hx-border)', borderRadius: 'var(--hx-radius-md)', overflow: 'hidden' }}>
-                <div style={{ padding: '12px 20px', borderBottom: '1px solid var(--hx-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <h3 style={{ fontWeight: 600, color: 'var(--hx-text-primary)', display: 'flex', alignItems: 'center', gap: 8, margin: 0, fontSize: 14 }}>
-                    <CheckCircle style={{ width: 16, height: 16, color: 'var(--hx-green)' }} />
+              <div className="mb-8 bg-hx-bg-panel border border-hx-border rounded-hx-radius-md overflow-hidden">
+                <div className="px-5 py-3 border-b border-hx-border flex justify-between items-center bg-hx-bg-main/50">
+                  <h3 className="font-semibold text-hx-text-primary flex items-center gap-2 m-0 text-sm">
+                    <CheckCircle className="w-4 h-4 text-hx-green" />
                     能力依赖项 (Requirements)
                   </h3>
                 </div>
-                <div style={{ padding: 20 }}>
+                <div className="p-5">
                   {(sopDetail.requirements.skills.length === 0 && sopDetail.requirements.optional_skills.length === 0) ? (
-                    <p style={{ color: 'var(--hx-text-tertiary)', fontSize: 13, margin: 0 }}>无特殊技能依赖。</p>
+                    <p className="text-hx-text-tertiary text-[13px] m-0">无特殊技能依赖。</p>
                   ) : (
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16 }}>
+                    <div className="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-4">
                       {sopDetail.requirements.skills.length > 0 && (
                         <div>
-                          <h4 style={{ fontSize: 11, fontWeight: 600, color: 'var(--hx-text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>必备技能 (Required)</h4>
-                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                          <h4 className="text-[11px] font-semibold text-hx-text-tertiary uppercase tracking-wider mb-2">必备技能 (Required)</h4>
+                          <div className="flex flex-wrap gap-2">
                             {sopDetail.requirements.skills.map(s => (
-                              <span key={s} style={{ padding: '4px 8px', borderRadius: 'var(--hx-radius-sm)', background: 'rgba(245,158,11,0.1)', color: 'var(--hx-amber)', border: '1px solid rgba(245,158,11,0.25)', fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
-                                <AlertTriangle style={{ width: 12, height: 12 }} />
+                              <span key={s} className="px-2 py-1 rounded-hx-radius-sm bg-orange-500/10 text-orange-500 border border-orange-500/25 text-[12px] flex items-center gap-1.5">
+                                <AlertTriangle className="w-3 h-3" />
                                 {s}
                               </span>
                             ))}
@@ -268,10 +253,10 @@ export default function SopWorkbench() {
                       )}
                       {sopDetail.requirements.optional_skills.length > 0 && (
                         <div>
-                          <h4 style={{ fontSize: 11, fontWeight: 600, color: 'var(--hx-text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>可选增强 (Optional)</h4>
-                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                          <h4 className="text-[11px] font-semibold text-hx-text-tertiary uppercase tracking-wider mb-2">可选增强 (Optional)</h4>
+                          <div className="flex flex-wrap gap-2">
                             {sopDetail.requirements.optional_skills.map(s => (
-                              <span key={s} style={{ padding: '4px 8px', borderRadius: 'var(--hx-radius-sm)', background: 'var(--hx-purple-bg)', color: 'var(--hx-purple)', border: '1px solid var(--hx-border)', fontSize: 12 }}>
+                              <span key={s} className="px-2 py-1 rounded-hx-radius-sm bg-hx-purple-bg text-hx-purple border border-hx-border text-[12px]">
                                 {s}
                               </span>
                             ))}
@@ -286,14 +271,14 @@ export default function SopWorkbench() {
 
             {/* Triggers */}
             {sopDetail.triggers?.length > 0 && (
-              <div style={{ marginBottom: 32 }}>
-                <h3 style={{ fontSize: 16, fontWeight: 600, color: 'var(--hx-text-primary)', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Bot style={{ width: 20, height: 20, color: 'var(--hx-blue)' }} />
+              <div className="mb-8">
+                <h3 className="text-base font-semibold text-hx-text-primary mb-3 flex items-center gap-2">
+                  <Bot className="w-5 h-5 text-hx-blue" />
                   意图触发词 (Triggers)
                 </h3>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                <div className="flex flex-wrap gap-2">
                   {sopDetail.triggers.map(t => (
-                    <span key={t} style={{ padding: '6px 12px', background: 'var(--hx-purple-bg)', color: 'var(--hx-purple)', border: '1px solid var(--hx-border)', borderRadius: 'var(--hx-radius-sm)', fontSize: 13 }}>
+                    <span key={t} className="px-3 py-1.5 bg-hx-purple-bg text-hx-purple border border-hx-border rounded-hx-radius-sm text-[13px]">
                       "{t}"
                     </span>
                   ))}
@@ -303,36 +288,33 @@ export default function SopWorkbench() {
 
             {/* Steps Workflow */}
             <div>
-              <h3 style={{ fontSize: 16, fontWeight: 600, color: 'var(--hx-text-primary)', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
-                <FileText style={{ width: 20, height: 20, color: 'var(--hx-text-tertiary)' }} />
+              <h3 className="text-base font-semibold text-hx-text-primary mb-4 flex items-center gap-2">
+                <FileText className="w-5 h-5 text-hx-text-tertiary" />
                 执行步骤 ({sopDetail.steps?.length || 0})
               </h3>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <div className="flex flex-col gap-4">
                 {sopDetail.steps?.map((step, idx) => (
-                  <div key={idx} style={{ display: 'flex', gap: 16 }}>
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                      <div style={{
-                        width: 32, height: 32, borderRadius: '50%', background: 'var(--hx-bg-panel)', border: '1px solid var(--hx-border)',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700, color: 'var(--hx-text-secondary)', flexShrink: 0
-                      }}>
+                  <div key={idx} className="flex gap-4">
+                    <div className="flex flex-col items-center">
+                      <div className="w-8 h-8 rounded-full bg-hx-bg-panel border border-hx-border flex items-center justify-center text-[13px] font-bold text-hx-text-secondary shrink-0 shadow-sm">
                         {step.number}
                       </div>
                       {idx < sopDetail.steps.length - 1 && (
-                        <div style={{ width: 2, flex: 1, background: 'var(--hx-border)', margin: '4px 0' }} />
+                        <div className="w-[2px] flex-1 bg-hx-border my-1" />
                       )}
                     </div>
-                    <div style={{ paddingBottom: 24, flex: 1 }}>
-                      <p style={{ fontSize: 15, fontWeight: 500, color: 'var(--hx-text-primary)', marginBottom: 4, marginTop: 4 }}>{step.title}</p>
+                    <div className="pb-6 flex-1">
+                      <p className="text-[15px] font-medium text-hx-text-primary mb-1 mt-1">{step.title}</p>
                       
                       {step.requires_confirmation && (
-                        <span style={{ display: 'inline-block', padding: '2px 8px', fontSize: 10, background: 'rgba(239,68,68,0.1)', color: 'var(--hx-red)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 4, marginBottom: 8 }}>需要人工审批</span>
+                        <span className="inline-block px-2 py-0.5 text-[10px] bg-red-500/10 text-red-500 border border-red-500/25 rounded mb-2 font-medium">需要人工审批</span>
                       )}
 
                       {step.suggested_tools && step.suggested_tools.length > 0 && (
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
-                          <span style={{ fontSize: 12, color: 'var(--hx-text-tertiary)', marginRight: 4 }}>🔧</span>
+                        <div className="flex flex-wrap gap-1.5 mt-2">
+                          <span className="text-[12px] text-hx-text-tertiary mr-1">🔧</span>
                           {step.suggested_tools.map(tool => (
-                            <span key={tool} style={{ padding: '2px 6px', borderRadius: 4, background: 'var(--hx-bg-panel)', fontSize: 11, fontFamily: 'monospace', border: '1px solid var(--hx-border)', color: 'var(--hx-text-secondary)' }}>
+                            <span key={tool} className="px-1.5 py-0.5 rounded bg-hx-bg-panel text-[11px] font-mono border border-hx-border text-hx-text-secondary">
                               {tool}
                             </span>
                           ))}

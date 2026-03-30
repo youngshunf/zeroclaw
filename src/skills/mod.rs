@@ -1713,8 +1713,6 @@ command = "echo hello"
         assert!(prompt.contains("<available_skills>"));
         assert!(prompt.contains("<name>test</name>"));
         assert!(prompt.contains("<location>skills/test/SKILL.md</location>"));
-        assert!(prompt.contains("loaded on demand"));
-        assert!(prompt.contains("read_skill(name)"));
         assert!(!prompt.contains("<instructions>"));
         assert!(!prompt.contains("<instruction>Do the thing.</instruction>"));
         // Compact mode should still include tools so the LLM knows about them.

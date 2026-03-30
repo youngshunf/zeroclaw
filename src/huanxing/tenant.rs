@@ -7,7 +7,7 @@
 //! The shared [`ChannelRuntimeContext`] provides channels, LLM pool,
 //! and base tools — tenant context overrides the user-facing subset.
 
-use std::collections::HashMap;
+
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -15,7 +15,7 @@ use serde::Deserialize;
 
 use crate::channels::session_backend::SessionBackend;
 use crate::memory::{self, Memory};
-use crate::providers::ChatMessage;
+
 use crate::security::SecurityPolicy;
 
 // ── Workspace config.toml partial overlay ────────────────────
@@ -105,7 +105,7 @@ struct ChannelsOverrides {
 }
 
 /// Type alias matching channels/mod.rs ConversationHistoryMap.
-pub type ConversationHistoryMap = Arc<Mutex<HashMap<String, Vec<ChatMessage>>>>;
+pub use crate::channels::ConversationHistoryMap;
 
 /// Per-tenant agent context. Loaded from DB + workspace on first message,
 /// then cached in [`TenantRouter`].
@@ -360,7 +360,7 @@ impl TenantContext {
             create_session_backend(&workspace_dir, global_config);
 
         // ── D. Independent conversation histories ────────────────────
-        let conversation_histories: ConversationHistoryMap = Arc::new(Mutex::new(HashMap::new()));
+        let conversation_histories: ConversationHistoryMap = Arc::new(Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::new(crate::channels::MAX_CONVERSATION_SENDERS).unwrap())));
 
         // ── E. Per-tenant security policy from [autonomy] in workspace config.toml ──
         // 以全局 autonomy 为基础，用 workspace config.toml 中的 [autonomy] 节覆盖。
@@ -532,7 +532,7 @@ impl TenantContext {
         let guardian_session_manager: Option<Arc<dyn SessionBackend>> =
             create_session_backend(&workspace_dir, global_config);
 
-        let conversation_histories: ConversationHistoryMap = Arc::new(Mutex::new(HashMap::new()));
+        let conversation_histories: ConversationHistoryMap = Arc::new(Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::new(crate::channels::MAX_CONVERSATION_SENDERS).unwrap())));
 
         let effective_autonomy = merge_autonomy(&global_config.autonomy, overrides.autonomy.as_ref());
         let guardian_security: Option<Arc<SecurityPolicy>> =

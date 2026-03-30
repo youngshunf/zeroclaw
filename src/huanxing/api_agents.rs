@@ -5,7 +5,7 @@
 //!
 //! # 端点
 //!
-//! ```
+//! ```text
 //! GET    /api/agents                          → 列出所有 Agent
 //! POST   /api/agents                          → 从模板创建 Agent
 //! DELETE /api/agents/:name                    → 删除 Agent

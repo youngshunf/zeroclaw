@@ -82,13 +82,13 @@ export function InstallModal({
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm">
-      <div style={{ background: 'var(--hx-bg-panel)' }} className="rounded-2xl w-[460px] max-w-[90vw] shadow-2xl flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200 border border-[var(--hx-border)]">
+      <div className="bg-hx-bg-panel rounded-2xl w-[460px] max-w-[90vw] shadow-2xl flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200 border border-hx-border">
         {/* Header */}
-        <div style={{ borderColor: 'var(--hx-border)' }} className="px-6 py-4 border-b flex items-center gap-3">
+        <div className="border-hx-border px-6 py-4 border-b flex items-center gap-3">
           <ItemIcon iconUrl={iconUrl} emoji={emoji} fallback={iconFallback} />
           <div>
-            <h2 style={{ color: 'var(--hx-text-primary)' }} className="text-base font-bold leading-tight">{titlePrefix}：{targetName}</h2>
-            <p style={{ color: 'var(--hx-text-secondary)' }} className="text-xs">智能自动化部署</p>
+            <h2 className="text-hx-text-primary text-base font-bold leading-tight">{titlePrefix}：{targetName}</h2>
+            <p className="text-hx-text-secondary text-xs">智能自动化部署</p>
           </div>
         </div>
 
@@ -98,19 +98,18 @@ export function InstallModal({
             <div className="space-y-4">
               {type === 'agent' && (
                 <div>
-                  <label style={{ color: 'var(--hx-text-primary)' }} className="block text-sm font-medium mb-1">为您的新 Agent 命名</label>
+                  <label className="text-hx-text-primary block text-sm font-medium mb-1">为您的新 Agent 命名</label>
                   <input 
                     type="text" 
                     value={agentNameInput || ''}
                     onChange={(e) => setAgentNameInput && setAgentNameInput(e.target.value)}
                     placeholder={targetName}
                     autoFocus
-                    style={{ background: 'var(--hx-bg-input)', borderColor: 'var(--hx-border)', color: 'var(--hx-text-primary)' }}
-                    className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/50 text-sm"
+                    className="bg-hx-bg-input border-hx-border text-hx-text-primary w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/50 text-sm"
                   />
                 </div>
               )}
-              <p style={{ background: 'var(--hx-purple-bg)', color: 'var(--hx-text-secondary)', borderColor: 'var(--hx-border)' }} className="text-xs p-2.5 rounded-md border text-center">
+              <p className="bg-hx-purple-bg text-hx-text-secondary border-hx-border text-xs p-2.5 rounded-md border text-center">
                 {desc}
               </p>
             </div>
@@ -120,12 +119,11 @@ export function InstallModal({
             <div className="space-y-3">
               <div className="flex items-center gap-2 text-indigo-500 mb-2">
                 <Loader2 className="w-4 h-4 animate-spin" />
-                <span className="text-sm font-medium" style={{ color: 'var(--hx-text-primary)' }}>正在拉取与配置资源...</span>
+                <span className="text-sm font-medium text-hx-text-primary">正在拉取与配置资源...</span>
               </div>
               <div 
                 ref={scrollRef}
-                style={{ background: 'var(--hx-bg-input)', color: 'var(--hx-text-secondary)', border: '1px solid var(--hx-border)' }}
-                className="rounded-lg p-3 h-48 overflow-y-auto font-mono text-xs shadow-inner whitespace-pre-wrap"
+                className="bg-hx-bg-input text-hx-text-secondary border border-hx-border rounded-lg p-3 h-48 overflow-y-auto font-mono text-xs shadow-inner whitespace-pre-wrap"
               >
                 {installSteps.map((step, idx) => {
                   const isError = step.toLowerCase().includes('error') || step.includes('失败') || step.includes('中止');
@@ -133,7 +131,7 @@ export function InstallModal({
                   const color = isError ? '#ef4444' : isSuccess ? '#10b981' : 'var(--hx-text-primary)';
                   return (
                     <div key={idx} style={{ color }} className={`mb-1.5 flex items-start gap-1.5 leading-tight`}>
-                      <span style={{ color: 'var(--hx-text-tertiary)' }} className="select-none shrink-0 font-medium">[{idx + 1 < 10 ? `0${idx+1}` : idx+1}]</span>
+                      <span className="text-hx-text-tertiary select-none shrink-0 font-medium">[{idx + 1 < 10 ? `0${idx+1}` : idx+1}]</span>
                       <span>{step}</span>
                     </div>
                   )
@@ -147,8 +145,8 @@ export function InstallModal({
               <div className="w-12 h-12 bg-green-500/10 text-green-500 border border-green-500/20 rounded-full flex items-center justify-center mb-3">
                 <CheckCircle className="w-7 h-7" />
               </div>
-              <h3 style={{ color: 'var(--hx-text-primary)' }} className="text-lg font-bold mb-1">安装完成！</h3>
-              <p style={{ color: 'var(--hx-text-secondary)' }} className="text-sm max-w-[80%]">组件已赋能成功，现在可以前往工作台查看与使用。</p>
+              <h3 className="text-hx-text-primary text-lg font-bold mb-1">安装完成！</h3>
+              <p className="text-hx-text-secondary text-sm max-w-[80%]">组件已赋能成功，现在可以前往工作台查看与使用。</p>
             </div>
           )}
 
@@ -157,7 +155,7 @@ export function InstallModal({
               <div className="w-12 h-12 bg-red-500/10 text-red-500 border border-red-500/20 rounded-full flex items-center justify-center mb-3">
                 <XCircle className="w-7 h-7" />
               </div>
-              <h3 style={{ color: 'var(--hx-text-primary)' }} className="text-lg font-bold mb-2">安装意外中止</h3>
+              <h3 className="text-hx-text-primary text-lg font-bold mb-2">安装意外中止</h3>
               <p className="text-xs text-red-600 bg-red-50/10 p-3 rounded-md border border-red-500/20 max-w-full overflow-hidden text-ellipsis text-left whitespace-pre-wrap">
                 {installError}
               </p>
@@ -166,12 +164,11 @@ export function InstallModal({
         </div>
 
         {/* Footer Buttons */}
-        <div style={{ background: 'var(--hx-bg-main)', borderColor: 'var(--hx-border)' }} className="px-6 py-4 border-t flex justify-end gap-2">
+        <div className="bg-hx-bg-main border-hx-border px-6 py-4 border-t flex justify-end gap-2">
           {(installStatus === 'idle' || installStatus === 'error') && (
             <button 
               onClick={onClose}
-              style={{ color: 'var(--hx-text-secondary)' }}
-              className="px-4 py-2 text-sm font-medium hover:text-[var(--hx-text-primary)] hover:bg-[var(--hx-bg-input)] rounded-lg transition-colors"
+              className="text-hx-text-secondary px-4 py-2 text-sm font-medium hover:text-hx-text-primary hover:bg-hx-bg-input rounded-lg transition-colors"
             >
               取消
             </button>
@@ -264,22 +261,22 @@ function AgentPlaza() {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
       {apps.map((app) => (
-        <div key={app.id} style={{ borderRadius: 'var(--hx-radius-md)', border: '1px solid var(--hx-border)', background: 'var(--hx-bg-panel)', padding: 16, boxShadow: 'var(--hx-shadow-sm)', display: 'flex', flexDirection: 'column' }}>
+        <div key={app.id} className="rounded-hx-radius-md border border-hx-border bg-hx-bg-panel p-4 shadow-hx-shadow-sm flex flex-col">
           <div className="flex items-start justify-between mb-3">
             <div className="flex items-center gap-3">
               <ItemIcon iconUrl={app.icon_url} emoji={app.emoji} fallback={<Bot className="w-10 h-10 text-indigo-400 p-2 bg-indigo-50 rounded-xl" />} size="lg" />
               <div>
-                <h3 style={{ fontWeight: 600, color: 'var(--hx-text-primary)', fontSize: 15, lineHeight: 1.3 }}>{app.name}</h3>
+                <h3 className="font-semibold text-hx-text-primary text-[15px] leading-tight">{app.name}</h3>
                 {app.skill_dependencies && (
-                  <span style={{ fontSize: 10, color: 'var(--hx-text-tertiary)' }}>{app.skill_dependencies.split(',').length} 项技能</span>
+                  <span className="text-[10px] text-hx-text-tertiary">{app.skill_dependencies.split(',').length} 项技能</span>
                 )}
               </div>
             </div>
-              <span style={{ fontSize: 11, color: 'var(--hx-text-secondary)', background: 'var(--hx-bg-input)', padding: '4px 10px', borderRadius: 9999 }}>{app.category || 'App'}</span>
+              <span className="text-[11px] text-hx-text-secondary bg-hx-bg-input px-2.5 py-1 rounded-full">{app.category || 'App'}</span>
           </div>
-          <p style={{ fontSize: 13, color: 'var(--hx-text-secondary)', marginBottom: 16, flex: 1, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', height: 40 }}>{app.description}</p>
+          <p className="text-[13px] text-hx-text-secondary mb-4 flex-1 line-clamp-2 overflow-hidden h-10">{app.description}</p>
           <div className="flex justify-between items-center mt-auto">
-            <span style={{ fontSize: 12, color: 'var(--hx-text-tertiary)' }}>v{app.latest_version || '1.0.0'}</span>
+            <span className="text-xs text-hx-text-tertiary">v{app.latest_version || '1.0.0'}</span>
             <button
               onClick={() => openInstallModal(app)}
               className="px-3 py-1.5 bg-[#7c3aed] text-white text-xs font-medium rounded-lg hover:bg-[#6d28d9] flex items-center gap-1 transition-colors"
@@ -377,17 +374,17 @@ function SkillMarket() {
       <AgentSelector agents={localAgents} selected={selectedAgent} onChange={setSelectedAgent} label="选择目标 Agent（安装技能）" />
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {skills.map((skill) => (
-          <div key={skill.id} style={{ borderRadius: 'var(--hx-radius-md)', border: '1px solid var(--hx-border)', background: 'var(--hx-bg-panel)', padding: 16, boxShadow: 'var(--hx-shadow-sm)', display: 'flex', flexDirection: 'column' }}>
+          <div key={skill.id} className="rounded-hx-radius-md border border-hx-border bg-hx-bg-panel p-4 shadow-hx-shadow-sm flex flex-col">
             <div className="flex items-start justify-between mb-2">
               <div className="flex items-center gap-2">
                 <ItemIcon iconUrl={skill.icon_url} emoji={skill.emoji} fallback={<Wrench className="w-5 h-5 text-gray-400" />} />
-                <h3 style={{ fontWeight: 600, color: 'var(--hx-text-primary)', lineHeight: 1.3 }}>{skill.name}</h3>
+                <h3 className="font-semibold text-hx-text-primary leading-tight">{skill.name}</h3>
               </div>
-              <span style={{ fontSize: 10, color: 'var(--hx-text-secondary)', background: 'var(--hx-bg-input)', padding: '4px 8px', borderRadius: 9999 }}>{skill.category || 'Skill'}</span>
+              <span className="text-[10px] text-hx-text-secondary bg-hx-bg-input px-2 py-1 rounded-full">{skill.category || 'Skill'}</span>
             </div>
-            <p style={{ fontSize: 13, color: 'var(--hx-text-secondary)', marginBottom: 16, flex: 1, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{skill.description}</p>
+            <p className="text-[13px] text-hx-text-secondary mb-4 flex-1 line-clamp-2 overflow-hidden">{skill.description}</p>
             <div className="flex justify-between items-center mt-auto">
-              <span style={{ fontSize: 12, color: 'var(--hx-text-tertiary)' }}>v{skill.latest_version || '1.0.0'}</span>
+              <span className="text-xs text-hx-text-tertiary">v{skill.latest_version || '1.0.0'}</span>
               <button
                 onClick={() => openInstallModal(skill)}
                 disabled={!selectedAgent}
@@ -495,18 +492,18 @@ function SopMarket() {
       <AgentSelector agents={localAgents} selected={selectedAgent} onChange={setSelectedAgent} label="选择目标 Agent（安装工作流）" />
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {sops.map((sop) => (
-          <div key={sop.id} style={{ borderRadius: 'var(--hx-radius-md)', border: '1px solid var(--hx-border)', background: 'var(--hx-bg-panel)', padding: 16, boxShadow: 'var(--hx-shadow-sm)', display: 'flex', flexDirection: 'column' }}>
+          <div key={sop.id} className="rounded-hx-radius-md border border-hx-border bg-hx-bg-panel p-4 shadow-hx-shadow-sm flex flex-col">
             <div className="flex items-start justify-between mb-2">
               <div className="flex items-center gap-2">
                 <ItemIcon iconUrl={sop.icon_url} emoji={sop.emoji} fallback={<Workflow className="w-5 h-5 text-blue-400" />} />
-                <h3 style={{ fontWeight: 600, color: 'var(--hx-text-primary)', lineHeight: 1.3 }}>{sop.name}</h3>
+                <h3 className="font-semibold text-hx-text-primary leading-tight">{sop.name}</h3>
               </div>
               <div className="flex gap-1.5">
-                <span style={{ fontSize: 10, color: 'var(--hx-blue)', background: 'var(--hx-purple-bg)', padding: '2px 8px', borderRadius: 9999 }}>{modeLabel(sop.execution_mode)}</span>
-                <span style={{ fontSize: 10, color: 'var(--hx-text-secondary)', background: 'var(--hx-bg-input)', padding: '2px 8px', borderRadius: 9999 }}>{sop.category || 'SOP'}</span>
+                <span className="text-[10px] text-hx-blue bg-hx-purple-bg px-2 py-0.5 rounded-full">{modeLabel(sop.execution_mode)}</span>
+                <span className="text-[10px] text-hx-text-secondary bg-hx-bg-input px-2 py-0.5 rounded-full">{sop.category || 'SOP'}</span>
               </div>
             </div>
-            <p style={{ fontSize: 13, color: 'var(--hx-text-secondary)', marginBottom: 12, flex: 1, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{sop.description}</p>
+            <p className="text-[13px] text-hx-text-secondary mb-3 flex-1 line-clamp-2 overflow-hidden">{sop.description}</p>
             {sop.skill_dependencies && (
               <div className="mb-3">
                 <span className="text-[10px] text-gray-400">依赖技能: </span>
@@ -518,7 +515,7 @@ function SopMarket() {
               </div>
             )}
             <div className="flex justify-between items-center mt-auto">
-              <span style={{ fontSize: 12, color: 'var(--hx-text-tertiary)' }}>v{sop.latest_version || '1.0.0'}</span>
+              <span className="text-xs text-hx-text-tertiary">v{sop.latest_version || '1.0.0'}</span>
               <button
                 onClick={() => openInstallModal(sop)}
                 disabled={!selectedAgent}
@@ -557,20 +554,20 @@ function SopMarket() {
 
 function AgentSelector({ agents, selected, onChange, label }: { agents: AgentInfo[]; selected: string; onChange: (v: string) => void; label: string }) {
   return (
-    <div style={{ background: 'var(--hx-bg-panel)', padding: 16, borderRadius: 'var(--hx-radius-md)', border: '1px solid var(--hx-border)' }}>
-      <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: 'var(--hx-text-secondary)', marginBottom: 8 }}>{label}</label>
+    <div className="bg-hx-bg-panel p-4 rounded-hx-radius-md border border-hx-border">
+      <label className="block text-[13px] font-medium text-hx-text-secondary mb-2">{label}</label>
       <Select value={selected} onValueChange={onChange}>
-        <SelectTrigger style={{ width: '100%', maxWidth: 256, background: 'var(--hx-bg-input)', color: 'var(--hx-text-primary)', borderColor: 'var(--hx-border)' }}>
+        <SelectTrigger className="w-full max-w-64 bg-hx-bg-input text-hx-text-primary border-hx-border">
           <SelectValue placeholder="选择目标 Agent" />
         </SelectTrigger>
         <SelectContent>
           {agents.map(a => (
             <SelectItem key={a.name} value={a.name}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div className="flex items-center gap-2">
                 {a.icon_url ? (
-                  <img src={a.icon_url} alt={a.name} style={{ width: 16, height: 16, borderRadius: 4, objectFit: 'cover' }} />
+                  <img src={a.icon_url} alt={a.name} className="w-4 h-4 rounded object-cover" />
                 ) : (
-                  <Bot size={16} />
+                  <Bot className="w-4 h-4" />
                 )}
                 <span>{a.display_name || a.name}</span>
               </div>
@@ -594,26 +591,25 @@ export default function Marketplace() {
   ];
 
   return (
-    <div style={{ display: 'flex', height: '100%', width: '100%', flexDirection: 'column', background: 'var(--hx-bg-main)', minWidth: 0, color: 'var(--hx-text-primary)' }}>
+    <div className="flex h-full w-full flex-col bg-hx-bg-main min-w-0 text-hx-text-primary">
       <div 
-        style={{ flexShrink: 0, borderBottom: '1px solid var(--hx-border)', background: 'var(--hx-bg-panel)', padding: '20px 24px 12px', position: 'relative', zIndex: 10, WebkitAppRegion: 'drag' } as React.CSSProperties}
+        className="shrink-0 border-b border-hx-border bg-hx-bg-panel pt-5 px-6 pb-3 relative z-10"
+        style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
         data-tauri-drag-region
       >
-        <div style={{ WebkitAppRegion: 'no-drag', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%' } as React.CSSProperties}>
-          <div style={{ display: 'flex', gap: 6, background: 'var(--hx-bg-input)', padding: 6, borderRadius: 'var(--hx-radius-md)' }}>
+        <div className="flex items-center justify-center w-full" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+          <div className="flex gap-1.5 bg-hx-bg-input p-1.5 rounded-hx-radius-md">
             {tabs.map(t => (
               <button
                 key={t.key}
                 onClick={() => setTab(t.key)}
-                style={{
-                  display: 'flex', alignItems: 'center', padding: '6px 16px', fontSize: 13, fontWeight: 500,
-                  borderRadius: 'var(--hx-radius-sm)', transition: 'all 0.15s', border: 'none', cursor: 'pointer',
-                  background: tab === t.key ? 'var(--hx-bg-main)' : 'transparent',
-                  color: tab === t.key ? 'var(--hx-text-primary)' : 'var(--hx-text-tertiary)',
-                  boxShadow: tab === t.key ? 'var(--hx-shadow-sm)' : 'none',
-                }}
+                className={`flex items-center px-4 py-1.5 text-[13px] font-medium rounded-hx-radius-sm transition-all duration-150 border-none cursor-pointer ${
+                  tab === t.key 
+                    ? 'bg-hx-bg-main text-hx-text-primary shadow-hx-shadow-sm' 
+                    : 'bg-transparent text-hx-text-tertiary hover:text-hx-text-secondary'
+                }`}
               >
-                <t.icon style={{ width: 16, height: 16, marginRight: 6 }} /> {t.label}
+                <t.icon className="w-4 h-4 mr-1.5" /> {t.label}
               </button>
             ))}
           </div>

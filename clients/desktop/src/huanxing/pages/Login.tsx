@@ -235,22 +235,12 @@ export default function Login({ onLoginSuccess }: LoginProps) {
       />
 
       {/* 主内容：爆炸结束后淡入（1s 过渡 + 粒子在上层逐渐消融） */}
-      <div
-        className="transition-opacity duration-1000 ease-out"
-        style={{ opacity: contentVisible ? 1 : 0 }}
-      >
+      <div className={`transition-opacity duration-1000 ease-out ${contentVisible ? 'opacity-100' : 'opacity-0'}`}>
         {/* 径向背景光 (这里保留了一点固定的品牌紫混合，可以增强视觉层级) */}
-        <div
-          className="pointer-events-none fixed inset-0 opacity-40 dark:opacity-100"
-          style={{
-            background:
-              "radial-gradient(ellipse at 50% 30%, rgba(124,58,237,0.08) 0%, transparent 60%), radial-gradient(ellipse at 30% 70%, rgba(6,182,212,0.04) 0%, transparent 50%)",
-            zIndex: 1,
-          }}
-        />
+        <div className="pointer-events-none fixed z-0 inset-0 opacity-40 dark:opacity-100 bg-[radial-gradient(ellipse_at_50%_30%,rgba(124,58,237,0.08)_0%,transparent_60%),radial-gradient(ellipse_at_30%_70%,rgba(6,182,212,0.04)_0%,transparent_50%)]" />
 
         {/* 主内容 */}
-        <div className="relative flex min-h-screen flex-col items-center justify-center px-4 pt-7" style={{ zIndex: 2 }}>
+        <div className="relative flex min-h-screen z-10 flex-col items-center justify-center px-4 pt-7">
           {/* 发光星芒 */}
           <GlowingStar />
 

@@ -495,7 +495,7 @@ export default function AgentManager() {
   };
 
   return (
-    <div className="flex h-full min-h-0 min-w-0 overflow-hidden" style={{ width: '100%' }}>
+    <div className="flex flex-row h-full min-h-0 w-full min-w-0 overflow-hidden text-gray-900 bg-white">
       {/* ─── Left: Agent List ─── */}
       <div className="flex w-72 shrink-0 flex-col border-r border-gray-200 min-h-0 bg-white">
         <div 

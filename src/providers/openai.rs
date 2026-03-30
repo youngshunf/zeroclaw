@@ -913,7 +913,7 @@ mod tests {
     fn native_message_omits_reasoning_content_when_none() {
         let msg = NativeMessage {
             role: "assistant".to_string(),
-            content: Some("hi".to_string()),
+            content: Some(OpenAiContent::Text("hi".to_string())),
             tool_call_id: None,
             tool_calls: None,
             reasoning_content: None,
@@ -926,7 +926,7 @@ mod tests {
     fn native_message_includes_reasoning_content_when_some() {
         let msg = NativeMessage {
             role: "assistant".to_string(),
-            content: Some("hi".to_string()),
+            content: Some(OpenAiContent::Text("hi".to_string())),
             tool_call_id: None,
             tool_calls: None,
             reasoning_content: Some("thinking...".to_string()),

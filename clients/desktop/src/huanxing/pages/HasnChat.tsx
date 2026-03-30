@@ -124,26 +124,19 @@ export default function HasnChat() {
       {/* ===== 左侧会话列表 ===== */}
       <div className="hx-panel">
         <div className="hx-panel-header">
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px' }}>
-              <Users size={18} style={{ color: 'var(--hx-purple)', flexShrink: 0 }} />
-              <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--hx-text-primary)' }}>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5 px-2 py-1">
+              <Users className="w-[18px] h-[18px] text-hx-purple shrink-0" />
+              <span className="text-[15px] font-semibold text-hx-text-primary">
                 HASN 社交
               </span>
               {/* 连接状态指示 */}
               <span
-                style={{
-                  width: 6,
-                  height: 6,
-                  borderRadius: '50%',
-                  background: connected ? 'var(--hx-green)' : 'var(--hx-text-tertiary)',
-                  flexShrink: 0,
-                }}
+                className={`w-1.5 h-1.5 rounded-full shrink-0 ${connected ? 'bg-hx-green' : 'bg-hx-text-tertiary'}`}
               />
             </div>
             <button
-              className="hx-nav-item"
-              style={{ width: 32, height: 32, flexShrink: 0 }}
+              className="hx-nav-item w-8 h-8 shrink-0"
               title="新建聊天"
             >
               <Plus size={18} />
@@ -162,14 +155,14 @@ export default function HasnChat() {
 
         <div className="hx-conv-list">
           {convsLoading && conversations.length === 0 ? (
-            <div className="hx-empty-state" style={{ padding: '40px 0' }}>
-              <Loader2 size={24} className="animate-spin" style={{ opacity: 0.5 }} />
-              <p style={{ fontSize: 13 }}>加载中...</p>
+            <div className="hx-empty-state py-10">
+              <Loader2 className="w-6 h-6 animate-spin opacity-50" />
+              <p className="text-[13px]">加载中...</p>
             </div>
           ) : filteredConversations.length === 0 ? (
-            <div className="hx-empty-state" style={{ padding: '40px 0' }}>
-              <MessageSquare size={32} style={{ opacity: 0.4 }} />
-              <p style={{ fontSize: 13 }}>
+            <div className="hx-empty-state py-10">
+              <MessageSquare className="w-8 h-8 opacity-40" />
+              <p className="text-[13px]">
                 {searchQuery ? '未找到匹配的聊天' : '暂无聊天'}
               </p>
             </div>
@@ -183,18 +176,7 @@ export default function HasnChat() {
                   className={`hx-conv-item${isActive ? ' active' : ''}`}
                 >
                   <div
-                    className="hx-conv-avatar"
-                    style={{
-                      background: conv.peer_type === 'agent'
-                        ? 'linear-gradient(135deg, var(--hx-blue), var(--hx-purple))'
-                        : 'linear-gradient(135deg, var(--hx-purple), var(--hx-blue))',
-                      color: 'white',
-                      fontWeight: 600,
-                      fontSize: 14,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
+                    className={`hx-conv-avatar flex items-center justify-center text-white font-semibold text-sm ${conv.peer_type === 'agent' ? 'bg-gradient-to-br from-hx-blue to-hx-purple' : 'bg-gradient-to-br from-hx-purple to-hx-blue'}`}
                   >
                     {getInitial(conv.peer_name)}
                   </div>
@@ -202,7 +184,7 @@ export default function HasnChat() {
                   <div className="hx-conv-info">
                     <div className="hx-conv-name-row">
                       <span className="hx-conv-name">{conv.peer_name}</span>
-                      <span style={{ fontSize: 11, color: 'var(--hx-text-tertiary)', flexShrink: 0 }}>
+                      <span className="text-[11px] text-hx-text-tertiary shrink-0">
                         {formatTime(conv.last_message_at)}
                       </span>
                     </div>
@@ -227,25 +209,14 @@ export default function HasnChat() {
           <div className="hx-chat-header">
             <div className="hx-chat-header-left">
               <div
-                className="hx-chat-header-avatar"
-                style={{
-                  background: 'linear-gradient(135deg, var(--hx-purple), var(--hx-blue))',
-                  color: 'white',
-                  fontWeight: 600,
-                  fontSize: 14,
-                }}
+                className="hx-chat-header-avatar bg-gradient-to-br from-hx-purple to-hx-blue text-white font-semibold text-sm"
               >
                 {getInitial(activeConv.peer_name)}
               </div>
               <div className="hx-chat-header-info">
                 <h3>{activeConv.peer_name}</h3>
                 <div className="hx-chat-header-status">
-                  <span
-                    className="dot"
-                    style={{
-                      background: connected ? 'var(--hx-green)' : 'var(--hx-text-tertiary)',
-                    }}
-                  />
+                  <span className={`dot ${connected ? 'bg-hx-green' : 'bg-hx-text-tertiary'}`} />
                   {activeConv.peer_type === 'agent' ? 'Agent' : 'HASN'}
                 </div>
               </div>
@@ -262,7 +233,7 @@ export default function HasnChat() {
             </div>
           ) : msgsLoading && messages.length === 0 ? (
             <div className="hx-empty-state">
-              <Loader2 size={24} className="animate-spin" style={{ opacity: 0.5 }} />
+              <Loader2 className="w-6 h-6 animate-spin opacity-50" />
             </div>
           ) : messages.length === 0 ? (
             <div className="hx-empty-state">
@@ -274,22 +245,13 @@ export default function HasnChat() {
             <>
               {/* 加载更多 */}
               {messages.length >= 50 && (
-                <div style={{ textAlign: 'center', padding: '8px 0' }}>
+                <div className="text-center py-2">
                   <button
                     onClick={loadMore}
                     disabled={msgsLoading}
-                    style={{
-                      fontSize: 12,
-                      color: 'var(--hx-purple)',
-                      background: 'none',
-                      border: 'none',
-                      cursor: 'pointer',
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 4,
-                    }}
+                    className="text-[12px] text-hx-purple bg-transparent border-none cursor-pointer inline-flex items-center gap-1"
                   >
-                    {msgsLoading ? <Loader2 size={12} className="animate-spin" /> : <ChevronUp size={12} />}
+                    {msgsLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <ChevronUp className="w-3 h-3" />}
                     加载更早消息
                   </button>
                 </div>
@@ -303,17 +265,7 @@ export default function HasnChat() {
                     className={`hx-msg ${isOutgoing ? 'user' : 'agent'}`}
                   >
                     <div
-                      className="hx-msg-avatar"
-                      style={
-                        !isOutgoing
-                          ? {
-                              background: 'linear-gradient(135deg, var(--hx-purple), var(--hx-blue))',
-                              color: 'white',
-                              fontWeight: 600,
-                              fontSize: 12,
-                            }
-                          : undefined
-                      }
+                      className={`hx-msg-avatar flex items-center justify-center shrink-0 ${!isOutgoing ? 'bg-gradient-to-br from-hx-purple to-hx-blue text-white font-semibold text-xs' : ''}`}
                     >
                       {isOutgoing ? getInitial(myName) : getInitial(activeConv?.peer_name || '?')}
                     </div>

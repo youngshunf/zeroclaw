@@ -13,12 +13,11 @@ use async_trait::async_trait;
 
 use crate::channels::session_backend::SessionBackend;
 use crate::memory::Memory;
-use crate::providers::ChatMessage;
+
 use crate::security::policy::SecurityPolicy;
 
 // Re-export the conversation history map type used by channels/mod.rs.
-pub type ConversationHistoryMap =
-    Arc<std::sync::Mutex<std::collections::HashMap<String, Vec<ChatMessage>>>>;
+pub use super::ConversationHistoryMap;
 
 /// Runtime context for processing a single message.
 ///
