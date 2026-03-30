@@ -52,6 +52,9 @@
     --radius-hx-md: 8px;
     --radius-hx-lg: 12px;
     --radius-hx-full: 9999px;
+
+    --hx-rail-width: 64px;
+    --hx-panel-width: 280px;
   }
 
   .dark {
