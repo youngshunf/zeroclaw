@@ -21,6 +21,7 @@ import { useAgentSkills } from '@/huanxing/hooks/useAgentSkills';
 import { Markdown } from '@/huanxing/components/markdown';
 import { HxImageMessage, containsImageMarkers } from '@/huanxing/components/chat/HxImageMessage';
 import { StreamingBubble } from '@/huanxing/components/chat/StreamingBubble';
+import { getHuanxingSession } from '@/huanxing/config';
 
 const SessionList = lazy(() => import('@/huanxing/components/chat/SessionList'));
 
@@ -566,6 +567,12 @@ export default function ChatLayout() {
   }, [activeAgent, agents]);
   const activeAgentDisplayName = activeAgentInfo?.display_name || activeAgent || 'AI';
 
+  // Get real user profile
+  const session = getHuanxingSession();
+  const userName = session?.user?.nickname || session?.user?.username || '用户';
+  const userAvatarUrl = session?.user?.avatar || '';
+  const userAvatarChar = userName.charAt(0);
+
   return (
     <>
       {/* 会话列表 Panel */}
@@ -635,7 +642,13 @@ export default function ChatLayout() {
           {currentMessages.map((msg) => (
             <div key={msg.id} className={`hx-msg ${msg.role === 'user' ? 'user' : 'agent'}`}>
               <div className="hx-msg-avatar" style={{ overflow: 'hidden', padding: activeAgentInfo?.icon_url && msg.role !== 'user' ? 0 : undefined }}>
-                {msg.role === 'user' ? '杨' : (
+                {msg.role === 'user' ? (
+                  userAvatarUrl ? (
+                    <img src={userAvatarUrl} alt={userName} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'inherit' }} />
+                  ) : (
+                    userAvatarChar
+                  )
+                ) : (
                   activeAgentInfo?.icon_url ? (
                     <img src={activeAgentInfo.icon_url} alt="agent" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'inherit' }} />
                   ) : (
