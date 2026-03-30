@@ -86,6 +86,7 @@ pub struct CreateAgentResponse {
 #[serde(default)]
 struct WorkspaceConfig {
     pub display_name: Option<String>,
+    pub name: Option<String>,
     pub hasn_id: Option<String>,
     pub default_model: Option<String>,
     pub default_provider: Option<String>,
@@ -136,15 +137,19 @@ async fn list_agents(State(state): State<AppState>) -> impl IntoResponse {
 
                 let ws_cfg = load_workspace_config(&path).await;
                 let icon_url = if path.join("icon.svg").exists() {
-                    Some(format!("/api/agents/{}/files/icon.svg", urlencoding::encode(&name)))
+                    Some(format!("/api/agents/{}/files/icon.svg?raw=true", urlencoding::encode(&name)))
+                } else if path.join("icon.png").exists() {
+                    Some(format!("/api/agents/{}/files/icon.png?raw=true", urlencoding::encode(&name)))
                 } else {
                     None
                 };
 
+                let display_name = ws_cfg.display_name.or(ws_cfg.name);
+
                 agents.push(AgentInfo {
                     config_dir: path.to_string_lossy().to_string(),
                     model: ws_cfg.default_model,
-                    display_name: ws_cfg.display_name,
+                    display_name,
                     hasn_id: ws_cfg.hasn_id,
                     active: true,
                     is_default: false,
@@ -319,10 +324,16 @@ async fn list_files(
     (StatusCode::OK, Json(serde_json::json!({"files": files}))).into_response()
 }
 
+#[derive(Deserialize)]
+struct ReadFileQuery {
+    raw: Option<bool>,
+}
+
 /// GET /api/agents/:name/files/:filename — 读取工作区文件
 async fn read_file(
     State(state): State<AppState>,
     Path((name, filename)): Path<(String, String)>,
+    axum::extract::Query(query): axum::extract::Query<ReadFileQuery>,
 ) -> impl IntoResponse {
     let config = state.config.lock().clone();
     let agents_dir = config.huanxing.resolve_agents_dir(config.config_path.parent().unwrap_or(&config.workspace_dir));
@@ -331,6 +342,38 @@ async fn read_file(
     // 防止路径遍历
     if filename.contains("..") || filename.contains('/') {
         return (StatusCode::BAD_REQUEST, "非法文件名".to_string()).into_response();
+    }
+
+    if query.raw.unwrap_or(false) {
+        match tokio::fs::read(&file_path).await {
+            Ok(bytes) => {
+                let content_type = if filename.ends_with(".svg") {
+                    "image/svg+xml"
+                } else if filename.ends_with(".png") {
+                    "image/png"
+                } else if filename.ends_with(".jpg") || filename.ends_with(".jpeg") {
+                    "image/jpeg"
+                } else {
+                    "application/octet-stream"
+                };
+                return (
+                    StatusCode::OK,
+                    [(axum::http::header::CONTENT_TYPE, content_type)],
+                    bytes,
+                )
+                    .into_response();
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return (StatusCode::NOT_FOUND, "文件不存在").into_response();
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("读取文件失败: {e}"),
+                )
+                    .into_response();
+            }
+        }
     }
 
     match tokio::fs::read_to_string(&file_path).await {
