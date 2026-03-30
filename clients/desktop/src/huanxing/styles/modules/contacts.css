@@ -1,0 +1,129 @@
+
+
+   
+
+   /* ---------- Conversation items ---------- */
+   .hx-conv-list {
+     @apply flex-1 overflow-y-auto px-2 py-1;
+   }
+   
+   .hx-conv-list::-webkit-scrollbar { 
+     @apply w-1; 
+   }
+   
+   .hx-conv-list::-webkit-scrollbar-track { 
+     @apply bg-transparent; 
+   }
+   
+   .hx-conv-list::-webkit-scrollbar-thumb { 
+     @apply bg-hx-border rounded-sm; 
+   }
+   
+   .hx-conv-item {
+     @apply flex items-center gap-3 px-3 py-2.5 rounded-hx-radius-md cursor-pointer transition-all duration-150 mb-0.5;
+   }
+   
+   .hx-conv-item:hover { 
+     @apply bg-hx-bg-hover; 
+   }
+   
+   .hx-conv-item.active { 
+     @apply bg-hx-purple-bg; 
+   }
+   
+   .hx-conv-avatar {
+     @apply w-10 h-10 min-w-[40px] rounded-hx-radius-md flex items-center justify-center text-base relative bg-gradient-to-br from-[#E0E7FF] to-[#EDE9FE] text-hx-purple font-semibold;
+   }
+   
+   .dark .hx-conv-avatar {
+     @apply bg-gradient-to-br from-[rgba(99,102,241,0.2)] to-[rgba(124,58,237,0.2)];
+   }
+   
+   .hx-conv-avatar .online-dot {
+     @apply absolute -bottom-[1px] -right-[1px] w-2.5 h-2.5 rounded-full bg-hx-green border-2 border-hx-bg-panel;
+   }
+   
+   .hx-conv-info { 
+     @apply flex-1 min-w-0; 
+   }
+   
+   .hx-conv-name-row {
+     @apply flex items-center justify-between mb-[3px];
+   }
+   
+   .hx-conv-name {
+     @apply text-sm font-semibold text-hx-text-primary whitespace-nowrap overflow-hidden text-ellipsis;
+   }
+   
+   .hx-conv-time {
+     @apply text-[11px] text-hx-text-tertiary shrink-0 ml-2;
+   }
+   
+   .hx-conv-preview {
+     @apply text-xs text-hx-text-secondary whitespace-nowrap overflow-hidden text-ellipsis leading-[1.4];
+   }
+   
+   /* Conv item hover actions */
+   .hx-conv-actions {
+     @apply hidden items-center gap-0.5 shrink-0;
+   }
+   
+   .hx-conv-item:hover .hx-conv-actions { 
+     @apply flex; 
+   }
+   
+   .hx-conv-actions button {
+     @apply w-[26px] h-[26px] rounded-hx-radius-sm border-none bg-transparent text-hx-text-tertiary cursor-pointer flex items-center justify-center transition-all duration-150;
+   }
+   
+   .hx-conv-actions button:hover {
+     @apply bg-hx-bg-hover text-hx-purple;
+   }
+   
+   .hx-conv-badge {
+     @apply min-w-[20px] h-5 bg-hx-red text-white text-[11px] font-semibold rounded-hx-radius-full flex items-center justify-center px-1.5 shrink-0;
+   }
+   
+   /* New chat button */
+   .hx-new-chat-btn {
+     @apply flex items-center justify-center gap-1.5 w-[calc(100%-24px)] mx-3 mt-2 mb-1 p-2.5 rounded-hx-radius-md border border-dashed border-hx-border bg-transparent text-hx-text-secondary text-[13px] font-medium cursor-pointer transition-all duration-200;
+   }
+   
+   .hx-new-chat-btn:hover {
+     @apply border-hx-purple text-hx-purple bg-hx-purple-bg;
+   }
+   
+   /* Agent switcher */
+   .hx-agent-switcher {
+     @apply p-3 border-t border-hx-border shrink-0;
+   }
+   
+   .hx-agent-current {
+     @apply flex items-center gap-2 px-2.5 py-2 rounded-hx-radius-md cursor-pointer transition-colors duration-150 text-[13px] font-medium text-hx-text-primary border-none bg-transparent w-full;
+   }
+   
+   .hx-agent-current:hover { 
+     @apply bg-hx-bg-hover; 
+   }
+   
+   .hx-agent-dot {
+     @apply w-2 h-2 rounded-full bg-hx-green;
+   }
+   
+   /* Empty states */
+   .hx-empty-state {
+     @apply flex flex-col items-center justify-center text-center p-6 h-full;
+   }
+   
+   .hx-empty-state .icon {
+     @apply text-[32px] mb-4 opacity-70;
+   }
+   
+   .hx-empty-state h3 {
+     @apply text-[15px] font-semibold text-hx-text-primary mb-1 mt-0;
+   }
+   
+   .hx-empty-state p {
+     @apply text-[13px] text-hx-text-secondary max-w-[240px] m-0;
+   }
+   
