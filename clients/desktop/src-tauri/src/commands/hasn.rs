@@ -9,13 +9,15 @@ use std::sync::Arc;
 use std::path::PathBuf;
 
 use hasn_client_core::{
-    AgentReport, HasnApiClient, HasnWsClient, SyncEngine,
-    WsCommand, WsEvent, WsMessagePayload,
+    AgentReport, HasnApiClient, HasnWsClient, SyncEngine, WsCommand,
 };
 use hasn_client_core::ws::WsStatus;
-use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 use tokio::sync::RwLock;
+
+use crate::commands::models::{HasnClientInfo, Conversation, Message, Contact};
+use crate::utils::device::build_device_info;
+use crate::services::hasn_ws_router::handle_ws_event;
 
 /// HASN 客户端状态（对齐 29 文档 §6.2 HasnClientState）
 pub struct HasnClientState {
@@ -37,6 +39,8 @@ pub struct HasnClientState {
     pub local_agents: RwLock<HashSet<String>>,
     /// Sidecar 端口（用于 HASN 消息转发到本地 Agent）
     pub sidecar_port: RwLock<Option<u16>>,
+    /// 全局 HTTP 客户端（共享连接池优化）
+    pub http_client: reqwest::Client,
 }
 
 impl HasnClientState {
@@ -48,6 +52,11 @@ impl HasnClientState {
         let sync_engine = Arc::new(SyncEngine::new(api.clone(), db.clone()));
         let ws = Arc::new(HasnWsClient::new());
 
+        let http_client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(120))
+            .build()
+            .map_err(|e| format!("创建 HTTP 客户端池失败: {e}"))?;
+
         Ok(Self {
             api,
             ws,
@@ -58,19 +67,12 @@ impl HasnClientState {
             client_jwt: RwLock::new(None),
             local_agents: RwLock::new(HashSet::new()),
             sidecar_port: RwLock::new(None),
+            http_client,
         })
     }
 }
 
 // ─── client.json 持久化（只存标识符，不存 token）───
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct HasnClientInfo {
-    pub hasn_id: String,
-    pub star_id: String,
-    pub client_id: String,
-    pub name: String,
-}
 
 fn client_info_path() -> PathBuf {
     dirs::home_dir()
@@ -115,108 +117,6 @@ pub async fn hasn_get_client_id(
     }
     // 回退到 client.json
     Ok(load_client_info().map(|info| info.client_id))
-}
-
-/// 获取稳定的设备指纹（跨重启不变）
-///
-/// macOS: 通过 ioreg 获取 IOPlatformUUID
-/// Linux: 读 /etc/machine-id
-/// 兜底: hostname 的哈希
-fn get_device_fingerprint() -> String {
-    // macOS: ioreg -rd1 -c IOPlatformExpertDevice | grep IOPlatformUUID
-    #[cfg(target_os = "macos")]
-    {
-        if let Ok(output) = std::process::Command::new("ioreg")
-            .args(["-rd1", "-c", "IOPlatformExpertDevice"])
-            .output()
-        {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            for line in stdout.lines() {
-                if line.contains("IOPlatformUUID") {
-                    if let Some(uuid) = line.split('"').nth(3) {
-                        return uuid.to_string();
-                    }
-                }
-            }
-        }
-    }
-
-    // Linux: /etc/machine-id
-    #[cfg(target_os = "linux")]
-    {
-        if let Ok(mid) = std::fs::read_to_string("/etc/machine-id") {
-            let trimmed = mid.trim();
-            if !trimmed.is_empty() {
-                return trimmed.to_string();
-            }
-        }
-    }
-
-    // Fallback: hostname hash
-    let hostname = hostname::get()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .to_string();
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    hostname.hash(&mut hasher);
-    format!("h_{:016x}", hasher.finish())
-}
-
-/// 构造 device_info JSON（含设备指纹）
-fn build_device_info() -> serde_json::Value {
-    let fingerprint = get_device_fingerprint();
-    let os = std::env::consts::OS;
-    let arch = std::env::consts::ARCH;
-    let hostname = hostname::get()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .to_string();
-
-    serde_json::json!({
-        "device_fingerprint": fingerprint,
-        "os": os,
-        "arch": arch,
-        "hostname": hostname,
-    })
-}
-
-// ─── 响应类型 ───
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Conversation {
-    pub id: String,
-    pub peer_id: String,
-    pub peer_name: String,
-    pub peer_type: String,
-    pub last_message: Option<String>,
-    pub last_message_at: Option<String>,
-    pub unread_count: i32,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Message {
-    pub id: i64,
-    pub local_id: String,
-    pub conversation_id: String,
-    pub from_id: String,
-    pub from_type: i32,
-    pub content: String,
-    pub content_type: i32,
-    pub status: i32,
-    pub send_status: String,
-    pub created_at: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Contact {
-    pub hasn_id: String,
-    pub star_id: String,
-    pub name: String,
-    pub peer_type: String,
-    pub relation_type: String,
-    pub trust_level: i32,
-    pub status: String,
 }
 
 // ─── HASN 连接核心逻辑 ───
@@ -375,11 +275,7 @@ pub async fn hasn_status(state: State<'_, Arc<HasnClientState>>) -> Result<Strin
 // ─── 自动连接（setup hook 调用）───
 
 /// App 启动时自动连接 HASN
-/// 1. 读取 client.json 获取 hasn_id
-/// 2. 发 event 向前端请求 platform_token
-/// 3. 前端响应后执行 do_hasn_connect
 pub async fn hasn_auto_connect(state: Arc<HasnClientState>, app: AppHandle) {
-    // 检查是否有保存的客户端信息
     let info = match load_client_info() {
         Some(info) => info,
         None => {
@@ -390,17 +286,13 @@ pub async fn hasn_auto_connect(state: Arc<HasnClientState>, app: AppHandle) {
 
     eprintln!("[HASN] 发现 client.json, hasn_id={}, 请求前端提供 token...", info.hasn_id);
 
-    // 预设 client_id（避免重复注册）
     *state.client_id.write().await = Some(info.client_id.clone());
 
-    // 发事件给前端请求 platform_token
     let _ = app.emit("hasn:request-token", serde_json::json!({
         "hasn_id": info.hasn_id,
         "star_id": info.star_id,
     }));
 
-    // 监听前端响应（通过全局 OnceChannel）
-    // 前端会调用 hasn_provide_token 命令传回 token
     eprintln!("[HASN] 等待前端提供 token（将通过 hasn_provide_token 命令）");
 }
 
@@ -463,13 +355,11 @@ pub async fn get_messages(
 ) -> Result<Vec<Message>, String> {
     let limit = limit.unwrap_or(50);
 
-    // 先从本地 DB 读
     let local_msgs = state
         .db
         .get_messages(&conversation_id, before_id, limit)
         .map_err(|e| format!("读取消息失败: {}", e))?;
 
-    // 如果本地不够，从服务端拉取
     if local_msgs.len() < limit as usize {
         if let Ok(remote_msgs) = state
             .api
@@ -482,7 +372,6 @@ pub async fn get_messages(
         }
     }
 
-    // 重新从本地读取（包含刚拉取的）
     let msgs = state
         .db
         .get_messages(&conversation_id, before_id, limit)
@@ -519,21 +408,17 @@ pub async fn send_message(
         .clone()
         .ok_or("未连接 HASN")?;
 
-    // 检查是否为本地 Agent 对话
     let is_local_agent = state.local_agents.read().await.contains(&to);
 
     if is_local_agent {
-        // 本地对话：直接 IPC 调 Sidecar（TODO: Phase 2.3 实现）
         return Err("本地 Agent 对话待实现".into());
     }
 
-    // 本地优先：先写入本地 DB
     let local_msg =
         hasn_client_core::model::message::HasnMessage::new_outgoing("pending", &hasn_id, &content, 1, reply_to_id);
     let local_id_copy = local_msg.local_id.clone();
     let _ = state.db.insert_message(&local_msg);
 
-    // 远程路由：通过 WS 发送
     let content_json = serde_json::json!({"text": &content});
     let cmd = WsCommand::Send {
         from_id: Some(hasn_id.clone()),
@@ -572,17 +457,12 @@ pub async fn mark_conversation_read(
     state: State<'_, Arc<HasnClientState>>,
 ) -> Result<(), String> {
     let msg_id = last_msg_id.unwrap_or(0);
-
-    // 本地更新
     let _ = state.db.clear_unread(&conversation_id);
-
-    // 通过 WS 通知服务端
     let cmd = WsCommand::Read {
         conversation_id,
         last_msg_id: msg_id,
     };
     let _ = state.ws.send_command(&cmd).await;
-
     Ok(())
 }
 
@@ -595,14 +475,12 @@ pub async fn get_contacts(
 ) -> Result<Vec<Contact>, String> {
     let rt = relation_type.as_deref().unwrap_or("social");
 
-    // 从 API 拉取最新
     let contacts = state
         .api
         .list_contacts(rt)
         .await
         .map_err(|e| format!("获取联系人失败: {}", e))?;
 
-    // 写入本地 DB
     for c in &contacts {
         let _ = state.db.upsert_contact(c);
     }
@@ -692,255 +570,4 @@ pub async fn set_hasn_sidecar_port(
     *state.sidecar_port.write().await = Some(port);
     tracing::info!("[HASN] Sidecar 端口设置为 {}", port);
     Ok(())
-}
-
-// ─── HASN → 本地 Agent 调用 ───
-
-/// 通过 HTTP 调用本地 Sidecar 的 hasn-invoke 端点
-async fn invoke_sidecar_agent(
-    port: u16,
-    hasn_id: &str,
-    session_id: &str,
-    from_id: &str,
-    message: &str,
-) -> Result<String, String> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(120))
-        .build()
-        .map_err(|e| format!("创建 HTTP 客户端失败: {e}"))?;
-
-    let resp = client
-        .post(format!("http://127.0.0.1:{port}/api/v1/agent/hasn-invoke"))
-        .json(&serde_json::json!({
-            "hasn_id": hasn_id,
-            "session_id": session_id,
-            "from_id": from_id,
-            "message": message,
-        }))
-        .send()
-        .await
-        .map_err(|e| format!("Sidecar 调用失败: {e}"))?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        return Err(format!("Sidecar 返回 {status}: {body}"));
-    }
-
-    let result: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| format!("解析 Sidecar 响应失败: {e}"))?;
-
-    result
-        .get("reply")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .ok_or_else(|| "Sidecar 响应缺少 reply 字段".to_string())
-}
-
-// ─── WebSocket 事件处理（本地路由，对齐 29 文档 §6.1）───
-
-fn handle_ws_event(event: WsEvent, app: &AppHandle, state: &Arc<HasnClientState>) {
-    let sync = &state.sync_engine;
-    match event {
-        WsEvent::Connected {
-            user_hasn_id,
-            client_id,
-            ..
-        } => {
-            tracing::info!("[HASN] 已连接: {} ({})", user_hasn_id, client_id);
-            let _ = app.emit("hasn:connected", serde_json::json!({
-                "user_hasn_id": user_hasn_id,
-                "client_id": client_id,
-            }));
-        }
-
-        WsEvent::ReportAgentsAck { accepted, failed } => {
-            tracing::info!(
-                "[HASN] Agent 上报: accepted={}, failed={}",
-                accepted.len(),
-                failed.len()
-            );
-            let _ = app.emit("hasn:agents_reported", serde_json::json!({
-                "accepted": accepted,
-                "failed": failed,
-            }));
-        }
-
-        WsEvent::Message { to_id, message } => {
-            // 1. 先写入本地 DB
-            let msg = match sync.handle_incoming_message(message) {
-                Ok(m) => m,
-                Err(e) => {
-                    tracing::error!("[HASN] 处理入站消息失败: {e}");
-                    return;
-                }
-            };
-
-            // 2. 通知前端显示
-            let _ = app.emit("hasn:message", serde_json::json!({
-                "id": msg.id,
-                "local_id": msg.local_id,
-                "conversation_id": msg.conversation_id,
-                "from_id": msg.from_id,
-                "from_type": msg.from_type,
-                "content": msg.content,
-                "content_type": msg.content_type,
-                "status": msg.status,
-                "created_at": msg.created_at,
-                "to_id": to_id,
-                "reply_to_id": msg.reply_to,
-            }));
-
-            // 3. 发送系统通知（消息来自别人时）
-            {
-                let content_preview = if msg.content.len() > 50 {
-                    format!("{}...", &msg.content[..50])
-                } else {
-                    msg.content.clone()
-                };
-                let _ = app.emit("hasn:notification", serde_json::json!({
-                    "title": msg.from_id,
-                    "body": content_preview,
-                }));
-            }
-
-            // 3. 路由判断：to_id 是否是本地 Agent？
-            if let Some(ref target_id) = to_id {
-                let state = state.clone();
-                let target = target_id.clone();
-                let from = msg.from_id.clone();
-                let conv_id = msg.conversation_id.clone();
-                let content = msg.content.clone();
-                let ws = state.ws.clone();
-
-                tokio::spawn(async move {
-                    let is_local = state.local_agents.read().await.contains(&target);
-                    if !is_local {
-                        return; // 不是本地 Agent，仅显示，不转发
-                    }
-
-                    let port = match *state.sidecar_port.read().await {
-                        Some(p) => p,
-                        None => {
-                            tracing::warn!("[HASN] 本地 Agent 消息但 sidecar_port 未设置");
-                            return;
-                        }
-                    };
-
-                    // 发送 TYPING 状态
-                    let typing_cmd = WsCommand::Typing {
-                        conversation_id: conv_id.clone(),
-                        to_id: from.clone(),
-                    };
-                    let _ = ws.send_command(&typing_cmd).await;
-
-                    // 调用 Sidecar Agent
-                    tracing::info!(
-                        "[HASN] 转发消息到本地 Agent: {} -> {} (port={})",
-                        from, target, port
-                    );
-                    match invoke_sidecar_agent(
-                        port, &target, &conv_id, &from, &content,
-                    ).await {
-                        Ok(reply) => {
-                            // 通过 HASN WS 回复
-                            let reply_json = serde_json::json!({"text": &reply});
-                            let send_cmd = WsCommand::Send {
-                                from_id: Some(target.clone()),
-                                to: from.clone(),
-                                content: reply_json,
-                                content_type: Some(1),
-                                msg_type: Some("message".to_string()),
-                                local_id: Some(format!("agent_{}", chrono::Utc::now().timestamp_millis())),
-                                reply_to_id: None,
-                            };
-                            if let Err(e) = ws.send_command(&send_cmd).await {
-                                tracing::error!("[HASN] Agent 回复发送失败: {e}");
-                            } else {
-                                tracing::info!("[HASN] Agent 回复已发送 ({} 字符)", reply.len());
-                            }
-                        }
-                        Err(e) => {
-                            tracing::error!("[HASN] Sidecar 调用失败: {e}");
-                        }
-                    }
-                });
-            }
-        }
-
-        WsEvent::OfflineMessages { messages } => {
-            tracing::info!("[HASN] 收到 {} 条离线消息", messages.len());
-            for raw in messages {
-                if let Ok(payload) = serde_json::from_value::<WsMessagePayload>(raw) {
-                    if let Ok(msg) = sync.handle_incoming_message(payload) {
-                        let _ = app.emit("hasn:message", serde_json::json!({
-                            "id": msg.id,
-                            "conversation_id": msg.conversation_id,
-                            "from_id": msg.from_id,
-                            "content": msg.content,
-                            "offline": true,
-                        }));
-                    }
-                }
-            }
-        }
-
-        WsEvent::Ack {
-            msg_id,
-            conversation_id,
-            local_id,
-            status,
-        } => {
-            let _ = sync.handle_ack(msg_id, &conversation_id, local_id.as_deref());
-            let _ = app.emit("hasn:ack", serde_json::json!({
-                "msg_id": msg_id,
-                "conversation_id": conversation_id,
-                "local_id": local_id,
-                "status": status,
-            }));
-        }
-
-        WsEvent::Typing {
-            from_id,
-            conversation_id,
-        } => {
-            let _ = app.emit("hasn:typing", serde_json::json!({
-                "from_id": from_id,
-                "conversation_id": conversation_id,
-            }));
-        }
-
-        WsEvent::Presence { hasn_id, status } => {
-            let _ = app.emit("hasn:presence", serde_json::json!({
-                "hasn_id": hasn_id,
-                "status": status,
-            }));
-        }
-
-        WsEvent::MessageRecalled {
-            msg_id,
-            conversation_id,
-            recalled_by,
-        } => {
-            let _ = app.emit("hasn:message_recalled", serde_json::json!({
-                "msg_id": msg_id,
-                "conversation_id": conversation_id,
-                "recalled_by": recalled_by,
-            }));
-        }
-
-        WsEvent::Pong { .. } => {}
-
-        WsEvent::Error { code, message } => {
-            tracing::error!("[HASN] 服务端错误: code={} msg={}", code, message);
-            let _ = app.emit("hasn:error", serde_json::json!({
-                "code": code,
-                "message": message,
-            }));
-        }
-
-        _ => {}
-    }
 }

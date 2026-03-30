@@ -7,6 +7,8 @@
 
 mod commands;
 mod sidecar;
+mod utils;
+mod services;
 
 use commands::{auth, files, hasn, marketplace, zeroclaw};
 use hasn::HasnClientState;
