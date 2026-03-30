@@ -473,6 +473,45 @@
   @apply !rounded-hx-radius-md;
 }
 
+/* ---------- Inputs & Forms ---------- */
+.hx-input {
+  @apply rounded-hx-radius-md bg-hx-bg-panel text-hx-text-primary px-3 py-2 text-[13px] border border-hx-border transition-all duration-200 outline-none !outline-none shadow-hx-shadow-sm;
+  width: 100%;
+}
+
+.hx-input::placeholder {
+  @apply text-hx-text-tertiary;
+}
+
+.hx-input:hover {
+  @apply border-hx-purple-hover;
+}
+
+.hx-input:focus, .hx-input:focus-visible {
+  @apply border-hx-purple outline-none !outline-none;
+  box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.12);
+}
+
+.hx-textarea {
+  @apply rounded-hx-radius-md bg-hx-bg-panel text-hx-text-primary px-3 py-2 text-[13px] border border-hx-border transition-all duration-200 outline-none !outline-none shadow-hx-shadow-sm;
+  width: 100%;
+  resize: vertical;
+  min-height: 80px;
+}
+
+.hx-textarea::placeholder {
+  @apply text-hx-text-tertiary;
+}
+
+.hx-textarea:hover {
+  @apply border-hx-purple-hover;
+}
+
+.hx-textarea:focus {
+  @apply border-hx-purple outline-none !outline-none;
+  box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.12);
+}
+
 /* ---------- Radix UI Select ---------- */
 .hx-select-trigger {
   @apply rounded-hx-radius-sm bg-hx-bg-main text-hx-text-primary outline-none;

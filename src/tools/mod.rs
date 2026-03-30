@@ -229,11 +229,14 @@ use std::sync::Arc;
 // per-tenant security policy via `with_active_security`.  Tool
 // implementations call `get_active_security()` to prefer this
 // request-scoped policy over the global one baked into the tool at
+            // request-scoped policy over the global one baked into the tool at
 // construction time.
 
 tokio::task_local! {
     static ACTIVE_SECURITY: Arc<SecurityPolicy>;
     static ACTIVE_WORKSPACE: std::path::PathBuf;
+    static ACTIVE_KNOWLEDGE_GRAPH: Arc<crate::memory::knowledge_graph::KnowledgeGraph>;
+    static ACTIVE_KNOWLEDGE_CONFIG: crate::config::KnowledgeConfig;
 }
 
 /// Retrieve the per-request security policy, if one was injected.
@@ -244,6 +247,16 @@ pub fn get_active_security() -> Option<Arc<SecurityPolicy>> {
 /// Retrieve the per-request workspace directory, if one was injected.
 pub fn get_active_workspace() -> Option<std::path::PathBuf> {
     ACTIVE_WORKSPACE.try_with(|w| w.clone()).ok()
+}
+
+/// Retrieve the per-request knowledge graph, if one was injected.
+pub fn get_active_knowledge_graph() -> Option<Arc<crate::memory::knowledge_graph::KnowledgeGraph>> {
+    ACTIVE_KNOWLEDGE_GRAPH.try_with(|g| g.clone()).ok()
+}
+
+/// Retrieve the per-request knowledge config, if one was injected.
+pub fn get_active_knowledge_config() -> Option<crate::config::KnowledgeConfig> {
+    ACTIVE_KNOWLEDGE_CONFIG.try_with(|c| c.clone()).ok()
 }
 
 /// Run a future with a per-request security policy injected into the
@@ -262,6 +275,30 @@ where
     F: std::future::Future<Output = T>,
 {
     ACTIVE_WORKSPACE.scope(workspace, future).await
+}
+
+/// Run a future with a per-request knowledge graph injected into the
+/// task-local scope.
+pub async fn with_active_knowledge_graph<F, T>(
+    graph: Arc<crate::memory::knowledge_graph::KnowledgeGraph>,
+    future: F,
+) -> T
+where
+    F: std::future::Future<Output = T>,
+{
+    ACTIVE_KNOWLEDGE_GRAPH.scope(graph, future).await
+}
+
+/// Run a future with a per-request knowledge config injected into the
+/// task-local scope.
+pub async fn with_active_knowledge_config<F, T>(
+    config: crate::config::KnowledgeConfig,
+    future: F,
+) -> T
+where
+    F: std::future::Future<Output = T>,
+{
+    ACTIVE_KNOWLEDGE_CONFIG.scope(config, future).await
 }
 
 /// Shared handle to the delegate tool's parent-tools list.

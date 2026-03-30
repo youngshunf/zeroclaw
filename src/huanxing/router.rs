@@ -134,7 +134,8 @@ impl TenantRouter {
                 match TenantContext::load(
                     &record.agent_id,
                     &record.user_id,
-                    tenant_workspace,
+                    tenant_workspace.clone(), // workspace_dir
+                    tenant_workspace,         // owner_dir (云端环境保持绝对物理隔离)
                     self.config.default_model.clone(),
                     self.config.default_provider.clone(),
                     record.template.clone(),

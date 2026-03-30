@@ -51,7 +51,7 @@ async function request<T = unknown>(
 }
 
 /** 带 access_token 的请求 */
-async function authRequest<T = unknown>(
+export async function authRequest<T = unknown>(
   path: string,
   token: string,
   options: RequestInit = {},

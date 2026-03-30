@@ -571,3 +571,26 @@ pub async fn set_hasn_sidecar_port(
     tracing::info!("[HASN] Sidecar 端口设置为 {}", port);
     Ok(())
 }
+
+// ─── 托盘状态管理 ───
+
+#[tauri::command]
+pub async fn update_tray_badge(
+    count: u32,
+    app: AppHandle,
+) -> Result<(), String> {
+    if let Some(tray) = app.tray_by_id("main") {
+        if count > 0 {
+            #[cfg(target_os = "macos")]
+            let _ = tray.set_title(Some(format!(" {}", count)));
+            
+            let _ = tray.set_tooltip(Some(format!("唤星 AI ({}条未读消息)", count)));
+        } else {
+            #[cfg(target_os = "macos")]
+            let _ = tray.set_title(None::<String>);
+            
+            let _ = tray.set_tooltip(Some("唤星 AI"));
+        }
+    }
+    Ok(())
+}

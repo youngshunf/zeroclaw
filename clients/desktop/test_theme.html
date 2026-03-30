@@ -1,0 +1,20 @@
+<html>
+  <head>
+    <link href="test-out.css" rel="stylesheet">
+  </head>
+  <body>
+    <div id="tgt" class="bg-hx-bg-main text-hx-text-primary p-4 rounded-hx-radius-md border-hx-border border">
+      Hello World
+    </div>
+    <script>
+      function checkColor(msg) {
+        const el = document.getElementById('tgt');
+        const style = window.getComputedStyle(el);
+        console.log(msg, style.backgroundColor);
+      }
+      checkColor("INIT:");
+      document.documentElement.setAttribute('data-theme', 'dark');
+      checkColor("AFTER DARK:");
+    </script>
+  </body>
+</html>

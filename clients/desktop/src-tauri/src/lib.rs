@@ -9,12 +9,13 @@ mod commands;
 mod sidecar;
 mod utils;
 mod services;
+mod tray;
 
 use commands::{auth, files, hasn, marketplace, zeroclaw};
 use hasn::HasnClientState;
 use sidecar::SidecarManager;
 use std::sync::Arc;
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 /// 默认 HASN API 地址（配置中未设置时使用）
 const HASN_API_BASE_DEFAULT: &str = "https://api.huanxing.dcfuture.cn";
@@ -79,6 +80,8 @@ pub fn run() {
             let hasn_st = hasn_state.clone();
             move |app| {
                 let handle = app.handle().clone();
+
+                tray::setup_tray(&handle).expect("初始化托盘失败");
 
                 // 后台检查唤星配置完整性并启动 sidecar
                 tauri::async_runtime::spawn(async move {
@@ -168,6 +171,7 @@ pub fn run() {
             // HASN Agent
             hasn::get_my_agents,
             hasn::set_hasn_sidecar_port,
+            hasn::update_tray_badge,
             // ZeroClaw sidecar
             zeroclaw::start_zeroclaw,
             zeroclaw::stop_zeroclaw,
@@ -196,9 +200,24 @@ pub fn run() {
         .expect("error while building huanxing desktop");
 
     // App 事件循环 — sidecar 常驻后台，App 退出不关闭它
-    app.run(|_app_handle, event| {
-        if let tauri::RunEvent::Exit = event {
-            tracing::info!("App exiting, huanxing sidecar continues running in background");
+    app.run(|app_handle, event| {
+        match event {
+            tauri::RunEvent::Exit => {
+                tracing::info!("App exiting, huanxing sidecar continues running in background");
+            }
+            tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::CloseRequested { api, .. }, .. } => {
+                if label == "main" {
+                    if let Some(window) = app_handle.get_webview_window("main") {
+                        let _ = window.hide();
+                    }
+                    api.prevent_close();
+                }
+            }
+            tauri::RunEvent::ExitRequested { api, .. } => {
+                // 防止最后一个窗口关闭时（即被 hide 时系统默认行为）直接退出
+                api.prevent_exit();
+            }
+            _ => {}
         }
     });
 }

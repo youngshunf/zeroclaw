@@ -36,7 +36,7 @@ function useSettingsGroups() {
       items: [
         { to: '/config', icon: Settings, label: t('nav.config') },
         { to: '/engine', icon: Cpu, label: t('settings.engine') || 'AI 引擎' },
-        { to: '/cost', icon: DollarSign, label: t('nav.cost') },
+        { to: '/cost', icon: DollarSign, label: t('nav.cost') || '账户与计费' },
         { to: '/logs', icon: Activity, label: t('nav.logs') },
         { to: '/doctor', icon: Stethoscope, label: t('nav.doctor') },
         { to: '/devices', icon: Smartphone, label: t('nav.devices') },

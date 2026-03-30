@@ -207,7 +207,7 @@ timeout_secs = 120
             ("{{comm_style}}", comm_style),
         ];
 
-        let scaffold_result = scaffold_workspace(&app, &workspace_dir, placeholders);
+        let scaffold_result = scaffold_workspace(&app, &self.config_dir, &workspace_dir, placeholders);
         match scaffold_result {
             Ok(count) => {
                 tracing::info!(
@@ -303,7 +303,8 @@ fn load_scaffold_file(app: &AppHandle, filename: &str) -> Option<String> {
 
 fn scaffold_workspace(
     app: &AppHandle,
-    workspace_dir: &std::path::Path,
+    owner_dir: &std::path::Path,
+    agent_dir: &std::path::Path,
     placeholders: &[(&str, &str)],
 ) -> Result<usize, String> {
     let scaffold_dir = app
@@ -340,7 +341,12 @@ fn scaffold_workspace(
             continue;
         }
 
-        let dest = workspace_dir.join(&file_name);
+        let is_owner_file = matches!(file_name.as_str(), "USER.md" | "MEMORY.md" | "BOOTSTRAP.md");
+        let dest = if is_owner_file {
+            owner_dir.join(&file_name)
+        } else {
+            agent_dir.join(&file_name)
+        };
 
         if dest.exists() {
             continue;

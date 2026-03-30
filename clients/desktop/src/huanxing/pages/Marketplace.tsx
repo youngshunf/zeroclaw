@@ -15,6 +15,7 @@ import {
 import { listAgents, type AgentInfo } from '../lib/agent-api';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/Select';
 import { resolveApiUrl } from '../config';
+import { Input } from '../../components/ui/Input';
 
 // ── Icon 渲染组件 ────────────────────────────────────────────
 function ItemIcon({ iconUrl, emoji, fallback, size = 'md' }: { iconUrl?: string; emoji?: string; fallback: React.ReactNode; size?: 'md' | 'lg' }) {
@@ -100,13 +101,13 @@ export function InstallModal({
               {type === 'agent' && (
                 <div>
                   <label className="text-hx-text-primary block text-sm font-medium mb-1">为您的新 Agent 命名</label>
-                  <input 
+                  <Input 
                     type="text" 
                     value={agentNameInput || ''}
                     onChange={(e) => setAgentNameInput && setAgentNameInput(e.target.value)}
                     placeholder={targetName}
                     autoFocus
-                    className="bg-hx-bg-input border-hx-border text-hx-text-primary w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/50 text-sm"
+                    className="w-full"
                   />
                 </div>
               )}

@@ -4,6 +4,7 @@
 @import "./huanxing/styles/modules/contacts.css";
 @import "./huanxing/styles/modules/chat.css";
 @import "./huanxing/styles/modules/components.css";
+@import "./huanxing/styles/modules/markdown.css";
 
 /* Tailwind CSS v4 class-based dark mode configuration */
 @custom-variant dark (&:where(.dark, .dark *, [data-theme="dark"], [data-theme="dark"] *));
@@ -151,6 +152,16 @@
   --radius-hx-radius-md: var(--hx-radius-md);
   --radius-hx-radius-lg: var(--hx-radius-lg);
   --radius-hx-radius-full: var(--hx-radius-full);
+}
+
+/* 禁用原生焦点边框，防止 Tailwind 的 focus:ring 样式与原生蓝色边框重叠出现双层框 */
+*, *::before, *::after {
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+:focus, :focus-visible {
+  outline: none;
 }
 
 html {

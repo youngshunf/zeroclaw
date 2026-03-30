@@ -50,6 +50,7 @@ pub struct Agent {
     model_name: String,
     temperature: f64,
     workspace_dir: std::path::PathBuf,
+    owner_dir: std::path::PathBuf,
     identity_config: crate::config::IdentityConfig,
     skills: Vec<crate::skills::Skill>,
     skills_prompt_mode: crate::config::SkillsPromptInjectionMode,
@@ -85,6 +86,7 @@ pub struct AgentBuilder {
     model_name: Option<String>,
     temperature: Option<f64>,
     workspace_dir: Option<std::path::PathBuf>,
+    owner_dir: Option<std::path::PathBuf>,
     identity_config: Option<crate::config::IdentityConfig>,
     skills: Option<Vec<crate::skills::Skill>>,
     skills_prompt_mode: Option<crate::config::SkillsPromptInjectionMode>,
@@ -115,6 +117,7 @@ impl AgentBuilder {
             model_name: None,
             temperature: None,
             workspace_dir: None,
+            owner_dir: None,
             identity_config: None,
             skills: None,
             skills_prompt_mode: None,
@@ -184,6 +187,11 @@ impl AgentBuilder {
 
     pub fn workspace_dir(mut self, workspace_dir: std::path::PathBuf) -> Self {
         self.workspace_dir = Some(workspace_dir);
+        self
+    }
+
+    pub fn owner_dir(mut self, owner_dir: std::path::PathBuf) -> Self {
+        self.owner_dir = Some(owner_dir);
         self
     }
 
@@ -307,6 +315,11 @@ impl AgentBuilder {
             temperature: self.temperature.unwrap_or(0.7),
             workspace_dir: self
                 .workspace_dir
+                .clone()
+                .unwrap_or_else(|| std::path::PathBuf::from(".")),
+            owner_dir: self
+                .owner_dir
+                .or(self.workspace_dir)
                 .unwrap_or_else(|| std::path::PathBuf::from(".")),
             identity_config: self.identity_config.unwrap_or_default(),
             skills: self.skills.unwrap_or_default(),
@@ -550,6 +563,7 @@ impl Agent {
             .model_name(model_name)
             .temperature(config.default_temperature)
             .workspace_dir(config.workspace_dir.clone())
+            .owner_dir(config.workspace_dir.clone())
             .classification_config(config.query_classification.clone())
             .available_hints(available_hints)
             .route_model_by_hint(route_model_by_hint)
@@ -597,6 +611,7 @@ impl Agent {
         let instructions = self.tool_dispatcher.prompt_instructions(&self.tools);
         let ctx = PromptContext {
             workspace_dir: &self.workspace_dir,
+            owner_dir: &self.owner_dir,
             model_name: &self.model_name,
             tools: &self.tools,
             skills: &self.skills,

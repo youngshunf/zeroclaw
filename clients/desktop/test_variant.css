@@ -1,0 +1,4 @@
+@theme {
+  --color-brand: #7C3AED;
+}
+@custom-variant dark (&:is(.dark *, [data-theme="dark"] *));

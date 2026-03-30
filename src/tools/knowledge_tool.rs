@@ -18,6 +18,12 @@ impl KnowledgeTool {
     pub fn new(graph: Arc<KnowledgeGraph>) -> Self {
         Self { graph }
     }
+
+    /// Retrieve the currently active graph (task-local override for multi-tenant isolation),
+    /// falling back to the global graph injected at initialization.
+    fn graph(&self) -> Arc<KnowledgeGraph> {
+        crate::tools::get_active_knowledge_graph().unwrap_or_else(|| self.graph.clone())
+    }
 }
 
 #[async_trait]
@@ -145,7 +151,7 @@ impl KnowledgeTool {
         let source_project = args.get("source_project").and_then(|v| v.as_str());
 
         match self
-            .graph
+            .graph()
             .add_node(node_type, title, content, &tags, source_project)
         {
             Ok(id) => Ok(ToolResult {
@@ -191,7 +197,7 @@ impl KnowledgeTool {
 
         let results = if query.is_empty() && !filter_tags.is_empty() {
             // Tag-only search -- apply node_type and project filters consistently.
-            let mut nodes = self.graph.query_by_tags(&filter_tags)?;
+            let mut nodes = self.graph().query_by_tags(&filter_tags)?;
             if let Some(ref nt) = parsed_filter_type {
                 nodes.retain(|n| &n.node_type == nt);
             }
@@ -203,7 +209,7 @@ impl KnowledgeTool {
                 .map(|node| json!({ "id": node.id, "type": node.node_type, "title": node.title, "score": 1.0 }))
                 .collect::<Vec<_>>()
         } else if !query.is_empty() {
-            let mut search_results = self.graph.query_by_similarity(query, 20)?;
+            let mut search_results = self.graph().query_by_similarity(query, 20)?;
 
             // Post-filter by type if specified.
             if let Some(ref nt) = parsed_filter_type {
@@ -256,7 +262,7 @@ impl KnowledgeTool {
 
         let relation = Relation::parse(relation_str).map_err(|e| anyhow::anyhow!("{e}"))?;
 
-        match self.graph.add_edge(from_id, to_id, relation) {
+        match self.graph().add_edge(from_id, to_id, relation) {
             Ok(()) => Ok(ToolResult {
                 success: true,
                 output: "relationship created".to_string(),
@@ -277,7 +283,7 @@ impl KnowledgeTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("missing 'query' or 'content' for suggest"))?;
 
-        let results = self.graph.query_by_similarity(query, 10)?;
+        let results = self.graph().query_by_similarity(query, 10)?;
         let suggestions: Vec<serde_json::Value> = results
             .into_iter()
             .map(|r| {
@@ -318,7 +324,7 @@ impl KnowledgeTool {
             });
         }
 
-        let experts = self.graph.find_experts(&tags)?;
+        let experts = self.graph().find_experts(&tags)?;
         let output: Vec<serde_json::Value> = experts
             .into_iter()
             .map(|r| {
@@ -397,7 +403,7 @@ impl KnowledgeTool {
     }
 
     fn handle_graph_stats(&self) -> anyhow::Result<ToolResult> {
-        match self.graph.stats() {
+        match self.graph().stats() {
             Ok(stats) => Ok(ToolResult {
                 success: true,
                 output: serde_json::to_string(&stats).unwrap_or_default(),

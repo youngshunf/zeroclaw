@@ -22,6 +22,7 @@ const HasnChat = lazy(() => import('./huanxing/pages/HasnChat'));
 const Contacts = lazy(() => import('./huanxing/pages/Contacts'));
 const AgentManager = lazy(() => import('./huanxing/pages/AgentManager'));
 const Marketplace = lazy(() => import('./huanxing/pages/Marketplace'));
+const Documents = lazy(() => import('./huanxing/pages/Documents'));
 const HuanxingLayout = lazy(() => import('./huanxing/components/layout/HuanxingLayout'));
 const SettingsPanel = lazy(() => import('./huanxing/components/layout/SettingsPanel'));
 const Engine = lazy(() => import('./huanxing/pages/Engine'));
@@ -252,6 +253,9 @@ function AppContent() {
 
           {/* 新增: 市场 */}
           <Route path="/market" element={<Suspense fallback={null}><Marketplace /></Suspense>} />
+
+          {/* 新增: 文档 */}
+          <Route path="/docs" element={<Suspense fallback={null}><Documents /></Suspense>} />
 
           {/* 新增: SOP 工作台 */}
           <Route path="/sop" element={<Suspense fallback={null}><SopWorkbench /></Suspense>} />

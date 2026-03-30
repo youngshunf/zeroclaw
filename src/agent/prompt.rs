@@ -12,6 +12,7 @@ use std::path::Path;
 
 pub struct PromptContext<'a> {
     pub workspace_dir: &'a Path,
+    pub owner_dir: &'a Path,
     pub model_name: &'a str,
     pub tools: &'a [Box<dyn Tool>],
     pub skills: &'a [Skill],
@@ -350,6 +351,7 @@ mod tests {
         let tools: Vec<Box<dyn Tool>> = vec![];
         let ctx = PromptContext {
             workspace_dir: &workspace,
+            owner_dir: &workspace,
             model_name: "test-model",
             tools: &tools,
             skills: &[],
@@ -381,6 +383,7 @@ mod tests {
         let tools: Vec<Box<dyn Tool>> = vec![Box::new(TestTool)];
         let ctx = PromptContext {
             workspace_dir: Path::new("/tmp"),
+            owner_dir: Path::new("/tmp"),
             model_name: "test-model",
             tools: &tools,
             skills: &[],
@@ -419,6 +422,7 @@ mod tests {
 
         let ctx = PromptContext {
             workspace_dir: Path::new("/tmp"),
+            owner_dir: Path::new("/tmp"),
             model_name: "test-model",
             tools: &tools,
             skills: &skills,
@@ -461,6 +465,7 @@ mod tests {
 
         let ctx = PromptContext {
             workspace_dir: Path::new("/tmp/workspace"),
+            owner_dir: Path::new("/tmp/workspace"),
             model_name: "test-model",
             tools: &tools,
             skills: &skills,
@@ -489,6 +494,7 @@ mod tests {
         let tools: Vec<Box<dyn Tool>> = vec![];
         let ctx = PromptContext {
             workspace_dir: Path::new("/tmp"),
+            owner_dir: Path::new("/tmp"),
             model_name: "test-model",
             tools: &tools,
             skills: &[],
@@ -530,6 +536,7 @@ mod tests {
         }];
         let ctx = PromptContext {
             workspace_dir: Path::new("/tmp/workspace"),
+            owner_dir: Path::new("/tmp/workspace"),
             model_name: "test-model",
             tools: &tools,
             skills: &skills,
@@ -564,6 +571,7 @@ mod tests {
             .to_string();
         let ctx = PromptContext {
             workspace_dir: Path::new("/tmp"),
+            owner_dir: Path::new("/tmp"),
             model_name: "test-model",
             tools: &tools,
             skills: &[],
@@ -599,6 +607,7 @@ mod tests {
         let tools: Vec<Box<dyn Tool>> = vec![];
         let ctx = PromptContext {
             workspace_dir: Path::new("/tmp"),
+            owner_dir: Path::new("/tmp"),
             model_name: "test-model",
             tools: &tools,
             skills: &[],
@@ -626,6 +635,7 @@ mod tests {
         let tools: Vec<Box<dyn Tool>> = vec![];
         let ctx = PromptContext {
             workspace_dir: Path::new("/tmp"),
+            owner_dir: Path::new("/tmp"),
             model_name: "test-model",
             tools: &tools,
             skills: &[],
@@ -661,6 +671,7 @@ mod tests {
         let tools: Vec<Box<dyn Tool>> = vec![];
         let ctx = PromptContext {
             workspace_dir: Path::new("/tmp"),
+            owner_dir: Path::new("/tmp"),
             model_name: "test-model",
             tools: &tools,
             skills: &[],

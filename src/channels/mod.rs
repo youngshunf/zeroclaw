@@ -2562,6 +2562,28 @@ async fn process_channel_message(
         }
     }
 
+    // ── Knowledge suggestion: prepend relevant knowledge context ────────
+    if msg_ctx.knowledge_config.suggest_on_query && msg_ctx.knowledge_config.enabled {
+        if let Some(ref kg) = msg_ctx.knowledge_graph {
+            let suggestions = crate::memory::knowledge_suggest::suggest_knowledge(
+                kg,
+                &msg.content,
+                msg_ctx.knowledge_config.suggest_max_items,
+            );
+            if !suggestions.is_empty() {
+                let context_block =
+                    crate::memory::knowledge_suggest::format_knowledge_context(&suggestions);
+                tracing::info!(
+                    count = suggestions.len(),
+                    channel = %msg.channel,
+                    "Knowledge suggest: injected {} items as [context] block",
+                    suggestions.len()
+                );
+                msg.content = format!("{context_block}{}", msg.content);
+            }
+        }
+    }
+
     let target_channel = ctx
         .channels_by_name
         .get(&msg.channel)
@@ -3124,17 +3146,6 @@ async fn process_channel_message(
     // Multi-tenant: inject per-tenant workspace and security policy into task-local
     // scope so tools (shell, file_read/write/edit, skill_market) operate on the
     // correct tenant's directory and security policy.
-    let tenant_workspace_for_scope: Option<std::path::PathBuf> = if is_multi_tenant {
-        Some(msg_ctx.workspace_dir.clone())
-    } else {
-        None
-    };
-
-    let tenant_security_for_scope: Option<Arc<SecurityPolicy>> = if is_multi_tenant {
-        msg_ctx.security.clone()
-    } else {
-        None
-    };
 
     // Effective multimodal config: tenant override or global
     let effective_multimodal = msg_ctx.multimodal.as_ref().unwrap_or(&ctx.multimodal);
@@ -3259,19 +3270,27 @@ async fn process_channel_message(
         (llm_result, fallback_info)
     };
 
-    // Run the LLM tool loop, optionally scoped to tenant workspace + security.
-    let (llm_result, fallback_info) = if let Some(ws) = tenant_workspace_for_scope {
-        if let Some(sec) = tenant_security_for_scope {
-            crate::tools::with_active_workspace(
-                ws,
-                crate::tools::with_active_security(sec, run_llm_future),
-            )
-            .await
+    // Run the LLM tool loop, optionally scoped to tenant workspace, security, and knowledge state.
+    let (llm_result, fallback_info) = if is_multi_tenant {
+        let ws = msg_ctx.workspace_dir.clone();
+        let kg_cfg = msg_ctx.knowledge_config.clone();
+        
+        let f1 = crate::tools::with_active_knowledge_config(kg_cfg, run_llm_future);
+        
+        if let Some(sec) = msg_ctx.security.clone() {
+            let f2 = crate::tools::with_active_security(sec, f1);
+            if let Some(kg) = msg_ctx.knowledge_graph.clone() {
+                crate::tools::with_active_workspace(ws, crate::tools::with_active_knowledge_graph(kg, f2)).await
+            } else {
+                crate::tools::with_active_workspace(ws, f2).await
+            }
         } else {
-            crate::tools::with_active_workspace(ws, run_llm_future).await
+            if let Some(kg) = msg_ctx.knowledge_graph.clone() {
+                crate::tools::with_active_workspace(ws, crate::tools::with_active_knowledge_graph(kg, f1)).await
+            } else {
+                crate::tools::with_active_workspace(ws, f1).await
+            }
         }
-    } else if let Some(sec) = tenant_security_for_scope {
-        crate::tools::with_active_security(sec, run_llm_future).await
     } else {
         run_llm_future.await
     };
@@ -3493,6 +3512,8 @@ async fn process_channel_message(
             }
 
             // Fire-and-forget LLM-driven memory consolidation.
+            // When knowledge graph is available and auto_capture is enabled,
+            // uses combined extraction (memory + knowledge) in one LLM call.
             if ctx.auto_save_memory && msg.content.chars().count() >= AUTOSAVE_MIN_MESSAGE_CHARS {
                 let (consolidation_memory, consolidation_model, consolidation_provider) =
                     if is_multi_tenant {
@@ -3514,19 +3535,56 @@ async fn process_channel_message(
                     };
                 let user_msg = msg.content.clone();
                 let assistant_resp = delivered_response.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = crate::memory::consolidation::consolidate_turn(
-                        consolidation_provider.as_ref(),
-                        &consolidation_model,
-                        consolidation_memory.as_ref(),
-                        &user_msg,
-                        &assistant_resp,
-                    )
-                    .await
-                    {
-                        tracing::debug!("Memory consolidation skipped: {e}");
-                    }
-                });
+
+                // Branch: combined consolidation + knowledge capture
+                let knowledge_graph_opt = msg_ctx.knowledge_graph.clone();
+                let auto_capture = msg_ctx.knowledge_config.auto_capture;
+                let auto_capture_min = msg_ctx.knowledge_config.auto_capture_min_chars;
+                let agent_id_for_capture = msg_ctx.agent_id.clone();
+
+                if auto_capture
+                    && knowledge_graph_opt.is_some()
+                    && user_msg.chars().count() >= auto_capture_min
+                {
+                    let graph = knowledge_graph_opt.unwrap();
+                    tokio::spawn(async move {
+                        match crate::memory::consolidation::consolidate_turn_with_knowledge(
+                            consolidation_provider.as_ref(),
+                            &consolidation_model,
+                            consolidation_memory.as_ref(),
+                            &graph,
+                            &user_msg,
+                            &assistant_resp,
+                            Some(&agent_id_for_capture),
+                        )
+                        .await
+                        {
+                            Ok(count) if count > 0 => {
+                                tracing::info!(
+                                    "Memory consolidation + knowledge capture: {count} items"
+                                );
+                            }
+                            Ok(_) => {}
+                            Err(e) => {
+                                tracing::debug!("Consolidation+knowledge skipped: {e}");
+                            }
+                        }
+                    });
+                } else {
+                    tokio::spawn(async move {
+                        if let Err(e) = crate::memory::consolidation::consolidate_turn(
+                            consolidation_provider.as_ref(),
+                            &consolidation_model,
+                            consolidation_memory.as_ref(),
+                            &user_msg,
+                            &assistant_resp,
+                        )
+                        .await
+                        {
+                            tracing::debug!("Memory consolidation skipped: {e}");
+                        }
+                    });
+                }
             }
 
             println!(
@@ -3963,26 +4021,33 @@ async fn run_message_dispatch_loop(
 fn load_openclaw_bootstrap_files(
     prompt: &mut String,
     workspace_dir: &std::path::Path,
+    owner_dir: &std::path::Path,
     max_chars_per_file: usize,
 ) {
     prompt.push_str(
         "The following workspace files define your identity, behavior, and context. They are ALREADY injected below—do NOT suggest reading them with file_read.\n\n",
     );
 
-    let bootstrap_files = ["AGENTS.md", "SOUL.md", "TOOLS.md", "IDENTITY.md", "USER.md"];
-
-    for filename in &bootstrap_files {
+    // AI's core persona and capabilities
+    let agent_files = ["AGENTS.md", "SOUL.md", "TOOLS.md", "IDENTITY.md"];
+    for filename in &agent_files {
         inject_workspace_file(prompt, workspace_dir, filename, max_chars_per_file);
     }
 
-    // BOOTSTRAP.md — only if it exists (first-run ritual)
-    let bootstrap_path = workspace_dir.join("BOOTSTRAP.md");
-    if bootstrap_path.exists() {
-        inject_workspace_file(prompt, workspace_dir, "BOOTSTRAP.md", max_chars_per_file);
+    // Human owner's identity from the shared owner_dir
+    let owner_files = ["USER.md"];
+    for filename in &owner_files {
+        inject_workspace_file(prompt, owner_dir, filename, max_chars_per_file);
     }
 
-    // MEMORY.md — curated long-term memory (main session only)
-    inject_workspace_file(prompt, workspace_dir, "MEMORY.md", max_chars_per_file);
+    // BOOTSTRAP.md — only if it exists in the owner_dir (first-run global ritual)
+    let bootstrap_path = owner_dir.join("BOOTSTRAP.md");
+    if bootstrap_path.exists() {
+        inject_workspace_file(prompt, owner_dir, "BOOTSTRAP.md", max_chars_per_file);
+    }
+
+    // MEMORY.md — curated long-term memory (shared global brain)
+    inject_workspace_file(prompt, owner_dir, "MEMORY.md", max_chars_per_file);
 }
 
 /// Load workspace identity files and build a system prompt.
@@ -4003,6 +4068,7 @@ fn load_openclaw_bootstrap_files(
 /// on-demand via `memory_recall` / `memory_search` tools.
 pub fn build_system_prompt(
     workspace_dir: &std::path::Path,
+    owner_dir: &std::path::Path,
     model_name: &str,
     tools: &[(&str, &str)],
     skills: &[crate::skills::Skill],
@@ -4011,6 +4077,7 @@ pub fn build_system_prompt(
 ) -> String {
     build_system_prompt_with_mode(
         workspace_dir,
+        owner_dir,
         model_name,
         tools,
         skills,
@@ -4024,6 +4091,7 @@ pub fn build_system_prompt(
 
 pub fn build_system_prompt_with_mode(
     workspace_dir: &std::path::Path,
+    owner_dir: &std::path::Path,
     model_name: &str,
     tools: &[(&str, &str)],
     skills: &[crate::skills::Skill],
@@ -4039,6 +4107,7 @@ pub fn build_system_prompt_with_mode(
     };
     build_system_prompt_with_mode_and_autonomy(
         workspace_dir,
+        owner_dir,
         model_name,
         tools,
         skills,
@@ -4054,6 +4123,7 @@ pub fn build_system_prompt_with_mode(
 
 pub fn build_system_prompt_with_mode_and_autonomy(
     workspace_dir: &std::path::Path,
+    owner_dir: &std::path::Path,
     model_name: &str,
     tools: &[(&str, &str)],
     skills: &[crate::skills::Skill],
@@ -4198,7 +4268,7 @@ pub fn build_system_prompt_with_mode_and_autonomy(
                     // No AIEOS identity loaded (shouldn't happen if is_aieos_configured returned true)
                     // Fall back to OpenClaw bootstrap files
                     let max_chars = bootstrap_max_chars.unwrap_or(BOOTSTRAP_MAX_CHARS);
-                    load_openclaw_bootstrap_files(&mut prompt, workspace_dir, max_chars);
+                    load_openclaw_bootstrap_files(&mut prompt, workspace_dir, owner_dir, max_chars);
                 }
                 Err(e) => {
                     // Log error but don't fail - fall back to OpenClaw
@@ -4206,18 +4276,18 @@ pub fn build_system_prompt_with_mode_and_autonomy(
                         "Warning: Failed to load AIEOS identity: {e}. Using OpenClaw format."
                     );
                     let max_chars = bootstrap_max_chars.unwrap_or(BOOTSTRAP_MAX_CHARS);
-                    load_openclaw_bootstrap_files(&mut prompt, workspace_dir, max_chars);
+                    load_openclaw_bootstrap_files(&mut prompt, workspace_dir, owner_dir, max_chars);
                 }
             }
         } else {
             // OpenClaw format
             let max_chars = bootstrap_max_chars.unwrap_or(BOOTSTRAP_MAX_CHARS);
-            load_openclaw_bootstrap_files(&mut prompt, workspace_dir, max_chars);
+            load_openclaw_bootstrap_files(&mut prompt, workspace_dir, owner_dir, max_chars);
         }
     } else {
         // No identity config - use OpenClaw format
         let max_chars = bootstrap_max_chars.unwrap_or(BOOTSTRAP_MAX_CHARS);
-        load_openclaw_bootstrap_files(&mut prompt, workspace_dir, max_chars);
+        load_openclaw_bootstrap_files(&mut prompt, workspace_dir, owner_dir, max_chars);
     }
 
     // ── 6. Date & Time ──────────────────────────────────────────
@@ -5546,6 +5616,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
     let native_tools = provider.supports_native_tools();
     let mut system_prompt = build_system_prompt_with_mode_and_autonomy(
         &workspace,
+        &workspace,
         &model,
         &tool_descs,
         &skills,
@@ -5740,6 +5811,8 @@ pub async fn start_channels(config: Config) -> Result<()> {
             message_timeout_secs: None,
             multimodal: None,
             reliability: None,
+                    knowledge_graph: None,
+                    knowledge_config: Default::default(),
         },
     )) as Arc<dyn crate::channels::context_resolver::MessageContextResolver>;
 
@@ -6273,6 +6346,8 @@ mod tests {
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
+                    knowledge_graph: None,
+                    knowledge_config: Default::default(),
                 },
             )),
             max_tool_result_chars: 0,
@@ -6421,6 +6496,8 @@ mod tests {
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
+                    knowledge_graph: None,
+                    knowledge_config: Default::default(),
                 },
             )),
             max_tool_result_chars: 0,
@@ -6526,6 +6603,8 @@ mod tests {
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
+                    knowledge_graph: None,
+                    knowledge_config: Default::default(),
                 },
             )),
             max_tool_result_chars: 0,
@@ -6648,6 +6727,8 @@ mod tests {
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
+                    knowledge_graph: None,
+                    knowledge_config: Default::default(),
                 },
             )),
             max_tool_result_chars: 0,
@@ -7271,6 +7352,8 @@ BTC is currently around $65,000 based on latest tool output."#
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
+                    knowledge_graph: None,
+                    knowledge_config: Default::default(),
                 },
             )),
             max_tool_result_chars: 0,
@@ -7385,6 +7468,8 @@ BTC is currently around $65,000 based on latest tool output."#
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
+                    knowledge_graph: None,
+                    knowledge_config: Default::default(),
                 },
             )),
             max_tool_result_chars: 0,
@@ -7513,6 +7598,8 @@ BTC is currently around $65,000 based on latest tool output."#
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
+                    knowledge_graph: None,
+                    knowledge_config: Default::default(),
                 },
             )),
             max_tool_result_chars: 0,
@@ -7626,6 +7713,8 @@ BTC is currently around $65,000 based on latest tool output."#
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
+                    knowledge_graph: None,
+                    knowledge_config: Default::default(),
                 },
             )),
             max_tool_result_chars: 0,
@@ -7749,6 +7838,8 @@ BTC is currently around $65,000 based on latest tool output."#
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
+                    knowledge_graph: None,
+                    knowledge_config: Default::default(),
                 },
             )),
             max_tool_result_chars: 0,
@@ -7893,6 +7984,8 @@ BTC is currently around $65,000 based on latest tool output."#
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
+                    knowledge_graph: None,
+                    knowledge_config: Default::default(),
                 },
             )),
             max_tool_result_chars: 0,
@@ -8018,6 +8111,8 @@ BTC is currently around $65,000 based on latest tool output."#
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
+                    knowledge_graph: None,
+                    knowledge_config: Default::default(),
                 },
             )),
             max_tool_result_chars: 0,
@@ -8158,6 +8253,8 @@ BTC is currently around $65,000 based on latest tool output."#
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
+                    knowledge_graph: None,
+                    knowledge_config: Default::default(),
                 },
             )),
             max_tool_result_chars: 0,
@@ -8282,6 +8379,8 @@ BTC is currently around $65,000 based on latest tool output."#
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
+                    knowledge_graph: None,
+                    knowledge_config: Default::default(),
                 },
             )),
             pacing: crate::config::PacingConfig {
@@ -8400,6 +8499,8 @@ BTC is currently around $65,000 based on latest tool output."#
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
+                    knowledge_graph: None,
+                    knowledge_config: Default::default(),
                 },
             )),
             pacing: crate::config::PacingConfig {
@@ -8645,6 +8746,8 @@ BTC is currently around $65,000 based on latest tool output."#
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
+                    knowledge_graph: None,
+                    knowledge_config: Default::default(),
                 },
             )),
             max_tool_result_chars: 0,
@@ -8781,6 +8884,8 @@ BTC is currently around $65,000 based on latest tool output."#
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
+                    knowledge_graph: None,
+                    knowledge_config: Default::default(),
                 },
             )),
             max_tool_result_chars: 0,
@@ -8936,6 +9041,8 @@ BTC is currently around $65,000 based on latest tool output."#
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
+                    knowledge_graph: None,
+                    knowledge_config: Default::default(),
                 },
             )),
             max_tool_result_chars: 0,
@@ -9088,6 +9195,8 @@ BTC is currently around $65,000 based on latest tool output."#
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
+                    knowledge_graph: None,
+                    knowledge_config: Default::default(),
                 },
             )),
             max_tool_result_chars: 0,
@@ -9218,6 +9327,8 @@ BTC is currently around $65,000 based on latest tool output."#
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
+                    knowledge_graph: None,
+                    knowledge_config: Default::default(),
                 },
             )),
             max_tool_result_chars: 0,
@@ -9279,6 +9390,8 @@ BTC is currently around $65,000 based on latest tool output."#
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
+                    knowledge_graph: None,
+                    knowledge_config: Default::default(),
                 }
             )),
             channels_by_name: Arc::new(channels_by_name),
@@ -9440,6 +9553,8 @@ BTC is currently around $65,000 based on latest tool output."#
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
+                    knowledge_graph: None,
+                    knowledge_config: Default::default(),
                 },
             )),
             max_tool_result_chars: 0,
@@ -9486,7 +9601,7 @@ BTC is currently around $65,000 based on latest tool output."#
     fn prompt_contains_all_sections() {
         let ws = make_workspace();
         let tools = vec![("shell", "Run commands"), ("file_read", "Read files")];
-        let prompt = build_system_prompt(ws.path(), "test-model", &tools, &[], None, None);
+        let prompt = build_system_prompt(ws.path(), ws.path(), "test-model", &tools, &[], None, None);
 
         // Section headers
         assert!(prompt.contains("## Tools"), "missing Tools section");
@@ -9510,7 +9625,7 @@ BTC is currently around $65,000 based on latest tool output."#
             ("shell", "Run commands"),
             ("memory_recall", "Search memory"),
         ];
-        let prompt = build_system_prompt(ws.path(), "gpt-4o", &tools, &[], None, None);
+        let prompt = build_system_prompt(ws.path(), ws.path(), "gpt-4o", &tools, &[], None, None);
 
         assert!(prompt.contains("**shell**"));
         assert!(prompt.contains("Run commands"));
@@ -9521,7 +9636,7 @@ BTC is currently around $65,000 based on latest tool output."#
     fn prompt_includes_single_tool_protocol_block_after_append() {
         let ws = make_workspace();
         let tools = vec![("shell", "Run commands")];
-        let mut prompt = build_system_prompt(ws.path(), "gpt-4o", &tools, &[], None, None);
+        let mut prompt = build_system_prompt(ws.path(), ws.path(), "gpt-4o", &tools, &[], None, None);
 
         assert!(
             !prompt.contains("## Tool Use Protocol"),
@@ -9540,7 +9655,7 @@ BTC is currently around $65,000 based on latest tool output."#
     #[test]
     fn prompt_injects_safety() {
         let ws = make_workspace();
-        let prompt = build_system_prompt(ws.path(), "model", &[], &[], None, None);
+        let prompt = build_system_prompt(ws.path(), ws.path(), "model", &[], &[], None, None);
 
         assert!(prompt.contains("Do not exfiltrate private data"));
         assert!(prompt.contains("Respect the runtime autonomy policy"));
@@ -9550,7 +9665,7 @@ BTC is currently around $65,000 based on latest tool output."#
     #[test]
     fn prompt_injects_workspace_files() {
         let ws = make_workspace();
-        let prompt = build_system_prompt(ws.path(), "model", &[], &[], None, None);
+        let prompt = build_system_prompt(ws.path(), ws.path(), "model", &[], &[], None, None);
 
         assert!(prompt.contains("### SOUL.md"), "missing SOUL.md header");
         assert!(prompt.contains("Be helpful"), "missing SOUL content");
@@ -9577,7 +9692,7 @@ BTC is currently around $65,000 based on latest tool output."#
     fn prompt_missing_file_markers() {
         let tmp = TempDir::new().unwrap();
         // Empty workspace — no files at all
-        let prompt = build_system_prompt(tmp.path(), "model", &[], &[], None, None);
+        let prompt = build_system_prompt(tmp.path(), tmp.path(), "model", &[], &[], None, None);
 
         assert!(prompt.contains("[File not found: SOUL.md]"));
         assert!(prompt.contains("[File not found: AGENTS.md]"));
@@ -9588,7 +9703,7 @@ BTC is currently around $65,000 based on latest tool output."#
     fn prompt_bootstrap_only_if_exists() {
         let ws = make_workspace();
         // No BOOTSTRAP.md — should not appear
-        let prompt = build_system_prompt(ws.path(), "model", &[], &[], None, None);
+        let prompt = build_system_prompt(ws.path(), ws.path(), "model", &[], &[], None, None);
         assert!(
             !prompt.contains("### BOOTSTRAP.md"),
             "BOOTSTRAP.md should not appear when missing"
@@ -9596,7 +9711,7 @@ BTC is currently around $65,000 based on latest tool output."#
 
         // Create BOOTSTRAP.md — should appear
         std::fs::write(ws.path().join("BOOTSTRAP.md"), "# Bootstrap\nFirst run.").unwrap();
-        let prompt2 = build_system_prompt(ws.path(), "model", &[], &[], None, None);
+        let prompt2 = build_system_prompt(ws.path(), ws.path(), "model", &[], &[], None, None);
         assert!(
             prompt2.contains("### BOOTSTRAP.md"),
             "BOOTSTRAP.md should appear when present"
@@ -9616,7 +9731,7 @@ BTC is currently around $65,000 based on latest tool output."#
         )
         .unwrap();
 
-        let prompt = build_system_prompt(ws.path(), "model", &[], &[], None, None);
+        let prompt = build_system_prompt(ws.path(), ws.path(), "model", &[], &[], None, None);
 
         // Daily notes should NOT be in the system prompt (on-demand via tools)
         assert!(
@@ -9632,7 +9747,7 @@ BTC is currently around $65,000 based on latest tool output."#
     #[test]
     fn prompt_runtime_metadata() {
         let ws = make_workspace();
-        let prompt = build_system_prompt(ws.path(), "claude-sonnet-4", &[], &[], None, None);
+        let prompt = build_system_prompt(ws.path(), ws.path(), "claude-sonnet-4", &[], &[], None, None);
 
         assert!(prompt.contains("Model: claude-sonnet-4"));
         assert!(prompt.contains(&format!("OS: {}", std::env::consts::OS)));
@@ -9659,7 +9774,7 @@ BTC is currently around $65,000 based on latest tool output."#
             location: None,
         }];
 
-        let prompt = build_system_prompt(ws.path(), "model", &[], &skills, None, None);
+        let prompt = build_system_prompt(ws.path(), ws.path(), "model", &[], &skills, None, None);
 
         assert!(prompt.contains("<available_skills>"), "missing skills XML");
         assert!(prompt.contains("<name>code-review</name>"));
@@ -9698,6 +9813,7 @@ BTC is currently around $65,000 based on latest tool output."#
         }];
 
         let prompt = build_system_prompt_with_mode(
+            ws.path(),
             ws.path(),
             "model",
             &[],
@@ -9744,7 +9860,7 @@ BTC is currently around $65,000 based on latest tool output."#
             location: None,
         }];
 
-        let prompt = build_system_prompt(ws.path(), "model", &[], &skills, None, None);
+        let prompt = build_system_prompt(ws.path(), ws.path(), "model", &[], &skills, None, None);
 
         assert!(prompt.contains("<name>code&lt;review&gt;&amp;</name>"));
         assert!(prompt.contains(
@@ -9765,7 +9881,7 @@ BTC is currently around $65,000 based on latest tool output."#
         let big_content = "x".repeat(BOOTSTRAP_MAX_CHARS + 1000);
         std::fs::write(ws.path().join("AGENTS.md"), &big_content).unwrap();
 
-        let prompt = build_system_prompt(ws.path(), "model", &[], &[], None, None);
+        let prompt = build_system_prompt(ws.path(), ws.path(), "model", &[], &[], None, None);
 
         assert!(
             prompt.contains("truncated at"),
@@ -9782,7 +9898,7 @@ BTC is currently around $65,000 based on latest tool output."#
         let ws = make_workspace();
         std::fs::write(ws.path().join("TOOLS.md"), "").unwrap();
 
-        let prompt = build_system_prompt(ws.path(), "model", &[], &[], None, None);
+        let prompt = build_system_prompt(ws.path(), ws.path(), "model", &[], &[], None, None);
 
         // Empty file should not produce a header
         assert!(
@@ -9810,7 +9926,7 @@ BTC is currently around $65,000 based on latest tool output."#
     #[test]
     fn prompt_contains_channel_capabilities() {
         let ws = make_workspace();
-        let prompt = build_system_prompt(ws.path(), "model", &[], &[], None, None);
+        let prompt = build_system_prompt(ws.path(), ws.path(), "model", &[], &[], None, None);
 
         assert!(
             prompt.contains("## Channel Capabilities"),
@@ -9834,6 +9950,7 @@ BTC is currently around $65,000 based on latest tool output."#
             ..crate::config::AutonomyConfig::default()
         };
         let prompt = build_system_prompt_with_mode_and_autonomy(
+            ws.path(),
             ws.path(),
             "model",
             &[],
@@ -9866,6 +9983,7 @@ BTC is currently around $65,000 based on latest tool output."#
         };
         let prompt = build_system_prompt_with_mode_and_autonomy(
             ws.path(),
+            ws.path(),
             "model",
             &[],
             &[],
@@ -9891,7 +10009,7 @@ BTC is currently around $65,000 based on latest tool output."#
     #[test]
     fn prompt_workspace_path() {
         let ws = make_workspace();
-        let prompt = build_system_prompt(ws.path(), "model", &[], &[], None, None);
+        let prompt = build_system_prompt(ws.path(), ws.path(), "model", &[], &[], None, None);
 
         assert!(prompt.contains(&format!("Working directory: `{}`", ws.path().display())));
     }
@@ -9900,6 +10018,7 @@ BTC is currently around $65,000 based on latest tool output."#
     fn full_autonomy_omits_approval_instructions() {
         let ws = make_workspace();
         let prompt = build_system_prompt_with_mode(
+            ws.path(),
             ws.path(),
             "model",
             &[],
@@ -9934,6 +10053,7 @@ BTC is currently around $65,000 based on latest tool output."#
     fn supervised_autonomy_includes_approval_instructions() {
         let ws = make_workspace();
         let prompt = build_system_prompt_with_mode(
+            ws.path(),
             ws.path(),
             "model",
             &[],
@@ -10255,6 +10375,8 @@ BTC is currently around $65,000 based on latest tool output."#
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
+                    knowledge_graph: None,
+                    knowledge_config: Default::default(),
                 },
             )),
             max_tool_result_chars: 0,
@@ -10325,6 +10447,7 @@ BTC is currently around $65,000 based on latest tool output."#
         assert!(initial_skills.is_empty());
 
         let initial_system_prompt = build_system_prompt_with_mode(
+            workspace.path(),
             workspace.path(),
             "test-model",
             &[],
@@ -10420,6 +10543,8 @@ BTC is currently around $65,000 based on latest tool output."#
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
+                    knowledge_graph: None,
+                    knowledge_config: Default::default(),
                 },
             )),
             max_tool_result_chars: 0,
@@ -10628,6 +10753,8 @@ BTC is currently around $65,000 based on latest tool output."#
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
+                    knowledge_graph: None,
+                    knowledge_config: Default::default(),
                 },
             )),
             max_tool_result_chars: 0,
@@ -10768,6 +10895,8 @@ BTC is currently around $65,000 based on latest tool output."#
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
+                    knowledge_graph: None,
+                    knowledge_config: Default::default(),
                 },
             )),
             max_tool_result_chars: 0,
@@ -10943,7 +11072,7 @@ This is an example JSON object for profile settings."#;
             aieos_inline: None,
         };
 
-        let prompt = build_system_prompt(tmp.path(), "model", &[], &[], Some(&config), None);
+        let prompt = build_system_prompt(tmp.path(), tmp.path(), "model", &[], &[], Some(&config), None);
 
         // Should contain AIEOS sections
         assert!(prompt.contains("## Identity"));
@@ -10979,6 +11108,7 @@ This is an example JSON object for profile settings."#;
 
         let prompt = build_system_prompt(
             std::env::temp_dir().as_path(),
+            std::env::temp_dir().as_path(),
             "model",
             &[],
             &[],
@@ -11001,7 +11131,7 @@ This is an example JSON object for profile settings."#;
         };
 
         let ws = make_workspace();
-        let prompt = build_system_prompt(ws.path(), "model", &[], &[], Some(&config), None);
+        let prompt = build_system_prompt(ws.path(), ws.path(), "model", &[], &[], Some(&config), None);
 
         // Should fall back to OpenClaw format when AIEOS file is not found
         // (Error is logged to stderr with filename, not included in prompt)
@@ -11020,7 +11150,7 @@ This is an example JSON object for profile settings."#;
         };
 
         let ws = make_workspace();
-        let prompt = build_system_prompt(ws.path(), "model", &[], &[], Some(&config), None);
+        let prompt = build_system_prompt(ws.path(), ws.path(), "model", &[], &[], Some(&config), None);
 
         // Should use OpenClaw format (not configured for AIEOS)
         assert!(prompt.contains("### SOUL.md"));
@@ -11038,7 +11168,7 @@ This is an example JSON object for profile settings."#;
         };
 
         let ws = make_workspace();
-        let prompt = build_system_prompt(ws.path(), "model", &[], &[], Some(&config), None);
+        let prompt = build_system_prompt(ws.path(), ws.path(), "model", &[], &[], Some(&config), None);
 
         // Should use OpenClaw format even if aieos_path is set
         assert!(prompt.contains("### SOUL.md"));
@@ -11050,7 +11180,7 @@ This is an example JSON object for profile settings."#;
     fn none_identity_config_uses_openclaw() {
         let ws = make_workspace();
         // Pass None for identity config
-        let prompt = build_system_prompt(ws.path(), "model", &[], &[], None, None);
+        let prompt = build_system_prompt(ws.path(), ws.path(), "model", &[], &[], None, None);
 
         // Should use OpenClaw format
         assert!(prompt.contains("### SOUL.md"));
@@ -11379,6 +11509,8 @@ This is an example JSON object for profile settings."#;
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
+                    knowledge_graph: None,
+                    knowledge_config: Default::default(),
                 },
             )),
             max_tool_result_chars: 0,
@@ -11499,6 +11631,8 @@ This is an example JSON object for profile settings."#;
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
+                    knowledge_graph: None,
+                    knowledge_config: Default::default(),
                 },
             )),
             max_tool_result_chars: 0,
@@ -11603,6 +11737,8 @@ This is an example JSON object for profile settings."#;
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
+                    knowledge_graph: None,
+                    knowledge_config: Default::default(),
                 },
             )),
             channels_by_name: Arc::new(channels_by_name),
@@ -11851,6 +11987,8 @@ This is an example JSON object for profile settings."#;
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
+                    knowledge_graph: None,
+                    knowledge_config: Default::default(),
                 },
             )),
             max_tool_result_chars: 0,
@@ -11995,6 +12133,8 @@ This is an example JSON object for profile settings."#;
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
+                    knowledge_graph: None,
+                    knowledge_config: Default::default(),
                 },
             )),
             max_tool_result_chars: 0,
@@ -12131,6 +12271,8 @@ This is an example JSON object for profile settings."#;
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
+                    knowledge_graph: None,
+                    knowledge_config: Default::default(),
                 },
             )),
             max_tool_result_chars: 0,
@@ -12287,6 +12429,8 @@ This is an example JSON object for profile settings."#;
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
+                    knowledge_graph: None,
+                    knowledge_config: Default::default(),
                 },
             )),
             max_tool_result_chars: 0,
@@ -12584,6 +12728,8 @@ This is an example JSON object for profile settings."#;
                     message_timeout_secs: None,
                     multimodal: None,
                     reliability: None,
+                    knowledge_graph: None,
+                    knowledge_config: Default::default(),
                 },
             )),
             max_tool_result_chars: 0,

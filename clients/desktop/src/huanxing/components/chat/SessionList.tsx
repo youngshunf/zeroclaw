@@ -19,6 +19,7 @@ import {
   Monitor,
 } from 'lucide-react';
 import { resolveApiUrl } from '../../config';
+import { Input } from '../../../components/ui/Input';
 import {
   listSessions,
   createSession,
@@ -104,7 +105,12 @@ export default function SessionList({
     }
   }, []);
 
-  useEffect(() => { loadSessions(); }, [loadSessions, reloadKey]);
+  useEffect(() => {
+    // 只有当 agents 已经被加载（或至少 reloadKey 更新）时才拉取
+    if (agents && agents.length > 0) {
+      loadSessions();
+    }
+  }, [loadSessions, reloadKey, agents]);
   useEffect(() => {
     if (editingId && editInputRef.current) {
       editInputRef.current.focus();
@@ -389,7 +395,7 @@ export default function SessionList({
 
                       {isEditing ? (
                         <div className="flex-1 flex items-center gap-1 min-w-0">
-                          <input
+                          <Input
                             ref={editInputRef}
                             value={editTitle}
                             onChange={(e) => setEditTitle(e.target.value)}
@@ -397,7 +403,8 @@ export default function SessionList({
                               if (e.key === 'Enter') handleSaveRename();
                               if (e.key === 'Escape') setEditingId(null);
                             }}
-                            className="flex-1 min-w-0 border border-hx-purple rounded-md px-2 py-1 text-[13px] bg-hx-bg-main text-hx-text-primary outline-none"
+                            className="flex-1 px-2 py-1 !h-auto border-hx-purple"
+                            autoFocus
                           />
                           <button onClick={handleSaveRename} className="text-hx-green p-0.5 bg-transparent border-none cursor-pointer">
                             <Check className="w-3.5 h-3.5" />

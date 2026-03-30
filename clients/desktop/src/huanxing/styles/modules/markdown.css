@@ -1,0 +1,339 @@
+/* ===== Markdown Rendering Style (react-markdown) ===== */
+.hx-markdown {
+  font-size: 1rem;
+  line-height: 1.8;
+  color: var(--hx-text-primary);
+  word-break: break-word;
+  overflow-wrap: break-word;
+}
+
+/* Headings */
+.hx-markdown h1 {
+  font-size: 1.75em;
+  font-weight: 700;
+  margin-top: 2em;
+  margin-bottom: 0.75em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--hx-border);
+  letter-spacing: -0.02em;
+}
+
+.hx-markdown h2 {
+  font-size: 1.4em;
+  font-weight: 700;
+  margin-top: 1.8em;
+  margin-bottom: 0.6em;
+  padding-bottom: 0.25em;
+  border-bottom: 1px solid var(--hx-border);
+  letter-spacing: -0.01em;
+}
+
+.hx-markdown h3 {
+  font-size: 1.2em;
+  font-weight: 600;
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+}
+
+.hx-markdown h4, .hx-markdown h5, .hx-markdown h6 {
+  font-size: 1.05em;
+  font-weight: 600;
+  margin-top: 1.3em;
+  margin-bottom: 0.4em;
+}
+
+.hx-markdown h1:first-child,
+.hx-markdown h2:first-child,
+.hx-markdown h3:first-child {
+  margin-top: 0;
+}
+
+/* Paragraphs */
+.hx-markdown p {
+  margin-top: 0;
+  margin-bottom: 1em;
+}
+
+/* Links */
+.hx-markdown a {
+  color: var(--hx-purple);
+  text-decoration: none;
+  font-weight: 500;
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.2s;
+}
+
+.hx-markdown a:hover {
+  border-bottom-color: var(--hx-purple);
+}
+
+/* Bold & Italic */
+.hx-markdown strong {
+  font-weight: 700;
+  color: var(--hx-text-primary);
+}
+
+.hx-markdown em {
+  font-style: italic;
+}
+
+/* Inline Code */
+.hx-markdown code:not(pre code) {
+  padding: 0.15em 0.4em;
+  font-size: 0.88em;
+  border-radius: 6px;
+  font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', Menlo, monospace;
+  background-color: var(--hx-bg-hover);
+  color: var(--hx-purple);
+}
+
+/* Code Block */
+.hx-code-block {
+  margin: 1.2em 0;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--hx-border);
+}
+
+.hx-code-block pre {
+  margin: 0;
+  padding: 1em 1.2em;
+  overflow-x: auto;
+  font-size: 0.875em;
+  line-height: 1.65;
+  font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', Menlo, monospace;
+}
+
+/* Blockquote */
+.hx-markdown blockquote {
+  margin: 1.2em 0;
+  padding: 0.6em 1.2em;
+  border-left: 4px solid var(--hx-purple);
+  background-color: var(--hx-purple-bg);
+  border-radius: 0 8px 8px 0;
+  color: var(--hx-text-secondary);
+}
+
+.hx-markdown blockquote p:last-child {
+  margin-bottom: 0;
+}
+
+/* Lists */
+.hx-markdown ul {
+  margin: 0.8em 0;
+  padding-left: 1.8em;
+  list-style-type: disc;
+}
+
+.hx-markdown ol {
+  margin: 0.8em 0;
+  padding-left: 1.8em;
+  list-style-type: decimal;
+}
+
+.hx-markdown li {
+  margin-bottom: 0.3em;
+}
+
+.hx-markdown li > ul,
+.hx-markdown li > ol {
+  margin-top: 0.3em;
+  margin-bottom: 0.3em;
+}
+
+/* Checkbox Lists */
+.hx-markdown li input[type="checkbox"] {
+  margin-right: 0.5em;
+  accent-color: var(--hx-purple);
+}
+
+/* HR */
+.hx-markdown hr {
+  margin: 2em 0;
+  border: none;
+  height: 1px;
+  background: linear-gradient(to right, transparent, var(--hx-border), transparent);
+}
+
+/* Tables */
+.hx-table-wrap {
+  margin: 1.2em 0;
+  overflow-x: auto;
+  border-radius: 10px;
+  border: 1px solid var(--hx-border);
+}
+
+.hx-markdown table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92em;
+}
+
+.hx-markdown thead th {
+  padding: 0.65em 1em;
+  font-weight: 600;
+  text-align: left;
+  background-color: var(--hx-bg-panel);
+  border-bottom: 2px solid var(--hx-border);
+  white-space: nowrap;
+}
+
+.hx-markdown tbody td {
+  padding: 0.6em 1em;
+  border-bottom: 1px solid var(--hx-border);
+}
+
+.hx-markdown tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.hx-markdown tbody tr:hover {
+  background-color: var(--hx-bg-hover);
+}
+
+
+/* ===== Tiptap Editor Style ===== */
+.hx-tiptap-editor {
+  outline: none;
+  font-size: 1rem;
+  line-height: 1.8;
+  color: var(--hx-text-primary);
+  min-height: 300px;
+}
+
+/* 消除所有 Focus 蓝框 */
+.hx-tiptap-editor:focus,
+.hx-tiptap-editor:focus-visible,
+.ProseMirror:focus,
+.ProseMirror:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+.hx-tiptap-editor > *:first-child {
+  margin-top: 0;
+}
+
+/* Headings */
+.hx-tiptap-editor h1 {
+  font-size: 1.75em;
+  font-weight: 700;
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+  line-height: 1.3;
+}
+
+.hx-tiptap-editor h2 {
+  font-size: 1.4em;
+  font-weight: 700;
+  margin-top: 1.3em;
+  margin-bottom: 0.4em;
+  line-height: 1.3;
+  padding-bottom: 0.2em;
+  border-bottom: 1px solid var(--hx-border);
+}
+
+.hx-tiptap-editor h3 {
+  font-size: 1.2em;
+  font-weight: 600;
+  margin-top: 1.2em;
+  margin-bottom: 0.3em;
+}
+
+/* Paragraphs */
+.hx-tiptap-editor p {
+  margin-bottom: 0.8em;
+}
+
+/* Inline Code */
+.hx-tiptap-editor code {
+  padding: 0.15em 0.4em;
+  font-size: 0.88em;
+  border-radius: 6px;
+  font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', Menlo, monospace;
+  background-color: var(--hx-bg-hover);
+  color: var(--hx-purple);
+}
+
+/* Code Block */
+.hx-tiptap-editor pre {
+  margin: 1em 0;
+  padding: 1em;
+  border-radius: 10px;
+  overflow-x: auto;
+  font-size: 0.875em;
+  line-height: 1.6;
+  font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', Menlo, monospace;
+  background-color: var(--hx-bg-panel);
+  border: 1px solid var(--hx-border);
+}
+
+.hx-tiptap-editor pre code {
+  padding: 0;
+  background: none;
+  color: inherit;
+  font-size: inherit;
+  border-radius: 0;
+}
+
+/* Blockquote */
+.hx-tiptap-editor blockquote {
+  margin: 1em 0;
+  padding: 0.5em 1em;
+  border-left: 4px solid var(--hx-purple);
+  background: var(--hx-purple-bg);
+  border-radius: 0 8px 8px 0;
+  color: var(--hx-text-secondary);
+}
+
+/* Lists */
+.hx-tiptap-editor ul {
+  list-style-type: disc;
+  padding-left: 1.5em;
+  margin: 0.5em 0;
+}
+
+.hx-tiptap-editor ol {
+  list-style-type: decimal;
+  padding-left: 1.5em;
+  margin: 0.5em 0;
+}
+
+.hx-tiptap-editor li {
+  margin-bottom: 0.2em;
+}
+
+/* HR */
+.hx-tiptap-editor hr {
+  margin: 1.5em 0;
+  border: none;
+  height: 1px;
+  background: linear-gradient(to right, transparent, var(--hx-border), transparent);
+}
+
+/* Tables */
+.hx-tiptap-editor table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1em 0;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--hx-border);
+}
+
+.hx-tiptap-editor th {
+  padding: 0.5em 0.8em;
+  font-weight: 600;
+  text-align: left;
+  background: var(--hx-bg-panel);
+  border-bottom: 2px solid var(--hx-border);
+}
+
+.hx-tiptap-editor td {
+  padding: 0.5em 0.8em;
+  border-bottom: 1px solid var(--hx-border-light);
+}
+
+.hx-tiptap-editor tr:last-child td {
+  border-bottom: none;
+}

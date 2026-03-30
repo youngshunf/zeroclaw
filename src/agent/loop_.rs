@@ -3989,6 +3989,7 @@ pub async fn run(
     let native_tools = provider.supports_native_tools();
     let mut system_prompt = crate::channels::build_system_prompt_with_mode_and_autonomy(
         &config.workspace_dir,
+        &config.workspace_dir,
         &model_name,
         &tool_descs,
         &skills,
@@ -4861,6 +4862,7 @@ pub async fn process_message(
     };
     let native_tools = provider.supports_native_tools();
     let mut system_prompt = crate::channels::build_system_prompt_with_mode_and_autonomy(
+        &config.workspace_dir,
         &config.workspace_dir,
         &model_name,
         &tool_descs,
@@ -8978,6 +8980,7 @@ Let me check the result."#;
         ];
 
         let system_prompt = build_system_prompt_with_mode(
+            std::path::Path::new("/tmp"),
             std::path::Path::new("/tmp"),
             "test-model",
             &tool_summaries,

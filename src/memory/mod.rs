@@ -9,6 +9,8 @@ pub mod embeddings;
 pub mod hygiene;
 pub mod importance;
 pub mod knowledge_graph;
+pub mod knowledge_capture;
+pub mod knowledge_suggest;
 pub mod lucid;
 pub mod markdown;
 pub mod namespaced;

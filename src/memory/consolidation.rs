@@ -4,12 +4,15 @@
 //! - `history_entry`: A timestamped summary for the daily conversation log.
 //! - `memory_update`: New facts, preferences, or decisions worth remembering
 //!   long-term (or `null` if nothing new was learned).
+//! - `knowledge_items`: Domain knowledge (patterns, decisions, lessons) to
+//!   capture in the knowledge graph (when `auto_capture` is enabled).
 //!
 //! This two-phase approach replaces the naive raw-message auto-save with
 //! semantic extraction, similar to Nanobot's `save_memory` tool call pattern.
 
 use crate::memory::conflict;
 use crate::memory::importance;
+use crate::memory::knowledge_graph::{KnowledgeGraph, NodeType};
 use crate::memory::traits::{Memory, MemoryCategory};
 use crate::providers::traits::Provider;
 
@@ -26,7 +29,34 @@ pub struct ConsolidationResult {
     /// Observed trend or pattern (when consolidation_extract_facts is enabled).
     #[serde(default)]
     pub trend: Option<String>,
+    /// Domain knowledge items extracted when auto_capture is enabled.
+    #[serde(default)]
+    pub knowledge_items: Vec<KnowledgeItem>,
 }
+
+/// A knowledge item extracted from the conversation turn.
+#[derive(Debug, serde::Deserialize)]
+pub struct KnowledgeItem {
+    /// One of: pattern, decision, lesson, technology
+    pub node_type: String,
+    /// Concise title (under 80 chars)
+    pub title: String,
+    /// Detailed explanation (2-4 sentences)
+    pub content: String,
+    /// Relevant keywords
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// 0.0-1.0 confidence score
+    #[serde(default = "default_confidence")]
+    pub confidence: f64,
+}
+
+fn default_confidence() -> f64 {
+    0.5
+}
+
+/// Minimum confidence threshold for auto-captured knowledge.
+const MIN_KNOWLEDGE_CONFIDENCE: f64 = 0.6;
 
 const CONSOLIDATION_SYSTEM_PROMPT: &str = r#"You are a memory consolidation engine. Given a conversation turn, extract:
 1. "history_entry": A brief summary of what happened in this turn (1-2 sentences). Include the key topic or action.
@@ -34,6 +64,32 @@ const CONSOLIDATION_SYSTEM_PROMPT: &str = r#"You are a memory consolidation engi
 
 Respond ONLY with valid JSON: {"history_entry": "...", "memory_update": "..." or null}
 Do not include any text outside the JSON object."#;
+
+/// Combined prompt that extracts both memory and knowledge in one LLM call.
+const CONSOLIDATION_WITH_KNOWLEDGE_PROMPT: &str = r#"You are a memory AND knowledge extraction engine. Given a conversation turn, extract TWO categories of information:
+
+## Memory (personal)
+1. "history_entry": A brief summary of what happened in this turn (1-2 sentences).
+2. "memory_update": Any NEW facts, preferences, decisions, or commitments about the USER worth remembering long-term. Return null if nothing new was learned.
+
+## Knowledge (domain)
+3. "knowledge_items": An array of 0-3 domain knowledge items worth capturing for reuse. These are NOT about the user — they are about:
+   - Technical patterns and architecture decisions
+   - Problem-solving approaches and methodologies
+   - Lessons learned from debugging or design choices
+   - Technology evaluations and trade-offs
+
+For each knowledge item, provide:
+- "node_type": one of "pattern", "decision", "lesson", "technology"
+- "title": concise title (under 80 chars)
+- "content": detailed explanation (2-4 sentences)
+- "tags": relevant keywords (1-5 tags)
+- "confidence": 0.0-1.0 (how valuable and reusable this knowledge is)
+
+Respond ONLY with valid JSON:
+{"history_entry": "...", "memory_update": "..." or null, "knowledge_items": [...] or []}
+Do not include any text outside the JSON object.
+Respond in the same language as the conversation."#;
 
 /// Run two-phase LLM-driven consolidation on a conversation turn.
 ///
@@ -135,6 +191,141 @@ pub async fn consolidate_turn(
     Ok(())
 }
 
+/// Run consolidated memory + knowledge extraction in a single LLM call.
+///
+/// When `auto_capture` is enabled, this replaces the basic `consolidate_turn`
+/// with a combined prompt that extracts both memory updates AND domain knowledge
+/// in one round-trip, saving tokens and latency.
+///
+/// Knowledge items meeting the confidence threshold are stored in the graph.
+pub async fn consolidate_turn_with_knowledge(
+    provider: &dyn Provider,
+    model: &str,
+    memory: &dyn Memory,
+    graph: &KnowledgeGraph,
+    user_message: &str,
+    assistant_response: &str,
+    source_agent: Option<&str>,
+) -> anyhow::Result<usize> {
+    let turn_text = format!(
+        "User: {}\nAssistant: {}",
+        strip_media_markers(user_message),
+        strip_media_markers(assistant_response),
+    );
+
+    let truncated = if turn_text.len() > 4000 {
+        let end = turn_text
+            .char_indices()
+            .map(|(i, _)| i)
+            .take_while(|&i| i <= 4000)
+            .last()
+            .unwrap_or(0);
+        format!("{}…", &turn_text[..end])
+    } else {
+        turn_text.clone()
+    };
+
+    let raw = provider
+        .chat_with_system(
+            Some(CONSOLIDATION_WITH_KNOWLEDGE_PROMPT),
+            &truncated,
+            model,
+            0.1,
+        )
+        .await?;
+
+    let result: ConsolidationResult = parse_consolidation_response(&raw, &turn_text);
+
+    // Phase 1+2: Standard memory consolidation (history + core updates)
+    let date = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let history_key = format!("daily_{date}_{}", uuid::Uuid::new_v4());
+    memory
+        .store(
+            &history_key,
+            &result.history_entry,
+            MemoryCategory::Daily,
+            None,
+        )
+        .await?;
+
+    if let Some(ref update) = result.memory_update {
+        if !update.trim().is_empty() {
+            let mem_key = format!("core_{}", uuid::Uuid::new_v4());
+            let imp = importance::compute_importance(update, &MemoryCategory::Core);
+            if let Err(e) = conflict::check_and_resolve_conflicts(
+                memory,
+                &mem_key,
+                update,
+                &MemoryCategory::Core,
+                0.85,
+            )
+            .await
+            {
+                tracing::debug!("conflict check skipped: {e}");
+            }
+            memory
+                .store_with_metadata(
+                    &mem_key,
+                    update,
+                    MemoryCategory::Core,
+                    None,
+                    None,
+                    Some(imp),
+                )
+                .await?;
+        }
+    }
+
+    // Phase 3: Knowledge capture — store extracted items in the graph
+    let mut knowledge_count = 0;
+    for item in &result.knowledge_items {
+        if item.confidence < MIN_KNOWLEDGE_CONFIDENCE {
+            continue;
+        }
+
+        let node_type = NodeType::parse(&item.node_type).unwrap_or(NodeType::Lesson);
+
+        // Dedup: check if a similar title already exists
+        if let Ok(existing) = graph.query_by_similarity(&item.title, 1) {
+            if let Some(first) = existing.first() {
+                let a = first.node.title.to_lowercase();
+                let b = item.title.to_lowercase();
+                if a == b || a.contains(&b) || b.contains(&a) {
+                    tracing::debug!(
+                        existing = %first.node.title,
+                        new = %item.title,
+                        "Knowledge capture: skipping duplicate title"
+                    );
+                    continue;
+                }
+            }
+        }
+
+        match graph.add_node(
+            node_type,
+            &item.title,
+            &item.content,
+            &item.tags,
+            source_agent,
+        ) {
+            Ok(id) => {
+                tracing::info!(
+                    node_id = %id,
+                    title = %item.title,
+                    confidence = item.confidence,
+                    "Auto-captured knowledge node"
+                );
+                knowledge_count += 1;
+            }
+            Err(e) => {
+                tracing::debug!("Failed to store knowledge node: {e}");
+            }
+        }
+    }
+
+    Ok(knowledge_count)
+}
+
 /// Parse the LLM's consolidation response, with fallback for malformed JSON.
 fn parse_consolidation_response(raw: &str, fallback_text: &str) -> ConsolidationResult {
     // Try to extract JSON from the response (LLM may wrap in markdown code blocks).
@@ -164,6 +355,7 @@ fn parse_consolidation_response(raw: &str, fallback_text: &str) -> Consolidation
             memory_update: None,
             facts: Vec::new(),
             trend: None,
+            knowledge_items: Vec::new(),
         }
     })
 }

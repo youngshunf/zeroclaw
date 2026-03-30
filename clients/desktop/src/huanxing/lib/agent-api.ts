@@ -39,10 +39,16 @@ export interface CreateAgentParams {
 /** List all agents */
 export async function listAgents(): Promise<AgentListResponse> {
   const data = await apiFetch<AgentListResponse>('/api/agents');
-  data.agents = data.agents.map(a => ({
-    ...a,
-    icon_url: a.icon_url && !a.icon_url.startsWith('http') ? `${HUANXING_CONFIG.sidecarBaseUrl}${a.icon_url}` : a.icon_url
-  }));
+  data.agents = data.agents.map(a => {
+    let url = a.icon_url;
+    if (url && !url.includes('raw=')) {
+      url = url.includes('?') ? `${url}&raw=true` : `${url}?raw=true`;
+    }
+    return {
+      ...a,
+      icon_url: url && !url.startsWith('http') ? `${HUANXING_CONFIG.sidecarBaseUrl}${url}` : url
+    };
+  });
   return data;
 }
 

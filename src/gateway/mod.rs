@@ -1328,6 +1328,7 @@ async fn run_gateway_chat_simple(state: &AppState, message: &str) -> anyhow::Res
         let config_guard = state.config.lock();
         crate::channels::build_system_prompt(
             &config_guard.workspace_dir,
+            &config_guard.workspace_dir,
             &state.model,
             &[], // tools - empty for simple chat
             &[], // skills

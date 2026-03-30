@@ -82,16 +82,6 @@ pub struct CreateAgentResponse {
 }
 
 /// 工作区 config.toml 的部分字段（用于读取 display_name / model）
-#[derive(Debug, Default, Deserialize)]
-#[serde(default)]
-struct WorkspaceConfig {
-    pub display_name: Option<String>,
-    pub name: Option<String>,
-    pub hasn_id: Option<String>,
-    pub default_model: Option<String>,
-    pub default_provider: Option<String>,
-    pub default_temperature: Option<f64>,
-}
 
 // ── 路由 ──────────────────────────────────────────────────
 
@@ -144,7 +134,10 @@ async fn list_agents(State(state): State<AppState>) -> impl IntoResponse {
                     None
                 };
 
-                let display_name = ws_cfg.display_name.or(ws_cfg.name);
+                let display_name = ws_cfg
+                    .display_name
+                    .or_else(|| ws_cfg.name.clone())
+                    .or_else(|| ws_cfg.identity.as_ref().and_then(|id| id.name.clone()));
 
                 agents.push(AgentInfo {
                     config_dir: path.to_string_lossy().to_string(),
@@ -611,6 +604,24 @@ fn is_valid_agent_name(name: &str) -> bool {
         && !name.contains('/')
         && !name.contains('\\')
         && !name.contains('\0')
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct PartialIdentity {
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct WorkspaceConfig {
+    pub display_name: Option<String>,
+    pub name: Option<String>,
+    pub hasn_id: Option<String>,
+    pub default_model: Option<String>,
+    pub default_provider: Option<String>,
+    pub default_temperature: Option<f64>,
+    pub identity: Option<PartialIdentity>,
 }
 
 /// 从工作区目录加载 config.toml 的部分字段

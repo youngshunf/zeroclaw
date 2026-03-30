@@ -36,6 +36,9 @@ struct WorkspaceOverrides {
     /// [memory] 节覆盖全局记忆配置（embedding_provider / vector_weight 等）
     #[serde(default)]
     memory: Option<crate::config::MemoryConfig>,
+    /// [knowledge] 节覆盖全局知识图谱配置
+    #[serde(default)]
+    knowledge: Option<crate::config::KnowledgeConfig>,
     /// [autonomy] 节覆盖全局安全策略（allowed_commands / forbidden_paths / non_cli_excluded_tools 等）
     #[serde(default)]
     autonomy: Option<crate::config::AutonomyConfig>,
@@ -120,6 +123,10 @@ pub struct TenantContext {
     /// Contains SOUL.md, USER.md, memory/, sessions.db, cron/, etc.
     pub workspace_dir: PathBuf,
 
+    /// Owner directory for this tenant.
+    /// In desktop, this points to ~/.huanxing/ for global memory and USER.md.
+    pub owner_dir: PathBuf,
+
     /// Fully-built system prompt (SOUL.md + AGENTS.md + USER.md + BOOTSTRAP.md + MEMORY.md + skills).
     /// Constructed via `build_system_prompt()`, not just SOUL.md raw text.
     pub system_prompt: String,
@@ -193,6 +200,13 @@ pub struct TenantContext {
     /// Per-tenant reliability config (from [reliability] override or global).
     /// Used when creating per-request resilient providers.
     pub reliability: crate::config::ReliabilityConfig,
+
+    /// Per-tenant knowledge graph instance.
+    /// Desktop: shared via owner_dir. Cloud: isolated per workspace.
+    pub knowledge_graph: Option<std::sync::Arc<crate::memory::knowledge_graph::KnowledgeGraph>>,
+
+    /// Per-tenant knowledge config (for auto_capture, suggest_on_query, etc.).
+    pub knowledge_config: crate::config::KnowledgeConfig,
 }
 
 // Manual Debug impl because Arc<dyn Memory> doesn't impl Debug.
@@ -202,6 +216,7 @@ impl std::fmt::Debug for TenantContext {
             .field("agent_id", &self.agent_id)
             .field("user_id", &self.user_id)
             .field("workspace_dir", &self.workspace_dir)
+            .field("owner_dir", &self.owner_dir)
             .field("model", &self.model)
             .field("provider", &self.provider)
             .field("template", &self.template)
@@ -216,6 +231,8 @@ impl std::fmt::Debug for TenantContext {
             .field("non_cli_excluded_tools_count", &self.non_cli_excluded_tools.len())
             .field("message_timeout_secs", &self.message_timeout_secs)
             .field("has_reliability_fallbacks", &!self.reliability.fallback_providers.is_empty())
+            .field("has_knowledge_graph", &self.knowledge_graph.is_some())
+            .field("knowledge_enabled", &self.knowledge_config.enabled)
             .finish()
     }
 }
@@ -230,6 +247,7 @@ impl TenantContext {
         agent_id: &str,
         user_id: &str,
         workspace_dir: PathBuf,
+        owner_dir: PathBuf,
         model: Option<String>,
         provider: Option<String>,
         template: Option<String>,
@@ -322,6 +340,7 @@ impl TenantContext {
 
         let system_prompt = crate::channels::build_system_prompt_with_mode(
             &workspace_dir,
+            &owner_dir,
             model_name,
             &tool_descs,
             &skills,
@@ -351,9 +370,62 @@ impl TenantContext {
             .unwrap_or_else(|| global_config.memory.clone());
         let tenant_memory: Arc<dyn Memory> = Arc::from(memory::create_memory(
             &effective_memory_config,
-            &workspace_dir,
+            &owner_dir,
             effective_api_key.as_deref(),
         )?);
+
+        // ── B2. Create per-tenant knowledge graph ────────────────────
+        let effective_knowledge_config = overrides
+            .knowledge
+            .clone()
+            .unwrap_or_else(|| global_config.knowledge.clone());
+        let knowledge_graph: Option<std::sync::Arc<crate::memory::knowledge_graph::KnowledgeGraph>> =
+            if effective_knowledge_config.enabled {
+                let kb_path = if effective_knowledge_config.db_path.starts_with('/')
+                    || effective_knowledge_config.db_path.starts_with('~')
+                {
+                    // Absolute/home path: backward compat
+                    let expanded = effective_knowledge_config.db_path.replace(
+                        '~',
+                        &directories::UserDirs::new()
+                            .map(|u| u.home_dir().to_string_lossy().to_string())
+                            .unwrap_or_else(|| ".".to_string()),
+                    );
+                    std::path::PathBuf::from(expanded)
+                } else {
+                    // Relative path: resolve against owner_dir
+                    // Desktop: owner_dir = ~/.huanxing/ → global shared
+                    // Cloud:   owner_dir = workspace_dir → per-agent isolated
+                    owner_dir.join(&effective_knowledge_config.db_path)
+                };
+                // Ensure parent directory exists
+                if let Some(parent) = kb_path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                match crate::memory::knowledge_graph::KnowledgeGraph::new(
+                    &kb_path,
+                    effective_knowledge_config.max_nodes,
+                ) {
+                    Ok(g) => {
+                        tracing::info!(
+                            agent_id,
+                            db_path = %kb_path.display(),
+                            "Knowledge graph initialized for tenant",
+                        );
+                        Some(std::sync::Arc::new(g))
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            agent_id,
+                            db_path = %kb_path.display(),
+                            "Knowledge graph init failed: {e}",
+                        );
+                        None
+                    }
+                }
+            } else {
+                None
+            };
 
         // ── C. Session backend (JSONL or SQLite based on channels_config) ──
         let tenant_session_manager: Option<Arc<dyn SessionBackend>> =
@@ -422,6 +494,7 @@ impl TenantContext {
             agent_id: agent_id.to_string(),
             user_id: user_id.to_string(),
             workspace_dir,
+            owner_dir,
             system_prompt,
             model: effective_model,
             provider: effective_provider,
@@ -445,6 +518,8 @@ impl TenantContext {
             multimodal: effective_multimodal,
             message_timeout_secs: effective_message_timeout,
             reliability: effective_reliability,
+            knowledge_graph,
+            knowledge_config: effective_knowledge_config,
         })
     }
 
@@ -503,6 +578,7 @@ impl TenantContext {
         // Build full system prompt from guardian workspace files
         let system_prompt = if workspace_dir.join("SOUL.md").exists() {
             crate::channels::build_system_prompt_with_mode(
+                &workspace_dir,
                 &workspace_dir,
                 model_name,
                 &tool_descs,
@@ -587,7 +663,8 @@ impl TenantContext {
         Ok(Self {
             agent_id: "guardian".to_string(),
             user_id: String::new(),
-            workspace_dir,
+            workspace_dir: workspace_dir.clone(),
+            owner_dir: workspace_dir,
             system_prompt,
             model: overrides.default_model,
             provider: overrides.default_provider,
@@ -611,6 +688,8 @@ impl TenantContext {
             multimodal: effective_multimodal,
             message_timeout_secs: effective_message_timeout,
             reliability: effective_reliability,
+            knowledge_graph: None,
+            knowledge_config: Default::default(),
         })
     }
 
@@ -640,6 +719,7 @@ impl TenantContext {
             agent_id,
             "",         // 桌面端单用户，无 DB user_id
             workspace_dir,
+            global_config.workspace_dir.clone(), // 强制共享主脑
             None,       // model：从工作区 config.toml 读取
             None,       // provider：从工作区 config.toml 读取
             None,       // template

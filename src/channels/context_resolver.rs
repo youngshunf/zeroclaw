@@ -69,6 +69,16 @@ pub struct MessageContext {
     /// Workspace directory.
     pub workspace_dir: PathBuf,
 
+    // ── Knowledge Graph ─────────────────────────────────
+    /// Per-tenant knowledge graph instance.
+    /// On desktop: shared across all agents via owner_dir.
+    /// On cloud: isolated per-agent workspace.
+    /// None when knowledge graph is disabled.
+    pub knowledge_graph: Option<Arc<crate::memory::knowledge_graph::KnowledgeGraph>>,
+
+    /// Knowledge graph configuration (for auto_capture, suggest_on_query, etc.).
+    pub knowledge_config: crate::config::KnowledgeConfig,
+
     // ── Security ────────────────────────────────────────
     /// Per-tenant security policy for shell / file tools.
     pub security: Option<Arc<SecurityPolicy>>,

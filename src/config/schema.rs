@@ -3266,28 +3266,50 @@ pub struct KnowledgeConfig {
     #[serde(default)]
     pub enabled: bool,
     /// Path to the knowledge graph SQLite database.
+    /// Relative paths are resolved against `owner_dir` (desktop: global shared,
+    /// cloud: per-agent isolated). Absolute paths are used as-is for backward compat.
     #[serde(default = "default_knowledge_db_path")]
     pub db_path: String,
     /// Maximum number of knowledge nodes. Default: 100000.
     #[serde(default = "default_knowledge_max_nodes")]
     pub max_nodes: usize,
     /// Automatically capture knowledge from conversations. Default: false.
+    /// When enabled, the memory consolidation step also extracts domain knowledge
+    /// (patterns, decisions, lessons) into the knowledge graph.
     #[serde(default)]
     pub auto_capture: bool,
+    /// Minimum user message length (in chars) to trigger auto-capture. Default: 50.
+    #[serde(default = "default_knowledge_auto_capture_min_chars")]
+    pub auto_capture_min_chars: usize,
     /// Proactively suggest relevant knowledge on queries. Default: true.
+    /// When enabled, relevant knowledge items are injected as a [context] block
+    /// before the user message.
     #[serde(default = "default_true")]
     pub suggest_on_query: bool,
+    /// Maximum number of knowledge items to inject per query. Default: 5.
+    #[serde(default = "default_knowledge_suggest_max_items")]
+    pub suggest_max_items: usize,
     /// Allow searching across workspaces (disabled by default for client data isolation).
+    /// On desktop this is irrelevant (all agents share one DB via owner_dir).
+    /// On cloud, enables cross-agent knowledge search within the same user.
     #[serde(default)]
     pub cross_workspace_search: bool,
 }
 
 fn default_knowledge_db_path() -> String {
-    "~/.zeroclaw/knowledge.db".into()
+    "knowledge/knowledge.db".into()
 }
 
 fn default_knowledge_max_nodes() -> usize {
     100_000
+}
+
+fn default_knowledge_auto_capture_min_chars() -> usize {
+    50
+}
+
+fn default_knowledge_suggest_max_items() -> usize {
+    5
 }
 
 impl Default for KnowledgeConfig {
@@ -3297,7 +3319,9 @@ impl Default for KnowledgeConfig {
             db_path: default_knowledge_db_path(),
             max_nodes: default_knowledge_max_nodes(),
             auto_capture: false,
+            auto_capture_min_chars: default_knowledge_auto_capture_min_chars(),
             suggest_on_query: true,
+            suggest_max_items: default_knowledge_suggest_max_items(),
             cross_workspace_search: false,
         }
     }

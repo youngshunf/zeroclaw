@@ -47,6 +47,8 @@ impl MessageContextResolver for MultiTenantResolver {
             conversation_histories: Arc::clone(&tenant.conversation_histories),
             session_manager: tenant.session_manager.clone(),
             workspace_dir: tenant.workspace_dir.clone(),
+            knowledge_graph: tenant.knowledge_graph.clone(),
+            knowledge_config: tenant.knowledge_config.clone(),
             security: tenant.security.clone(),
             non_cli_excluded_tools: Some(tenant.non_cli_excluded_tools.clone()),
             compact_context: tenant.compact_context,
