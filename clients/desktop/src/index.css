@@ -1,6 +1,41 @@
 @import "tailwindcss";
 @import "./huanxing/styles/huanxing.css";
 
+/* Base semantic tokens mapping */
+@layer base {
+  :root {
+    /* Semantic Colors - Light Mode Default */
+    --color-brand: #7C3AED;
+    --color-brand-light: #A78BFA;
+    
+    --color-surface-base: #f8fafc;
+    --color-surface-hover: #f1f5f9;
+    --color-surface-card: rgba(255, 255, 255, 0.85);
+    
+    --color-border-subtle: #e2e8f0;
+    
+    --color-content-base: #0f172a;
+    --color-content-subtle: #64748b;
+    --color-content-muted: #94a3b8;
+  }
+
+  .dark {
+    /* Semantic Colors - Dark Mode Override */
+    --color-brand: #7C3AED;
+    --color-brand-light: #8B5CF6;
+    
+    --color-surface-base: #050816;
+    --color-surface-hover: rgba(10, 17, 40, 0.8);
+    --color-surface-card: rgba(10, 17, 40, 0.85);
+    
+    --color-border-subtle: #1e2d5a;
+    
+    --color-content-base: #ffffff;
+    --color-content-subtle: #8b9fd8;
+    --color-content-muted: #4a5f8f;
+  }
+}
+
 @theme {
   --color-electric-50: #eaf3ff;
   --color-electric-100: #d8e8ff;
@@ -8,17 +43,28 @@
   --color-electric-500: #2f8fff;
   --color-electric-700: #0f57dd;
   --color-electric-900: #031126;
+
+  /* Expose semantic tokens to Tailwind */
+  --color-brand: var(--color-brand);
+  --color-brand-light: var(--color-brand-light);
+  --color-surface-base: var(--color-surface-base);
+  --color-surface-hover: var(--color-surface-hover);
+  --color-surface-card: var(--color-surface-card);
+  --color-border-subtle: var(--color-border-subtle);
+  --color-content-base: var(--color-content-base);
+  --color-content-subtle: var(--color-content-subtle);
+  --color-content-muted: var(--color-content-muted);
 }
 
 html {
-  color-scheme: dark;
+  color-scheme: light dark;
 }
 
 body {
   margin: 0;
   min-height: 100dvh;
-  color: #edf4ff;
-  background: #020813;
+  background-color: var(--color-surface-base);
+  color: var(--color-content-base);
   font-family:
     "Sora",
     "Manrope",
