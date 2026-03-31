@@ -9,6 +9,7 @@ import remarkCollapsibleSections from './remarkCollapsibleSections'
 import { CollapsibleSection } from './CollapsibleSection'
 import { useCollapsibleMarkdown } from './CollapsibleMarkdownContext'
 import { wrapWithSafeProxy } from './safe-components'
+import MermaidViewer from '../mermaid/MermaidViewer'
 
 export type RenderMode = 'terminal' | 'minimal' | 'full'
 
@@ -89,6 +90,9 @@ function createComponents(
         const isBlock = 'node' in props && props.node?.position?.start.line !== props.node?.position?.end.line
         if (match || isBlock) {
           const code = String(children).replace(/\n$/, '')
+          if (match?.[1] === 'mermaid') {
+            return <MermaidViewer code={code} />
+          }
           return <CodeBlock code={code} language={match?.[1]} mode="full" className="my-2" />
         }
         return <InlineCode>{children}</InlineCode>
@@ -126,6 +130,9 @@ function createComponents(
       const isBlock = 'node' in props && props.node?.position?.start.line !== props.node?.position?.end.line
       if (match || isBlock) {
         const code = String(children).replace(/\n$/, '')
+        if (match?.[1] === 'mermaid') {
+          return <MermaidViewer code={code} />
+        }
         return <CodeBlock code={code} language={match?.[1]} mode="full" className="my-2" />
       }
       return <InlineCode>{children}</InlineCode>

@@ -194,7 +194,7 @@ export default function SopWorkbench() {
               <div>
                 <div className="flex items-center gap-3 mb-2">
                   <Workflow className="w-8 h-8 text-hx-purple shrink-0" />
-                  <h1 className="text-2xl font-bold text-hx-text-primary m-0">{sopDetail.name}</h1>
+                  <h1 className="text-2xl font-bold text-hx-text-primary m-0">{sopDetail.display_name || sopDetail.name}</h1>
                   <span className="px-2.5 py-1 rounded-hx-radius-sm bg-hx-purple-bg text-[12px] font-mono border border-hx-border text-hx-text-secondary">
                     v{sopDetail.version}
                   </span>
