@@ -204,6 +204,7 @@ export default function Documents() {
         };
         setSelectedDoc(updatedDoc);
         setDocuments(docs => docs.map(d => (d.id === updatedDoc.id ? updatedDoc : d)));
+        setIsEditing(false); // 保存成功后退出编辑态，给与明显视觉反馈
       } else {
         // 创建
         const res = await createHuanxingDocumentApi(session.accessToken, {
@@ -215,6 +216,7 @@ export default function Documents() {
         setSelectedDoc(newDoc);
         setDocuments([newDoc, ...documents]);
         setNewDocFolderId(null);
+        setIsEditing(false); // 创建成功后退出编辑态
       }
     } catch (err) {
       console.error('Save doc failed:', err);
@@ -574,7 +576,7 @@ export default function Documents() {
                  </div>
               )}
              
-              <div className="flex items-center gap-3 shrink-0">
+              <div className="flex items-center gap-3 shrink-0" data-tauri-drag-region="false">
                 {selectedDoc && (
                    <div className="flex items-center gap-2">
                      <button
@@ -618,11 +620,15 @@ export default function Documents() {
                   onClick={() => setIsEditing(!isEditing)}
                   className={`px-3 py-1.5 rounded-hx-radius-sm border-none text-[13px] font-medium cursor-pointer transition-colors flex items-center gap-1.5 ${isEditing ? 'bg-hx-bg-hover text-hx-text-secondary' : 'bg-hx-purple/10 text-hx-purple'}`}
                 >
-                  {isEditing ? <><BookOpen size={14} /> 预览模式</> : <><Edit3 size={14} /> 进入编辑</>}
+                  {isEditing ? <><BookOpen size={14} /> 返回预览</> : <><Edit3 size={14} /> 进入编辑</>}
                 </button>
                 
                 {isEditing && (
                   <button
+                    onMouseDown={(e) => {
+                      // 防止编辑器失焦导致的二次点击问题
+                      e.preventDefault();
+                    }}
                     onClick={handleSave}
                     disabled={isSaving || !editorTitle.trim()}
                     className="px-4 py-1.5 rounded-hx-radius-sm border-none bg-hx-purple text-white text-[13px] font-medium cursor-pointer shadow-sm disabled:opacity-50 disabled:cursor-not-allowed hover:opacity-90 transition-opacity flex items-center gap-1.5"
