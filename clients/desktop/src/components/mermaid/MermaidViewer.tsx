@@ -63,6 +63,42 @@ export default function MermaidViewer({ code }: MermaidViewerProps) {
     }
   }, [svgStr]);
 
+  // 提取动态文件名：1. 代码内Title，2. DOM 前序兄弟节点标题，3. 默认Fallback
+  const getDiagramTitle = () => {
+    // 尝试解析 Markdown frontmatter title
+    const frontmatterMatch = code.match(/---\s*[\r\n]+title:\s*([^\r\n]+)[\r\n]+\s*---/i);
+    if (frontmatterMatch && frontmatterMatch[1]) return frontmatterMatch[1].trim();
+
+    // 尝试解析旧语法 title
+    const titleMatch = code.match(/^title[:\s]+([^\r\n]+)/im);
+    if (titleMatch && titleMatch[1]) return titleMatch[1].trim();
+
+    // 尝试智能提取上方 DOM 标题说明
+    if (containerRef.current) {
+      let current: HTMLElement | null = containerRef.current.closest('.group');
+      // 向上寻轨，最多只寻找3层父级，防止越界获取整个页面标题
+      let depth = 0;
+      while (current && current.tagName !== 'BODY' && !current.classList.contains('ProseMirror') && depth < 4) {
+        let prev = current.previousElementSibling;
+        while (prev) {
+          const text = (prev.textContent || '').trim();
+          if (text.length > 0) {
+            // 如果文本较短，很可能是图片标题（如图X：xxx）
+            if (text.length < 60) {
+              return text.replace(/[\\/:*?"<>|\n\r]/g, '_').trim(); // 过滤非法字符
+            }
+            break; // 遇到长段落，直接打断不再向上寻找
+          }
+          prev = prev.previousElementSibling;
+        }
+        current = current.parentElement;
+        depth++;
+      }
+    }
+    
+    return `mermaid-diagram-${new Date().getTime()}`;
+  };
+
   // 下载为 JPG
   const handleDownloadJPG = () => {
     if (!svgDataUrl) return;
@@ -88,11 +124,13 @@ export default function MermaidViewer({ code }: MermaidViewerProps) {
       canvas.toBlob(async (blob) => {
         if (!blob) return;
         
+        const fileName = `${getDiagramTitle()}.jpg`;
+        
         try {
           // 调起 Tauri 原生路径选择界面保存文件
           const savePath = await save({
             title: '保存图表为 JPG',
-            defaultPath: `mermaid-diagram-${new Date().getTime()}.jpg`,
+            defaultPath: fileName,
             filters: [{ name: 'Image', extensions: ['jpg', 'jpeg'] }]
           });
           
@@ -106,7 +144,7 @@ export default function MermaidViewer({ code }: MermaidViewerProps) {
           const blobUrl = URL.createObjectURL(blob);
           const a = document.createElement('a');
           a.href = blobUrl;
-          a.download = `mermaid-diagram-${new Date().getTime()}.jpg`;
+          a.download = fileName;
           document.body.appendChild(a);
           a.click();
           document.body.removeChild(a);
