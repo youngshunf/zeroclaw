@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, useMemo } from 'react';
 import mermaid from 'mermaid';
 import { Download, Maximize2, Loader2, AlertCircle } from 'lucide-react';
 import { HxPhotoProvider, PhotoView } from '../chat/HxImageLightbox';
+import { save } from '@tauri-apps/plugin-dialog';
+import { writeFile } from '@tauri-apps/plugin-fs';
 
 export interface MermaidViewerProps {
   code: string;
@@ -82,19 +84,34 @@ export default function MermaidViewer({ code }: MermaidViewerProps) {
       // 绘制图像（带 padding 偏移）
       ctx.drawImage(img, padding, padding);
       
-      // 导出为 JPEG 格式，采用 toBlob 因为 Tauri 可能会拦截 data: URI 的直接下载
-      canvas.toBlob((blob) => {
+      // 导出为 JPEG 格式
+      canvas.toBlob(async (blob) => {
         if (!blob) return;
-        const blobUrl = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = blobUrl;
-        a.download = `mermaid-diagram-${new Date().getTime()}.jpg`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
         
-        // 延迟释放，避免刚呼出下载就被销毁
-        setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+        try {
+          // 调起 Tauri 原生路径选择界面保存文件
+          const savePath = await save({
+            title: '保存图表为 JPG',
+            defaultPath: `mermaid-diagram-${new Date().getTime()}.jpg`,
+            filters: [{ name: 'Image', extensions: ['jpg', 'jpeg'] }]
+          });
+          
+          if (savePath) {
+            const buffer = await blob.arrayBuffer();
+            await writeFile(savePath, new Uint8Array(buffer));
+          }
+        } catch (e) {
+          console.error('Save dialog or write failed:', e);
+          // Fallback 至浏览器下载
+          const blobUrl = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = blobUrl;
+          a.download = `mermaid-diagram-${new Date().getTime()}.jpg`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+        }
       }, 'image/jpeg', 1.0);
     };
     img.src = svgDataUrl;

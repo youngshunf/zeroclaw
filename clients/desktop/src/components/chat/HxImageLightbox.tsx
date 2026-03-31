@@ -13,6 +13,8 @@ import React, { useCallback } from 'react';
 import { RotateCw, FlipHorizontal, ZoomIn, ZoomOut, Download } from 'lucide-react';
 import { PhotoProvider, PhotoView as BasePhotoView } from 'react-photo-view';
 import 'react-photo-view/dist/react-photo-view.css';
+import { save } from '@tauri-apps/plugin-dialog';
+import { writeFile } from '@tauri-apps/plugin-fs';
 
 // ── 辅助：将本地文件路径转为可在 webview 中显示的 URL ──────────
 
@@ -96,10 +98,46 @@ export function HxPhotoProvider({ children }: { children: React.ReactNode }) {
         const handleDownload = async () => {
           if (!src) return;
           try {
+            let defaultName = 'image.png';
+            if (src.startsWith('data:')) {
+              const ext = src.split(';')[0].split('/')[1] || 'png';
+              defaultName = `huanxing_image.${ext.replace('+xml', '')}`;
+            } else {
+              defaultName = src.split('/').pop() || 'image.png';
+            }
+            
+            // 使用 Tauri 原生 Dialog & FS 模块存储
+            try {
+              const savePath = await save({
+                title: '保存图片',
+                defaultPath: defaultName,
+                filters: [{ name: 'Image', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg'] }]
+              });
+              
+              if (savePath) {
+                // 如果是 data uri
+                if (src.startsWith('data:')) {
+                  const res = await fetch(src);
+                  const blob = await res.blob();
+                  const buffer = await blob.arrayBuffer();
+                  await writeFile(savePath, new Uint8Array(buffer));
+                  return;
+                }
+                
+                // 普通 URL (由于启用了 Tauri 跨域，通常直接可以用 fetch)
+                const res = await fetch(src);
+                const blob = await res.blob();
+                const buffer = await blob.arrayBuffer();
+                await writeFile(savePath, new Uint8Array(buffer));
+                return;
+              }
+            } catch (fsErr) {
+              console.error('Tauri save failed, falling back to browser download', fsErr);
+            }
+            
+            // Fallback: 浏览器内原生下载（如果上述 Tauri 部分被抛出异常）
             let downloadUrl = src;
             let revoke = false;
-            
-            // 如果是 data: URI，转换为 blob 绕过 Tauri 的安全拦截
             if (src.startsWith('data:')) {
               const res = await fetch(src);
               const blob = await res.blob();
@@ -109,14 +147,7 @@ export function HxPhotoProvider({ children }: { children: React.ReactNode }) {
             
             const link = document.createElement('a');
             link.href = downloadUrl;
-            
-            if (src.startsWith('data:')) {
-              const ext = src.split(';')[0].split('/')[1] || 'png';
-              link.download = `huanxing_image.${ext.replace('+xml', '')}`;
-            } else {
-              link.download = src.split('/').pop() || 'image';
-            }
-            
+            link.download = defaultName;
             link.target = '_blank';
             document.body.appendChild(link);
             link.click();

@@ -13,6 +13,8 @@
     "core:window:allow-close",
     "core:webview:allow-create-webview-window",
     "core:window:allow-set-size",
-    "core:window:allow-center"
+    "core:window:allow-center",
+    "dialog:default",
+    "fs:default"
   ]
 }
