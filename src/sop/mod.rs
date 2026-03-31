@@ -125,6 +125,7 @@ fn load_sop(sop_dir: &Path, default_execution_mode: SopExecutionMode) -> Result<
 
     let SopMeta {
         name,
+        display_name,
         description,
         version,
         priority,
@@ -143,7 +144,7 @@ fn load_sop(sop_dir: &Path, default_execution_mode: SopExecutionMode) -> Result<
 
     Ok(Sop {
         name,
-        display_name: manifest.sop.display_name,
+        display_name,
         description,
         version,
         priority,
@@ -751,6 +752,7 @@ type = "manual"
         let sop = Sop {
             requirements: None,
             name: String::new(),
+            display_name: None,
             description: String::new(),
             version: "1.0.0".into(),
             priority: SopPriority::Normal,
@@ -775,6 +777,7 @@ type = "manual"
         let sop = Sop {
             requirements: None,
             name: "valid-sop".into(),
+            display_name: None,
             description: "A valid SOP".into(),
             version: "1.0.0".into(),
             priority: SopPriority::High,

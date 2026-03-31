@@ -269,7 +269,7 @@ impl SopCronCache {
 
         for sop in eng.sops() {
             for trigger in &sop.triggers {
-                if let super::types::SopTrigger::Cron { expression } = trigger {
+                if let super::types::SopTrigger::Cron { expression, payload } = trigger {
                     // Normalize 5-field crontab to 6-field (prepend seconds)
                     let normalized = match crate::cron::normalize_expression(expression) {
                         Ok(n) => n,
@@ -302,7 +302,7 @@ impl SopCronCache {
 
     /// Return the cached schedules (for testing).
     #[cfg(test)]
-    pub fn schedules(&self) -> &[(String, String, cron::Schedule)] {
+    pub fn schedules(&self) -> &[(String, String, Option<String>, cron::Schedule)] {
         &self.schedules
     }
 }
@@ -360,6 +360,7 @@ mod tests {
         Sop {
             requirements: None,
             name: name.into(),
+            display_name: None,
             description: format!("Test SOP: {name}"),
             version: "1.0.0".into(),
             priority: SopPriority::Normal,
@@ -638,6 +639,7 @@ mod tests {
             "bad-cron",
             vec![SopTrigger::Cron {
                 expression: "not a valid cron".into(),
+                payload: None,
             }],
         );
         let engine = test_engine(vec![sop]);
@@ -651,6 +653,7 @@ mod tests {
             "valid-cron",
             vec![SopTrigger::Cron {
                 expression: "0 */5 * * *".into(),
+                payload: None,
             }],
         );
         let engine = test_engine(vec![sop]);
@@ -666,6 +669,7 @@ mod tests {
             "cron-sop",
             vec![SopTrigger::Cron {
                 expression: "* * * * *".into(),
+                payload: None,
             }],
         );
         let engine = test_engine(vec![sop]);
@@ -689,6 +693,7 @@ mod tests {
             "every-min",
             vec![SopTrigger::Cron {
                 expression: "* * * * *".into(),
+                payload: None,
             }],
         );
         // An expression that won't fire in a 2-minute window from now:
@@ -697,6 +702,7 @@ mod tests {
             "yearly",
             vec![SopTrigger::Cron {
                 expression: "0 0 1 1 *".into(),
+                payload: None,
             }],
         );
         let engine = test_engine(vec![sop1, sop2]);
@@ -724,6 +730,7 @@ mod tests {
             "every-min",
             vec![SopTrigger::Cron {
                 expression: "* * * * *".into(),
+                payload: None,
             }],
         );
         let engine = test_engine(vec![sop]);

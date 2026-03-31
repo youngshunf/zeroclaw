@@ -177,6 +177,7 @@ mod tests {
         Sop {
             requirements: None,
             name: name.into(),
+            display_name: None,
             description: format!("Test SOP: {name}"),
             version: "1.0.0".into(),
             priority: SopPriority::Normal,

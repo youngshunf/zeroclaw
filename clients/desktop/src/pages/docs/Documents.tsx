@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useMemo } from 'react';
-import { FileText, Plus, Search, Loader2, Save, Trash2, Globe, Lock, Edit3, Share2, BookOpen, X, Copy, ChevronRight, ChevronDown, Folder, FolderPlus, FilePlus, ArrowRightLeft, PanelRightClose, PanelRightOpen, Check, Clock, KeyRound, Eye, Pencil } from 'lucide-react';
+import { FileText, Plus, Search, Loader2, Save, Trash2, Globe, Lock, Edit3, Share2, BookOpen, X, Copy, ChevronRight, ChevronDown, Folder, FolderPlus, FilePlus, ArrowRightLeft, PanelRightClose, PanelRightOpen, Check, Clock, KeyRound, Eye, Pencil, Download } from 'lucide-react';
 import TipTapEditor from '@/components/TipTapEditor';
 import MarkdownPreview from '@/components/MarkdownPreview';
 import { getHuanxingSession, HUANXING_CONFIG } from '@/config';
@@ -14,6 +14,7 @@ import {
   moveHuanxingDocumentApi,
   createShareLinkApi,
   cancelShareLinkApi,
+  exportHuanxingDocumentApi,
   type HuanxingDocumentResult,
   type HuanxingFolderTreeNode,
 } from '@/lib/document-api';
@@ -75,6 +76,10 @@ export default function Documents() {
   const [shareExpiresHours, setShareExpiresHours] = useState(72);
   const [sharePassword, setSharePassword] = useState('');
   const [shareCopied, setShareCopied] = useState(false);
+
+  // 导出状态
+  const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
+  const [isExporting, setIsExporting] = useState<string | null>(null);
 
   const fetchFolders = useCallback(async () => {
     try {
@@ -234,6 +239,30 @@ export default function Documents() {
       setDeleteDocTarget(null);
     } catch (err) {
       console.error('Delete doc failed:', err);
+    }
+  };
+
+  // ========== 导出逻辑 ==========
+  const handleExport = async (format: 'markdown' | 'pdf' | 'docx') => {
+    if (!selectedDoc) return;
+    try {
+      const session = getHuanxingSession();
+      if (!session?.accessToken) return;
+      setIsExporting(format);
+      setIsExportMenuOpen(false);
+      const { blob, filename } = await exportHuanxingDocumentApi(session.accessToken, selectedDoc.id, format);
+      
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      console.error('Export failed:', err);
+      alert('导出失败: ' + err.message + '\n如果 PDF 失败请检查服务端 WeasyPrint 依赖。');
+    } finally {
+      setIsExporting(null);
     }
   };
 
@@ -547,12 +576,42 @@ export default function Documents() {
              
               <div className="flex items-center gap-3 shrink-0">
                 {selectedDoc && (
-                    <button
-                      onClick={handleOpenShareModal}
-                      className="px-3 py-1.5 rounded-hx-radius-sm border border-hx-border bg-transparent text-hx-text-secondary text-[13px] font-medium cursor-pointer hover:bg-hx-bg-hover hover:text-hx-text-primary transition-colors flex items-center gap-1.5"
-                    >
-                     <Share2 size={14} /> 分享
-                   </button>
+                   <div className="flex items-center gap-2">
+                     <button
+                       onClick={handleOpenShareModal}
+                       className="px-3 py-1.5 rounded-hx-radius-sm border border-hx-border bg-transparent text-hx-text-secondary text-[13px] font-medium cursor-pointer hover:bg-hx-bg-hover hover:text-hx-text-primary transition-colors flex items-center gap-1.5"
+                     >
+                      <Share2 size={14} /> 分享
+                     </button>
+                     
+                     <div className="relative">
+                       <button
+                         onClick={() => setIsExportMenuOpen(!isExportMenuOpen)}
+                         disabled={!!isExporting}
+                         className="px-3 py-1.5 rounded-hx-radius-sm border border-hx-border bg-transparent text-hx-text-secondary text-[13px] font-medium cursor-pointer hover:bg-hx-bg-hover hover:text-hx-text-primary transition-colors flex items-center gap-1.5"
+                       >
+                         {isExporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                         {isExporting ? '导出中...' : '导出'}
+                       </button>
+                       
+                       {isExportMenuOpen && (
+                         <>
+                           <div className="fixed inset-0 z-10" onClick={() => setIsExportMenuOpen(false)}></div>
+                           <div className="absolute right-0 top-full mt-1.5 w-36 bg-hx-bg-panel border border-hx-border rounded-hx-radius-md shadow-lg z-20 py-1 overflow-hidden">
+                             <button onClick={() => handleExport('markdown')} className="w-full text-left px-4 py-2 text-[13px] text-hx-text-primary hover:bg-hx-bg-hover transition-colors cursor-pointer border-none bg-transparent flex items-center gap-2">
+                                 <FileText size={14} className="text-hx-text-tertiary" /> Markdown
+                             </button>
+                             <button onClick={() => handleExport('pdf')} className="w-full text-left px-4 py-2 text-[13px] text-hx-text-primary hover:bg-hx-bg-hover transition-colors cursor-pointer border-none bg-transparent flex items-center gap-2">
+                                 <FileText size={14} className="text-red-500/70" /> PDF 文件
+                             </button>
+                             <button onClick={() => handleExport('docx')} className="w-full text-left px-4 py-2 text-[13px] text-hx-text-primary hover:bg-hx-bg-hover transition-colors cursor-pointer border-none bg-transparent flex items-center gap-2">
+                                 <FileText size={14} className="text-blue-500/70" /> Word 文档
+                             </button>
+                           </div>
+                         </>
+                       )}
+                     </div>
+                   </div>
                 )}
                 
                 <button

@@ -750,7 +750,7 @@ fn trigger_matches(trigger: &SopTrigger, event: &SopEvent) -> bool {
             }
         }
 
-        (SopTrigger::Cron { expression }, SopTriggerSource::Cron) => {
+        (SopTrigger::Cron { expression, payload: _ }, SopTriggerSource::Cron) => {
             event.topic.as_deref().map_or(false, |t| t == expression)
         }
 
@@ -986,6 +986,7 @@ mod tests {
         Sop {
             requirements: None,
             name: name.into(),
+            display_name: None,
             description: format!("Test SOP: {name}"),
             version: "1.0.0".into(),
             priority,
@@ -1208,6 +1209,7 @@ mod tests {
         let sop = Sop {
             triggers: vec![SopTrigger::Cron {
                 expression: "0 */5 * * *".into(),
+                payload: None,
             }],
             ..test_sop("cron-sop", SopExecutionMode::Auto, SopPriority::Normal)
         };
@@ -1963,6 +1965,7 @@ mod tests {
         Sop {
             requirements: None,
             name: name.into(),
+            display_name: None,
             description: format!("Deterministic SOP: {name}"),
             version: "1.0.0".into(),
             priority: SopPriority::Normal,

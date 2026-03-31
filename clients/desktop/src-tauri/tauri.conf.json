@@ -51,6 +51,7 @@
     ],
     "resources": [
       "../workspace-scaffold/*",
+      "../workspace-scaffold/default/*",
       "../workspace-scaffold/guardian/*"
     ],
     "macOS": {

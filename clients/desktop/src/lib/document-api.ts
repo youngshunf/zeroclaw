@@ -204,3 +204,52 @@ export async function cancelShareLinkApi(
     method: 'DELETE',
   });
 }
+
+/** 导出文档 (返回 Blob 和 filename) */
+export async function exportHuanxingDocumentApi(
+  token: string,
+  pk: number,
+  format: 'markdown' | 'pdf' | 'docx' = 'markdown'
+): Promise<{ blob: Blob; filename: string }> {
+  // baseUrl() 的获取逻辑
+  const isDesktop =
+    typeof window !== 'undefined' &&
+    (!!((window as any).__TAURI_INTERNALS__) || !!((window as any).__TAURI__));
+  const { HUANXING_CONFIG } = await import('../config');
+  const base = isDesktop ? HUANXING_CONFIG.backendBaseUrl : '';
+  
+  const response = await fetch(`${base}/api/v1/huanxing/app/docs/${pk}/export?format=${format}`, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${token}`
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`导出失败 (${response.status})`);
+  }
+
+  const blob = await response.blob();
+  
+  // 尝试从 Content-Disposition 提取文件名
+  let filename = `huanxing_document.${format === 'markdown' ? 'md' : format}`;
+  const disposition = response.headers.get('Content-Disposition');
+  if (disposition && disposition.includes('filename*=')) {
+    // 处理 filename*=UTF-8''...
+    const match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+    if (match && match[1]) {
+      try {
+        filename = decodeURIComponent(match[1]);
+      } catch (e) {
+        // 解码失败用默认
+      }
+    }
+  } else if (disposition && disposition.includes('filename=')) {
+    const match = disposition.match(/filename="?([^";]+)"?/i);
+    if (match && match[1]) {
+      filename = match[1];
+    }
+  }
+
+  return { blob, filename };
+}

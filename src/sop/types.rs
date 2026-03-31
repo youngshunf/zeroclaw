@@ -94,7 +94,7 @@ impl fmt::Display for SopTrigger {
         match self {
             Self::Mqtt { topic, .. } => write!(f, "mqtt:{topic}"),
             Self::Webhook { path } => write!(f, "webhook:{path}"),
-            Self::Cron { expression } => write!(f, "cron:{expression}"),
+            Self::Cron { expression, .. } => write!(f, "cron:{expression}"),
             Self::Peripheral { board, signal, .. } => write!(f, "peripheral:{board}/{signal}"),
             Self::Manual => write!(f, "manual"),
         }
