@@ -13,7 +13,8 @@ default_model = "MiniMax-M2.7"
 title_model = "MiniMax-M2.5"   # 会话标题自动生成用的轻量模型
 default_temperature = 0.7
 
-# ── Agent 核心设置 ────────────────────────────────────────────
+# ── Agent 核心会话（agent_dir 隔离层）─────────────────────────
+# 以下配置的会话记录存放在各 Agent 专属目录：~/.huanxing/agents/<id>/sessions.db
 [agent]
 compact_context = true          # 用大模型，不需要压缩模式
 max_tool_iterations = 50
@@ -25,7 +26,8 @@ strategy = "per-sender"          # 每用户独立会话
 ttl_seconds = 604800             # 7天 — 用户一周内回来不断层
 max_messages = 100               # 每会话保留100条消息
 
-# ── 记忆 ──────────────────────────────────────────────────────
+# ── 主人意图与长期记忆（owner_dir 共享层）───────────────────────
+# 以下配置的全局记忆库（brain.db）存放在根目录：~/.huanxing/brain.db，所有 Agent 共享主人的通用知识
 [memory]
 backend = "sqlite"
 auto_save = true                 # 自动保存对话到长期记忆
