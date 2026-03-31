@@ -33,6 +33,9 @@ export const HUANXING_CONFIG = {
   /** 产品名称 */
   productName: '唤星',
 
+  /** 唤星官网域名（用于分享链接、外部跳转等） */
+  siteUrl: 'https://huanxing.dcfuture.cn',
+
   /** Agent 默认名称 */
   defaultAgentName: '唤星AI助手',
 } as const;
@@ -145,21 +148,21 @@ export function resolveApiUrl(url: string | null | undefined): string {
   if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:') || url.startsWith('blob:')) {
     return url;
   }
-  
+
   // 判断是否为 Tauri 桌面端
-  const isDesktop = typeof window !== 'undefined' && 
+  const isDesktop = typeof window !== 'undefined' &&
     (!!((window as any).__TAURI_INTERNALS__) || !!((window as any).__TAURI__));
-    
+
   if (isDesktop) {
     // 区分本地 sidecar 接口与云端 backend 接口
     // Agent 内部文件、会话状态等来自 sidecar
     const isLocalSidecarUrl = url.startsWith('/api/agents') || url.startsWith('/api/sessions') || url.startsWith('/api/hub/');
     const base = isLocalSidecarUrl ? HUANXING_CONFIG.sidecarBaseUrl : HUANXING_CONFIG.backendBaseUrl;
-    
+
     const baseClean = base.replace(/\/$/, '');
     const path = url.startsWith('/') ? url : `/${url}`;
     return `${baseClean}${path}`;
   }
-  
+
   return url;
 }

@@ -36,6 +36,7 @@ pub struct SopStepInfo {
 #[derive(Debug, Serialize)]
 pub struct SopInfo {
     pub name: String,
+    pub display_name: Option<String>,
     pub description: String,
     pub version: String,
     pub priority: String,
@@ -106,6 +107,7 @@ async fn list_sops(
 
             SopInfo {
                 name: sop.name.clone(),
+                display_name: sop.display_name.clone(),
                 description: sop.description.clone(),
                 version: sop.version.clone(),
                 priority: sop.priority.to_string(),
@@ -160,6 +162,7 @@ async fn sop_detail(
 
             let info = SopInfo {
                 name: sop.name.clone(),
+                display_name: sop.display_name.clone(),
                 description: sop.description.clone(),
                 version: sop.version.clone(),
                 priority: sop.priority.to_string(),

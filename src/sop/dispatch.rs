@@ -248,8 +248,8 @@ pub async fn dispatch_peripheral_signal(
 /// on every scheduler tick.
 #[derive(Clone)]
 pub struct SopCronCache {
-    /// (sop_name, raw_expression, parsed_schedule)
-    schedules: Vec<(String, String, cron::Schedule)>,
+    /// (sop_name, raw_expression, payload, parsed_schedule)
+    schedules: Vec<(String, String, Option<String>, cron::Schedule)>,
 }
 
 impl SopCronCache {
@@ -283,7 +283,7 @@ impl SopCronCache {
                     };
                     match normalized.parse::<cron::Schedule>() {
                         Ok(schedule) => {
-                            schedules.push((sop.name.clone(), expression.clone(), schedule));
+                            schedules.push((sop.name.clone(), expression.clone(), payload.clone(), schedule));
                         }
                         Err(e) => {
                             warn!(
@@ -320,7 +320,7 @@ pub async fn check_sop_cron_triggers(
     let now = chrono::Utc::now();
     let mut all_results = Vec::new();
 
-    for (_sop_name, expression, schedule) in &cache.schedules {
+    for (_sop_name, expression, payload, schedule) in &cache.schedules {
         // Check if any occurrence fell in the window (last_check, now].
         // At-most-once semantics: even if multiple ticks of the same expression
         // fell in the window (e.g., scheduler delayed), we fire only once.
@@ -332,7 +332,7 @@ pub async fn check_sop_cron_triggers(
                 let event = SopEvent {
                     source: SopTriggerSource::Cron,
                     topic: Some(expression.clone()),
-                    payload: None,
+                    payload: payload.clone(),
                     timestamp: now_iso8601(),
                 };
                 let results = dispatch_sop_event(engine, audit, event).await;

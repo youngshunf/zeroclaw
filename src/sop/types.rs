@@ -77,6 +77,8 @@ pub enum SopTrigger {
     },
     Cron {
         expression: String,
+        #[serde(default)]
+        payload: Option<String>,
     },
     Peripheral {
         board: String,
@@ -172,6 +174,8 @@ pub struct SopRequirements {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Sop {
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
     pub description: String,
     pub version: String,
     pub priority: SopPriority,
@@ -216,6 +220,8 @@ pub(crate) struct SopManifest {
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct SopMeta {
     pub name: String,
+    #[serde(default)]
+    pub display_name: Option<String>,
     pub description: String,
     #[serde(default = "default_sop_version")]
     pub version: String,

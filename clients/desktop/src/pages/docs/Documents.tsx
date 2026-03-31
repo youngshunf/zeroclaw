@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useMemo } from 'react';
 import { FileText, Plus, Search, Loader2, Save, Trash2, Globe, Lock, Edit3, Share2, BookOpen, X, Copy, ChevronRight, ChevronDown, Folder, FolderPlus, FilePlus, ArrowRightLeft, PanelRightClose, PanelRightOpen, Check, Clock, KeyRound, Eye, Pencil } from 'lucide-react';
 import TipTapEditor from '@/components/TipTapEditor';
 import MarkdownPreview from '@/components/MarkdownPreview';
-import { getHuanxingSession } from '@/config';
+import { getHuanxingSession, HUANXING_CONFIG } from '@/config';
 import {
   getHuanxingDocumentListApi,
   createHuanxingDocumentApi,
@@ -243,7 +243,7 @@ export default function Documents() {
     // 如果已有分享链接，预填 URL
     if (selectedDoc.share_token) {
       // 从后端 service 中知道 share_url 的格式
-      setShareUrl(`https://huanxing.cloud/s/${selectedDoc.share_token}`);
+      setShareUrl(`${HUANXING_CONFIG.siteUrl}/s/${selectedDoc.share_token}`);
       setSharePermission((selectedDoc.share_permission as 'view' | 'edit') || 'view');
     } else {
       setShareUrl(null);
@@ -266,8 +266,19 @@ export default function Documents() {
         password: sharePassword || undefined,
       });
       const url = (res as any)?.data?.share_url || (res as any)?.share_url;
-      setShareUrl(url);
-      // 刷新文档列表以获取最新 share_token
+      if (url) {
+        setShareUrl(url);
+        // 更新本地文档状态，避免关闭弹窗再打开时状态丢失
+        const token = url.split('/').pop() || '';
+        const updatedDoc = {
+          ...selectedDoc,
+          share_token: token,
+          share_permission: sharePermission,
+        };
+        setSelectedDoc(updatedDoc);
+        setDocuments(docs => docs.map(d => d.id === updatedDoc.id ? updatedDoc : d));
+      }
+      // 后台刷新整体文档列表以保证其他状态一致性
       fetchDocuments();
     } catch (e) {
       console.error('Create share link failed:', e);

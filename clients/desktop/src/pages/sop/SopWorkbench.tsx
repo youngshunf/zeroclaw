@@ -115,7 +115,10 @@ export default function SopWorkbench() {
               }`}
             >
               <div className="flex items-center justify-between mb-1 text-hx-text-primary w-full">
-                <span className="font-medium text-sm overflow-hidden text-ellipsis whitespace-nowrap">{sop.name}</span>
+                <div className="flex items-center gap-2 overflow-hidden mb-1">
+                  <Workflow className="w-4 h-4 shrink-0 opacity-70" />
+                  <span className="font-medium text-sm overflow-hidden text-ellipsis whitespace-nowrap">{sop.display_name || sop.name}</span>
+                </div>
                 {sop.active_runs > 0 && (
                   <span className="w-2 h-2 rounded-full bg-hx-green shadow-[0_0_8px_rgba(16,185,129,0.8)] shrink-0" title={`运行中: ${sop.active_runs}`} />
                 )}

@@ -14,6 +14,7 @@ export interface SopStepInfo {
 
 export interface SopInfo {
   name: string;
+  display_name: string | null;
   description: string;
   version: string;
   priority: string;

@@ -143,6 +143,7 @@ fn load_sop(sop_dir: &Path, default_execution_mode: SopExecutionMode) -> Result<
 
     Ok(Sop {
         name,
+        display_name: manifest.sop.display_name,
         description,
         version,
         priority,
