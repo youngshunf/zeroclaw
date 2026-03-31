@@ -5,6 +5,32 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+/// Deployment mode for HuanXing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum DeploymentMode {
+    /// Single-user desktop environment. Config cascading: 2-level (global → agent).
+    Desktop,
+    /// Multi-tenant cloud environment. Config cascading: 3-level (global → user → agent).
+    Cloud,
+}
+
+impl Default for DeploymentMode {
+    fn default() -> Self {
+        Self::Desktop
+    }
+}
+
+impl DeploymentMode {
+    pub fn is_desktop(&self) -> bool {
+        matches!(self, Self::Desktop)
+    }
+
+    pub fn is_cloud(&self) -> bool {
+        matches!(self, Self::Cloud)
+    }
+}
+
 /// Top-level `[huanxing]` configuration section in config.toml.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
@@ -12,21 +38,26 @@ pub struct HuanXingConfig {
     /// Enable multi-tenant routing. When false, behaves as standard single-agent.
     pub enabled: bool,
 
+    /// Deployment mode: `"desktop"` (single-user, 2-level config) or `"cloud"` (multi-tenant, 3-level config).
+    /// Default: `"desktop"`.
+    #[serde(default)]
+    pub deployment_mode: DeploymentMode,
+
     /// Path to the SQLite user database.
-    /// Default: `{workspace}/data/users.db`
+    /// Default: `{config_dir}/data/users.db`
     pub db_path: Option<PathBuf>,
 
     /// Root directory for per-tenant agent workspaces.
-    /// Each tenant gets `{agents_dir}/{agent_id}/`.
-    /// Default: `{workspace}/agents`
+    /// **Deprecated**: use `resolve_agent_wrapper_dir()` instead. Kept for backward compat.
+    /// Default: `{config_dir}/agents`
     pub agents_dir: Option<PathBuf>,
 
     /// Workspace directory for the Guardian agent (handles unregistered users).
-    /// Default: `{workspace}/guardian`
+    /// Default: `{config_dir}/guardian`
     pub guardian_workspace: Option<PathBuf>,
 
     /// Workspace directory for the Admin agent (server management).
-    /// Default: `{workspace}/admin`
+    /// Default: `{config_dir}/admin`
     pub admin_workspace: Option<PathBuf>,
 
     /// Channel types routed to the Admin agent (e.g. `["feishu"]`).
@@ -76,20 +107,19 @@ pub struct HuanXingConfig {
     pub heartbeat_interval_secs: Option<u64>,
 
     /// Root directory for agent templates.
-    /// Default: `{workspace}/templates`
+    /// **Deprecated**: templates are now fetched from the marketplace.
     pub templates_dir: Option<PathBuf>,
 
     /// Directory for user data backups.
-    /// Default: `{workspace}/backups`
+    /// Default: `{config_dir}/backups`
     pub backup_dir: Option<PathBuf>,
 
     /// Directory for common skills shared across all user agents.
-    /// Default: `{workspace}/common-skills`
+    /// Default: `{config_dir}/skills`
     pub common_skills_dir: Option<PathBuf>,
 
     /// Path to the huanxing-hub repository (skill marketplace).
-    /// Contains `registry.json`, `skills/`, `templates/`.
-    /// When set, enables registry-based skill loading and marketplace tools.
+    /// **Deprecated**: cloud/desktop unified to fetch from marketplace API.
     pub hub_dir: Option<PathBuf>,
 
     /// Hub Gitee 同步配置。
@@ -185,6 +215,7 @@ impl Default for HuanXingConfig {
     fn default() -> Self {
         Self {
             enabled: false,
+            deployment_mode: DeploymentMode::Desktop,
             db_path: None,
             agents_dir: None,
             guardian_workspace: None,
@@ -217,17 +248,114 @@ impl Default for HuanXingConfig {
 }
 
 impl HuanXingConfig {
-    /// Resolve the database path, using workspace_dir as base if not absolute.
-    pub fn resolve_db_path(&self, workspace_dir: &std::path::Path) -> PathBuf {
+    // ── New canonical path resolution (dual-track architecture) ──────────
+
+    /// Resolve the tenant root directory.
+    ///
+    /// - **Desktop**: always returns `config_dir` itself (`~/.huanxing/`).
+    /// - **Cloud**: returns `{config_dir}/users/{tenant_dir}/` where `tenant_dir`
+    ///   is in `{seq}-{phone}` format (e.g. `001-13888888888`).
+    pub fn resolve_tenant_root(
+        &self,
+        config_dir: &std::path::Path,
+        tenant_dir: Option<&str>,
+    ) -> PathBuf {
+        match self.deployment_mode {
+            DeploymentMode::Desktop => config_dir.to_path_buf(),
+            DeploymentMode::Cloud => {
+                if let Some(td) = tenant_dir {
+                    config_dir.join("users").join(td)
+                } else {
+                    // System-level agents have no tenant_dir
+                    config_dir.to_path_buf()
+                }
+            }
+        }
+    }
+
+    /// Resolve the owner workspace directory (global shared memory domain).
+    ///
+    /// Returns `{tenant_root}/workspace/`.
+    pub fn resolve_owner_dir(
+        &self,
+        config_dir: &std::path::Path,
+        tenant_dir: Option<&str>,
+    ) -> PathBuf {
+        self.resolve_tenant_root(config_dir, tenant_dir)
+            .join("workspace")
+    }
+
+    /// Resolve the agent wrapper directory (outer container for a specific agent).
+    ///
+    /// - System agents (`admin`, `guardian`): `{config_dir}/admin/` or `{config_dir}/guardian/`
+    /// - Regular agents: `{tenant_root}/agents/{agent_id}/`
+    pub fn resolve_agent_wrapper_dir(
+        &self,
+        config_dir: &std::path::Path,
+        tenant_dir: Option<&str>,
+        agent_id: &str,
+    ) -> PathBuf {
+        // System-level agents live at config_dir root, outside any user directory
+        if agent_id == "admin" || agent_id == "guardian" {
+            return config_dir.join(agent_id);
+        }
+        self.resolve_tenant_root(config_dir, tenant_dir)
+            .join("agents")
+            .join(agent_id)
+    }
+
+    /// Resolve the agent workspace directory (inner execution domain).
+    ///
+    /// Returns `{agent_wrapper}/workspace/`.
+    pub fn resolve_agent_workspace(
+        &self,
+        config_dir: &std::path::Path,
+        tenant_dir: Option<&str>,
+        agent_id: &str,
+    ) -> PathBuf {
+        self.resolve_agent_wrapper_dir(config_dir, tenant_dir, agent_id)
+            .join("workspace")
+    }
+
+    /// Resolve the memory database path within the owner workspace.
+    ///
+    /// Returns `{owner_workspace}/memory/brain.db`.
+    pub fn resolve_brain_db(
+        &self,
+        config_dir: &std::path::Path,
+        tenant_dir: Option<&str>,
+    ) -> PathBuf {
+        self.resolve_owner_dir(config_dir, tenant_dir)
+            .join("memory")
+            .join("brain.db")
+    }
+
+    /// Resolve the session database path within the agent workspace.
+    ///
+    /// Returns `{agent_workspace}/sessions/sessions.db`.
+    pub fn resolve_sessions_db(
+        &self,
+        config_dir: &std::path::Path,
+        tenant_dir: Option<&str>,
+        agent_id: &str,
+    ) -> PathBuf {
+        self.resolve_agent_workspace(config_dir, tenant_dir, agent_id)
+            .join("sessions")
+            .join("sessions.db")
+    }
+
+    // ── Legacy path resolution (kept for backward compatibility) ─────────
+
+    /// Resolve the database path, using config_dir as base if not absolute.
+    pub fn resolve_db_path(&self, config_dir: &std::path::Path) -> PathBuf {
         self.db_path
             .clone()
-            .unwrap_or_else(|| workspace_dir.join("data").join("users.db"))
+            .unwrap_or_else(|| config_dir.join("data").join("users.db"))
     }
 
     /// Resolve the agents directory.
     ///
-    /// 默认值为 `config_dir/agents`（即 `~/.huanxing/agents`），
-    /// 而不是 `workspace_dir/agents`（workspace 是 ZeroClaw 原版单 Agent 工作区）。
+    /// **Deprecated**: prefer `resolve_agent_wrapper_dir()` for new code.
     pub fn resolve_agents_dir(&self, config_dir: &std::path::Path) -> PathBuf {
         self.agents_dir
             .clone()
@@ -235,17 +363,17 @@ impl HuanXingConfig {
     }
 
     /// Resolve the guardian workspace.
-    pub fn resolve_guardian_workspace(&self, workspace_dir: &std::path::Path) -> PathBuf {
+    pub fn resolve_guardian_workspace(&self, config_dir: &std::path::Path) -> PathBuf {
         self.guardian_workspace
             .clone()
-            .unwrap_or_else(|| workspace_dir.join("guardian"))
+            .unwrap_or_else(|| config_dir.join("guardian"))
     }
 
     /// Resolve the admin workspace.
-    pub fn resolve_admin_workspace(&self, workspace_dir: &std::path::Path) -> PathBuf {
+    pub fn resolve_admin_workspace(&self, config_dir: &std::path::Path) -> PathBuf {
         self.admin_workspace
             .clone()
-            .unwrap_or_else(|| workspace_dir.join("admin"))
+            .unwrap_or_else(|| config_dir.join("admin"))
     }
 
     /// Check if a channel type is routed to the Admin agent.
@@ -254,6 +382,7 @@ impl HuanXingConfig {
     }
 
     /// Resolve the templates directory.
+    /// **Deprecated**: templates are now fetched from the marketplace.
     pub fn resolve_templates_dir(&self, workspace_dir: &std::path::Path) -> PathBuf {
         self.templates_dir
             .clone()
@@ -261,25 +390,27 @@ impl HuanXingConfig {
     }
 
     /// Resolve the backup directory.
-    pub fn resolve_backup_dir(&self, workspace_dir: &std::path::Path) -> PathBuf {
+    pub fn resolve_backup_dir(&self, config_dir: &std::path::Path) -> PathBuf {
         self.backup_dir
             .clone()
-            .unwrap_or_else(|| workspace_dir.join("backups"))
+            .unwrap_or_else(|| config_dir.join("backups"))
     }
 
     /// Resolve the common skills directory.
-    /// Auto-resolves to `{workspace}/common-skills` when not configured.
-    pub fn resolve_common_skills_dir(&self, workspace_dir: &std::path::Path) -> PathBuf {
+    /// Default: `{config_dir}/skills`
+    pub fn resolve_common_skills_dir(&self, config_dir: &std::path::Path) -> PathBuf {
         self.common_skills_dir
             .clone()
-            .unwrap_or_else(|| workspace_dir.join("common-skills"))
+            .unwrap_or_else(|| config_dir.join("skills"))
     }
 
     /// Resolve the hub directory (skill marketplace repository).
-    /// Returns None if not configured.
+    /// **Deprecated**: returns None if not configured.
     pub fn resolve_hub_dir(&self) -> Option<PathBuf> {
         self.hub_dir.clone()
     }
+
+    // ── Utility methods ─────────────────────────────────────────────────
 
     /// Get the backend API base URL.
     pub fn api_url(&self) -> &str {

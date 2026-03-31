@@ -12,7 +12,7 @@ export interface TipTapEditorProps {
   onPasteTitle?: (title: string) => void;
 }
 
-export default function TipTapEditor({ value, onChange, editable = true, onPasteTitle }: TipTapEditorProps) {
+const TipTapEditor = React.memo(({ value, onChange, editable = true, onPasteTitle }: TipTapEditorProps) => {
   // Keep a ref so the handlePaste closure always sees the latest callback
   const onPasteTitleRef = React.useRef(onPasteTitle);
   React.useEffect(() => { onPasteTitleRef.current = onPasteTitle; }, [onPasteTitle]);
@@ -162,7 +162,9 @@ export default function TipTapEditor({ value, onChange, editable = true, onPaste
       </div>
     </div>
   );
-}
+});
+
+export default TipTapEditor;
 
 // 提取工具栏按钮组件
 function MenuButton({

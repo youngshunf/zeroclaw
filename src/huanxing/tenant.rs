@@ -260,7 +260,21 @@ impl TenantContext {
         global_config: &crate::config::Config,
     ) -> anyhow::Result<Self> {
         // ── 0. Load workspace config.toml overrides ──────────────────
-        let overrides = load_workspace_overrides(&workspace_dir).await;
+        //
+        // Config cascading:
+        //   Cloud  (3-level): global config.toml → user config.toml → agent config.toml
+        //   Desktop (2-level): global config.toml → agent config.toml
+        //
+        // The agent-level config.toml lives at agent_wrapper_dir/config.toml
+        // (i.e. the parent of workspace_dir, since workspace_dir = wrapper/workspace/).
+        // For backward compat, we also check workspace_dir/config.toml directly.
+        let agent_wrapper_dir = workspace_dir.parent().unwrap_or(&workspace_dir);
+        let overrides = load_cascaded_overrides(
+            &owner_dir,
+            agent_wrapper_dir,
+            &workspace_dir,
+            &global_config.huanxing.deployment_mode,
+        ).await;
 
         // Effective model/provider: workspace config > DB record > global [huanxing] default
         let effective_model = overrides.default_model.clone().or(model.clone());
@@ -278,9 +292,11 @@ impl TenantContext {
             .unwrap_or("claude-sonnet-4-6");
 
         // Load skills from tenant workspace + common skills directory
+        let config_dir = global_config.config_path.parent()
+            .unwrap_or(&global_config.workspace_dir);
         let common_skills_dir = global_config
             .huanxing
-            .resolve_common_skills_dir(&global_config.workspace_dir);
+            .resolve_common_skills_dir(config_dir);
 
         let mut skills = crate::skills::load_skills_with_config(&workspace_dir, global_config);
         let ws_skill_names: Vec<String> = skills.iter().map(|s| s.name.clone()).collect();
@@ -567,9 +583,11 @@ impl TenantContext {
             .unwrap_or("claude-sonnet-4-6");
 
         // Load skills from guardian workspace + common skills directory
+        let config_dir = global_config.config_path.parent()
+            .unwrap_or(&global_config.workspace_dir);
         let common_skills_dir = global_config
             .huanxing
-            .resolve_common_skills_dir(&global_config.workspace_dir);
+            .resolve_common_skills_dir(config_dir);
         let mut skills = crate::skills::load_skills_with_config(&workspace_dir, global_config);
         if common_skills_dir.exists() {
             let ws_names: std::collections::HashSet<String> =
@@ -737,11 +755,15 @@ impl TenantContext {
         workspace_dir: PathBuf,
         global_config: &crate::config::Config,
     ) -> anyhow::Result<Self> {
+        // Desktop: config_dir = ~/.huanxing/, owner_dir = ~/.huanxing/workspace/
+        let config_dir = global_config.config_path.parent()
+            .unwrap_or(&global_config.workspace_dir);
+        let owner_dir = global_config.huanxing.resolve_owner_dir(config_dir, None);
         Self::load(
             agent_id,
             "",         // 桌面端单用户，无 DB user_id
             workspace_dir,
-            global_config.workspace_dir.clone(), // 强制共享主脑
+            owner_dir,
             None,       // model：从工作区 config.toml 读取
             None,       // provider：从工作区 config.toml 读取
             None,       // template
@@ -791,16 +813,66 @@ fn merge_autonomy(
 }
 
 /// Load workspace config.toml overrides. Returns defaults on any error.
+///
+/// Searches for config.toml at the given workspace directory.
 async fn load_workspace_overrides(workspace_dir: &std::path::Path) -> WorkspaceOverrides {
-    let config_path = workspace_dir.join("config.toml");
+    load_overrides_from_path(&workspace_dir.join("config.toml")).await
+}
+
+/// Load and cascade config.toml overrides according to deployment mode.
+///
+/// - **Cloud (3-level)**: user config.toml → agent config.toml (agent overrides user)
+/// - **Desktop (2-level)**: agent config.toml only (global config already loaded by ZeroClaw core)
+///
+/// The user-level config is at `{tenant_root}/config.toml` (same dir as owner workspace).
+/// The agent-level config is at `{agent_wrapper_dir}/config.toml`.
+async fn load_cascaded_overrides(
+    _owner_dir: &std::path::Path,
+    agent_wrapper_dir: &std::path::Path,
+    workspace_dir: &std::path::Path,
+    deployment_mode: &super::config::DeploymentMode,
+) -> WorkspaceOverrides {
+    match deployment_mode {
+        super::config::DeploymentMode::Cloud => {
+            // 3-level: user config → agent config
+            // tenant_root is owner_dir's parent (owner_dir = tenant_root/workspace/)
+            let tenant_root = _owner_dir.parent().unwrap_or(_owner_dir);
+            let user_config = load_overrides_from_path(&tenant_root.join("config.toml")).await;
+
+            // Try agent_wrapper_dir/config.toml first, fallback to workspace_dir/config.toml
+            let agent_config_path = agent_wrapper_dir.join("config.toml");
+            let agent_config = if agent_config_path.exists() {
+                load_overrides_from_path(&agent_config_path).await
+            } else {
+                load_overrides_from_path(&workspace_dir.join("config.toml")).await
+            };
+
+            // Merge: agent overrides user
+            merge_overrides(user_config, agent_config)
+        }
+        super::config::DeploymentMode::Desktop => {
+            // 2-level: just agent config (global is already loaded by ZeroClaw core).
+            // Try agent_wrapper_dir/config.toml first, fallback to workspace_dir/config.toml
+            let agent_config_path = agent_wrapper_dir.join("config.toml");
+            if agent_config_path.exists() {
+                load_overrides_from_path(&agent_config_path).await
+            } else {
+                load_overrides_from_path(&workspace_dir.join("config.toml")).await
+            }
+        }
+    }
+}
+
+/// Load overrides from a specific config.toml path.
+async fn load_overrides_from_path(config_path: &std::path::Path) -> WorkspaceOverrides {
     if !config_path.exists() {
         return WorkspaceOverrides::default();
     }
-    match tokio::fs::read_to_string(&config_path).await {
+    match tokio::fs::read_to_string(config_path).await {
         Ok(content) => match toml::from_str::<WorkspaceOverrides>(&content) {
             Ok(overrides) => {
                 tracing::info!(
-                    workspace = %workspace_dir.display(),
+                    config_path = %config_path.display(),
                     has_api_key = overrides.api_key.is_some(),
                     has_model = overrides.default_model.is_some(),
                     has_provider = overrides.default_provider.is_some(),
@@ -811,7 +883,7 @@ async fn load_workspace_overrides(workspace_dir: &std::path::Path) -> WorkspaceO
                     has_memory = overrides.memory.is_some(),
                     has_reliability = overrides.reliability.is_some(),
                     reliability_fallbacks = overrides.reliability.as_ref().map(|r| r.fallback_providers.len()).unwrap_or(0),
-                    "Loaded workspace config.toml overrides"
+                    "Loaded config.toml overrides"
                 );
                 overrides
             }
@@ -819,7 +891,7 @@ async fn load_workspace_overrides(workspace_dir: &std::path::Path) -> WorkspaceO
                 tracing::warn!(
                     path = %config_path.display(),
                     error = %e,
-                    "Failed to parse workspace config.toml, using defaults"
+                    "Failed to parse config.toml, using defaults"
                 );
                 WorkspaceOverrides::default()
             }
@@ -828,10 +900,44 @@ async fn load_workspace_overrides(workspace_dir: &std::path::Path) -> WorkspaceO
             tracing::warn!(
                 path = %config_path.display(),
                 error = %e,
-                "Failed to read workspace config.toml, using defaults"
+                "Failed to read config.toml, using defaults"
             );
             WorkspaceOverrides::default()
         }
+    }
+}
+
+/// Merge two WorkspaceOverrides: `higher` takes priority over `lower`.
+/// For Option fields, higher wins if present; otherwise lower is kept.
+fn merge_overrides(lower: WorkspaceOverrides, higher: WorkspaceOverrides) -> WorkspaceOverrides {
+    WorkspaceOverrides {
+        api_key: higher.api_key.or(lower.api_key),
+        default_provider: higher.default_provider.or(lower.default_provider),
+        default_model: higher.default_model.or(lower.default_model),
+        default_temperature: higher.default_temperature.or(lower.default_temperature),
+        agent: AgentOverrides {
+            session: higher.agent.session.or(lower.agent.session),
+            compact_context: higher.agent.compact_context.or(lower.agent.compact_context),
+            max_tool_iterations: higher.agent.max_tool_iterations.or(lower.agent.max_tool_iterations),
+            max_history_messages: higher.agent.max_history_messages.or(lower.agent.max_history_messages),
+            _extra: higher.agent._extra,
+        },
+        memory: higher.memory.or(lower.memory),
+        knowledge: higher.knowledge.or(lower.knowledge),
+        autonomy: higher.autonomy.or(lower.autonomy),
+        skills: higher.skills.or(lower.skills),
+        security: higher.security.or(lower.security),
+        channels_config: higher.channels_config.or(lower.channels_config),
+        heartbeat: higher.heartbeat.or(lower.heartbeat),
+        cron: higher.cron.or(lower.cron),
+        multimodal: higher.multimodal.or(lower.multimodal),
+        web_search: higher.web_search.or(lower.web_search),
+        web_fetch: higher.web_fetch.or(lower.web_fetch),
+        browser: higher.browser.or(lower.browser),
+        http_request: higher.http_request.or(lower.http_request),
+        reliability: higher.reliability.or(lower.reliability),
+        sop: higher.sop.or(lower.sop),
+        _extra: higher._extra,
     }
 }
 

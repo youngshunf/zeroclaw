@@ -15,17 +15,25 @@ export default function MermaidViewer({ code }: MermaidViewerProps) {
   const [error, setError] = useState<string>('');
   const [isRendering, setIsRendering] = useState(true);
 
-  // 初始化 Mermaid 配置，针对深浅模式可扩展
+  const [themeMode, setThemeMode] = useState<'neutral' | 'dark'>('neutral');
+
+  // 监听深浅主题切换
   useEffect(() => {
-    mermaid.initialize({
-      startOnLoad: false,
-      theme: 'neutral', // 使用精致的 neutral 主题
-      securityLevel: 'loose',
-      fontFamily: 'inherit',
+    const checkTheme = () => {
+      const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+      setThemeMode(isDark ? 'dark' : 'neutral');
+    };
+    checkTheme();
+    const observer = new MutationObserver((mutations) => {
+      for (const m of mutations) {
+        if (m.attributeName === 'data-theme') checkTheme();
+      }
     });
+    observer.observe(document.documentElement, { attributes: true });
+    return () => observer.disconnect();
   }, []);
 
-  // 渲染 Mermaid
+  // 渲染 Mermaid (依赖 code 和 themeMode)
   useEffect(() => {
     let isMounted = true;
     const renderDiagram = async () => {
@@ -33,6 +41,15 @@ export default function MermaidViewer({ code }: MermaidViewerProps) {
       try {
         setIsRendering(true);
         setError('');
+        
+        // 动态覆盖 Mermaid 全局主题配置
+        mermaid.initialize({
+          startOnLoad: false,
+          theme: themeMode,
+          securityLevel: 'loose',
+          fontFamily: 'inherit',
+        });
+
         // 生成随机ID防止多次渲染冲突
         const id = `mermaid-render-${Math.random().toString(36).substring(2, 9)}`;
         const { svg } = await mermaid.render(id, code);
@@ -50,7 +67,7 @@ export default function MermaidViewer({ code }: MermaidViewerProps) {
     };
     renderDiagram();
     return () => { isMounted = false; };
-  }, [code]);
+  }, [code, themeMode]);
 
   // 将 SVG 原生字符串转为 Base64 图片 (以便支持下载和放大)
   const svgDataUrl = useMemo(() => {
@@ -168,7 +185,7 @@ export default function MermaidViewer({ code }: MermaidViewerProps) {
   }
 
   return (
-    <div className="relative group my-4 rounded-hx-radius-md border border-hx-border bg-white overflow-hidden shadow-sm">
+    <div className={`relative group my-4 rounded-hx-radius-md border border-hx-border overflow-hidden shadow-sm ${themeMode === 'dark' ? 'bg-[#18181a]' : 'bg-white'}`}>
       {/* 操作条 - 悬浮显示 */}
       <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10 bg-hx-bg-main/90 backdrop-blur-sm p-1 rounded-hx-radius-sm border border-hx-border shadow-sm">
         {svgDataUrl && (

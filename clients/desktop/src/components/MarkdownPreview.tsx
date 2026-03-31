@@ -1,3 +1,4 @@
+import React from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
@@ -7,7 +8,7 @@ export interface MarkdownPreviewProps {
   content: string;
 }
 
-export default function MarkdownPreview({ content }: MarkdownPreviewProps) {
+const MarkdownPreview = React.memo(({ content }: MarkdownPreviewProps) => {
   return (
     <div className="h-full overflow-y-auto px-4 py-4 scroll-smooth bg-hx-bg-main" data-tauri-drag-region="true">
       <div className="hx-markdown w-full min-h-full pb-[20vh]">
@@ -33,4 +34,6 @@ export default function MarkdownPreview({ content }: MarkdownPreviewProps) {
       </div>
     </div>
   );
-}
+});
+
+export default MarkdownPreview;

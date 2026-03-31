@@ -287,9 +287,10 @@ impl Tool for HxRegisterUser {
         let access_token = credentials.access_token.as_str();
         let gateway_token = credentials.gateway_token.as_deref().unwrap_or_default();
 
-        // Generate agent ID
+        // Generate agent ID and tenant directory name
         let seq = self.db.get_next_user_seq().await.unwrap_or(1);
         let agent_id = format!("{seq:03}-{phone}-{template}");
+        let tenant_dir_name = format!("{seq:03}-{phone}");
         let workspace = self.agents_dir.join(&agent_id);
 
         // Step 2: Save user to local DB with tokens + channel binding + routing
@@ -303,6 +304,7 @@ impl Tool for HxRegisterUser {
                 template,
                 Some(star_name),
                 Some(&workspace.to_string_lossy()),
+                Some(&tenant_dir_name),
                 Some(access_token),
                 Some(llm_token),
                 Some(gateway_token),

@@ -28,6 +28,9 @@ pub struct TenantRecord {
     pub star_name: Option<String>,
     /// Workspace path.
     pub workspace: Option<String>,
+    /// Tenant directory name in `{seq}-{phone}` format (e.g. "001-13888888888").
+    /// Used to resolve the tenant root: `{config_dir}/users/{tenant_dir}/`.
+    pub tenant_dir: Option<String>,
     /// Plan expiry date.
     pub plan_expires: Option<String>,
     /// Created at timestamp.
@@ -138,6 +141,7 @@ impl TenantDb {
                 template      TEXT NOT NULL DEFAULT 'finance',
                 agent_id      TEXT UNIQUE,
                 workspace     TEXT,
+                tenant_dir    TEXT,
                 status        TEXT DEFAULT 'active',
                 plan          TEXT DEFAULT 'star_dust',
                 plan_expires  TEXT,
@@ -198,6 +202,7 @@ impl TenantDb {
             ("gateway_token", "NULL"),
             ("token_expires", "NULL"),
             ("server_id", "NULL"),
+            ("tenant_dir", "NULL"),
         ] {
             if !columns.iter().any(|c| c == col) {
                 conn.execute_batch(&format!(
@@ -222,8 +227,8 @@ impl TenantDb {
         let conn = self.conn.lock().await;
         let mut stmt = conn.prepare_cached(
             "SELECT u.user_id, u.agent_id, u.nickname, u.phone, u.template,
-                    u.plan, u.status, u.star_name, u.workspace, u.plan_expires,
-                    u.created_at, u.last_active,
+                    u.plan, u.status, u.star_name, u.workspace, u.tenant_dir,
+                    u.plan_expires, u.created_at, u.last_active,
                     u.access_token, u.llm_token, u.gateway_token, u.token_expires, u.server_id
              FROM users u
              JOIN channels c ON u.user_id = c.user_id
@@ -254,13 +259,14 @@ impl TenantDb {
         channel_type: &str,
         peer_id: &str,
         workspace: Option<&str>,
+        tenant_dir: Option<&str>,
     ) -> Result<()> {
         let conn = self.conn.lock().await;
 
         conn.execute(
-            "INSERT INTO users (user_id, phone, agent_id, nickname, template, star_name, workspace, status)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'active')",
-            rusqlite::params![user_id, phone, agent_id, nickname, template, star_name, workspace],
+            "INSERT INTO users (user_id, phone, agent_id, nickname, template, star_name, workspace, tenant_dir, status)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'active')",
+            rusqlite::params![user_id, phone, agent_id, nickname, template, star_name, workspace, tenant_dir],
         )?;
 
         conn.execute(
@@ -273,6 +279,7 @@ impl TenantDb {
             user_id,
             phone,
             agent_id,
+            ?tenant_dir,
             channel_type,
             peer_id,
             "User registered"
@@ -291,6 +298,7 @@ impl TenantDb {
         template: &str,
         star_name: Option<&str>,
         workspace: Option<&str>,
+        tenant_dir: Option<&str>,
         access_token: Option<&str>,
         llm_token: Option<&str>,
         gateway_token: Option<&str>,
@@ -300,9 +308,9 @@ impl TenantDb {
 
         conn.execute(
             "INSERT OR REPLACE INTO users
-             (user_id, phone, agent_id, nickname, template, star_name, workspace, status,
+             (user_id, phone, agent_id, nickname, template, star_name, workspace, tenant_dir, status,
               access_token, llm_token, gateway_token, server_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'active', ?8, ?9, ?10, ?11)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'active', ?9, ?10, ?11, ?12)",
             rusqlite::params![
                 user_id,
                 phone,
@@ -311,6 +319,7 @@ impl TenantDb {
                 template,
                 star_name,
                 workspace,
+                tenant_dir,
                 access_token,
                 llm_token,
                 gateway_token,
@@ -318,7 +327,7 @@ impl TenantDb {
             ],
         )?;
 
-        tracing::info!(user_id, phone, agent_id, "User saved with tokens");
+        tracing::info!(user_id, phone, agent_id, ?tenant_dir, "User saved with tokens");
 
         Ok(())
     }
@@ -407,8 +416,8 @@ impl TenantDb {
         let conn = self.conn.lock().await;
         let mut stmt = conn.prepare_cached(
             "SELECT user_id, agent_id, nickname, phone, template,
-                    plan, status, star_name, workspace, plan_expires,
-                    created_at, last_active,
+                    plan, status, star_name, workspace, tenant_dir,
+                    plan_expires, created_at, last_active,
                     access_token, llm_token, gateway_token, token_expires, server_id
              FROM users WHERE phone = ?1 LIMIT 1",
         )?;
@@ -424,8 +433,8 @@ impl TenantDb {
         let conn = self.conn.lock().await;
         let mut stmt = conn.prepare_cached(
             "SELECT user_id, agent_id, nickname, phone, template,
-                    plan, status, star_name, workspace, plan_expires,
-                    created_at, last_active,
+                    plan, status, star_name, workspace, tenant_dir,
+                    plan_expires, created_at, last_active,
                     access_token, llm_token, gateway_token, token_expires, server_id
              FROM users WHERE agent_id = ?1 LIMIT 1",
         )?;
@@ -443,8 +452,8 @@ impl TenantDb {
         let conn = self.conn.lock().await;
         let mut stmt = conn.prepare_cached(
             "SELECT user_id, agent_id, nickname, phone, template,
-                    plan, status, star_name, workspace, plan_expires,
-                    created_at, last_active,
+                    plan, status, star_name, workspace, tenant_dir,
+                    plan_expires, created_at, last_active,
                     access_token, llm_token, gateway_token, token_expires, server_id
              FROM users WHERE user_id = ?1 LIMIT 1",
         )?;
@@ -576,8 +585,8 @@ impl TenantDb {
         let mut data_sql = count_sql.replace(
             "SELECT COUNT(*) FROM users",
             "SELECT user_id, agent_id, nickname, phone, template,
-                    plan, status, star_name, workspace, plan_expires,
-                    created_at, last_active,
+                    plan, status, star_name, workspace, tenant_dir,
+                    plan_expires, created_at, last_active,
                     access_token, llm_token, gateway_token, token_expires, server_id FROM users",
         );
         data_sql.push_str(&format!(
@@ -679,15 +688,15 @@ impl TenantDb {
             status: row.get(6).unwrap_or_else(|_| "active".to_string()),
             star_name: row.get(7).unwrap_or(None),
             workspace: row.get(8).unwrap_or(None),
-            plan_expires: row.get(9).unwrap_or(None),
-            created_at: row.get(10).unwrap_or(None),
-            last_active: row.get(11).unwrap_or(None),
-            // These may not exist in old queries that only select 12 columns
-            access_token: row.get(12).unwrap_or(None),
-            llm_token: row.get(13).unwrap_or(None),
-            gateway_token: row.get(14).unwrap_or(None),
-            token_expires: row.get(15).unwrap_or(None),
-            server_id: row.get(16).unwrap_or(None),
+            tenant_dir: row.get(9).unwrap_or(None),
+            plan_expires: row.get(10).unwrap_or(None),
+            created_at: row.get(11).unwrap_or(None),
+            last_active: row.get(12).unwrap_or(None),
+            access_token: row.get(13).unwrap_or(None),
+            llm_token: row.get(14).unwrap_or(None),
+            gateway_token: row.get(15).unwrap_or(None),
+            token_expires: row.get(16).unwrap_or(None),
+            server_id: row.get(17).unwrap_or(None),
         }
     }
 
@@ -703,6 +712,7 @@ impl TenantDb {
             status: row.get(6).unwrap_or_else(|_| "active".to_string()),
             star_name: row.get(7).unwrap_or(None),
             workspace: row.get(8).unwrap_or(None),
+            tenant_dir: None,
             plan_expires: row.get(9).unwrap_or(None),
             created_at: row.get(10).unwrap_or(None),
             last_active: row.get(11).unwrap_or(None),

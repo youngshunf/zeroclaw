@@ -105,6 +105,7 @@ impl TenantRouter {
     /// This is the hot path — called on every inbound message.
     pub async fn resolve(&self, channel: &str, sender_id: &str) -> Arc<TenantContext> {
         // 0. Admin channel — route directly to admin agent.
+        //    Admin is accessed via pre-configured designated channels (e.g. feishu).
         if self.config.is_admin_channel(channel) {
             if let Some(admin) = &self.admin {
                 return admin.clone();
@@ -128,14 +129,21 @@ impl TenantRouter {
                 let config_dir = self.global_config.config_path.parent()
                     .map(|p| p.to_path_buf())
                     .unwrap_or_else(|| self.workspace_dir.clone());
-                let agents_dir = self.config.resolve_agents_dir(&config_dir);
-                let tenant_workspace = agents_dir.join(&record.agent_id);
+
+                // Resolve paths using the new dual-track architecture.
+                // Cloud: config_dir/users/{tenant_dir}/agents/{agent_id}/workspace/
+                // Desktop: config_dir/agents/{agent_id}/workspace/ (tenant_dir is None)
+                let tenant_dir_str = record.tenant_dir.as_deref();
+                let owner_dir = self.config.resolve_owner_dir(&config_dir, tenant_dir_str);
+                let agent_workspace = self.config.resolve_agent_workspace(
+                    &config_dir, tenant_dir_str, &record.agent_id,
+                );
 
                 match TenantContext::load(
                     &record.agent_id,
                     &record.user_id,
-                    tenant_workspace.clone(), // workspace_dir
-                    tenant_workspace,         // owner_dir (云端环境保持绝对物理隔离)
+                    agent_workspace.clone(),
+                    owner_dir,
                     self.config.default_model.clone(),
                     self.config.default_provider.clone(),
                     record.template.clone(),
@@ -152,6 +160,7 @@ impl TenantRouter {
                         cache.insert(key, ctx.clone());
                         tracing::info!(
                             agent_id = %ctx.agent_id,
+                            ?tenant_dir_str,
                             channel,
                             sender_id,
                             "Tenant context loaded from DB"
@@ -169,6 +178,12 @@ impl TenantRouter {
                     }
                 }
             }
+            // 3. No binding found — route to Guardian.
+            //    Guardian guides unregistered users through:
+            //    - Phone verification & registration
+            //    - Agent selection/creation from marketplace
+            //    - Route binding (writes channels table)
+            //    - Cache invalidation so next message routes normally
             Ok(None) => {
                 tracing::debug!(channel, sender_id, "No tenant found, using guardian");
                 self.guardian.clone()
