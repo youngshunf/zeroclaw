@@ -18,7 +18,7 @@ export default function MermaidViewer({ code }: MermaidViewerProps) {
   useEffect(() => {
     mermaid.initialize({
       startOnLoad: false,
-      theme: 'default', // TODO: 可通过 document.documentElement 获取深浅模式适配
+      theme: 'neutral', // 使用精致的 neutral 主题
       securityLevel: 'loose',
       fontFamily: 'inherit',
     });
@@ -106,7 +106,7 @@ export default function MermaidViewer({ code }: MermaidViewerProps) {
   }
 
   return (
-    <div className="relative group my-4 rounded-hx-radius-md border border-hx-border bg-hx-bg-panel overflow-hidden">
+    <div className="relative group my-4 rounded-hx-radius-md border border-hx-border bg-white overflow-hidden shadow-sm">
       {/* 操作条 - 悬浮显示 */}
       <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10 bg-hx-bg-main/90 backdrop-blur-sm p-1 rounded-hx-radius-sm border border-hx-border shadow-sm">
         {svgDataUrl && (

@@ -557,7 +557,7 @@ export default function Documents() {
         {(selectedDoc || isEditing) ? (
           <div className="flex flex-col h-full w-full">
             {/* Header 控制栏 */}
-            <div data-tauri-drag-region="true" className="h-14 shrink-0 px-6 border-b border-hx-border flex items-center justify-between bg-hx-bg-panel/50 z-10 w-full">
+            <div data-tauri-drag-region="true" className="h-14 shrink-0 px-6 border-b border-hx-border flex items-center justify-between bg-hx-bg-panel/50 z-40 relative w-full">
               {isEditing ? (
                  <Input
                  type="text"
@@ -596,8 +596,8 @@ export default function Documents() {
                        
                        {isExportMenuOpen && (
                          <>
-                           <div className="fixed inset-0 z-10" onClick={() => setIsExportMenuOpen(false)}></div>
-                           <div className="absolute right-0 top-full mt-1.5 w-36 bg-hx-bg-panel border border-hx-border rounded-hx-radius-md shadow-lg z-20 py-1 overflow-hidden">
+                           <div className="fixed inset-0 z-40" onClick={() => setIsExportMenuOpen(false)}></div>
+                           <div className="absolute right-0 top-full mt-1.5 w-36 bg-hx-bg-panel border border-hx-border rounded-hx-radius-md shadow-lg z-50 py-1 overflow-hidden">
                              <button onClick={() => handleExport('markdown')} className="w-full text-left px-4 py-2 text-[13px] text-hx-text-primary hover:bg-hx-bg-hover transition-colors cursor-pointer border-none bg-transparent flex items-center gap-2">
                                  <FileText size={14} className="text-hx-text-tertiary" /> Markdown
                              </button>
