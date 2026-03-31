@@ -2564,23 +2564,34 @@ async fn process_channel_message(
 
     // ── Knowledge suggestion: prepend relevant knowledge context ────────
     if msg_ctx.knowledge_config.suggest_on_query && msg_ctx.knowledge_config.enabled {
-        if let Some(ref kg) = msg_ctx.knowledge_graph {
-            let suggestions = crate::memory::knowledge_suggest::suggest_knowledge(
+        let mut suggestions = vec![];
+
+        if msg_ctx.knowledge_config.cross_workspace_search && msg_ctx.cross_knowledge_index.is_some() {
+            if let Some(ref cross_index) = msg_ctx.cross_knowledge_index {
+                let cross_res = cross_index.search(
+                    &msg.content,
+                    msg_ctx.knowledge_config.suggest_max_items,
+                );
+                suggestions.extend(cross_res.into_iter().map(|r| r.node));
+            }
+        } else if let Some(ref kg) = msg_ctx.knowledge_graph {
+            suggestions = crate::memory::knowledge_suggest::suggest_knowledge(
                 kg,
                 &msg.content,
                 msg_ctx.knowledge_config.suggest_max_items,
             );
-            if !suggestions.is_empty() {
-                let context_block =
-                    crate::memory::knowledge_suggest::format_knowledge_context(&suggestions);
-                tracing::info!(
-                    count = suggestions.len(),
-                    channel = %msg.channel,
-                    "Knowledge suggest: injected {} items as [context] block",
-                    suggestions.len()
-                );
-                msg.content = format!("{context_block}{}", msg.content);
-            }
+        }
+
+        if !suggestions.is_empty() {
+            let context_block =
+                crate::memory::knowledge_suggest::format_knowledge_context(&suggestions);
+            tracing::info!(
+                count = suggestions.len(),
+                channel = %msg.channel,
+                "Knowledge suggest: injected {} items as [context] block",
+                suggestions.len()
+            );
+            msg.content = format!("{context_block}{}", msg.content);
         }
     }
 

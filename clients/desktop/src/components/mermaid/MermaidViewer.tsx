@@ -82,14 +82,20 @@ export default function MermaidViewer({ code }: MermaidViewerProps) {
       // 绘制图像（带 padding 偏移）
       ctx.drawImage(img, padding, padding);
       
-      // 导出为 JPEG 格式
-      const jpgUrl = canvas.toDataURL('image/jpeg', 1.0);
-      const a = document.createElement('a');
-      a.href = jpgUrl;
-      a.download = `mermaid-diagram-${new Date().getTime()}.jpg`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+      // 导出为 JPEG 格式，采用 toBlob 因为 Tauri 可能会拦截 data: URI 的直接下载
+      canvas.toBlob((blob) => {
+        if (!blob) return;
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = `mermaid-diagram-${new Date().getTime()}.jpg`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        
+        // 延迟释放，避免刚呼出下载就被销毁
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+      }, 'image/jpeg', 1.0);
     };
     img.src = svgDataUrl;
   };

@@ -8,7 +8,7 @@
 //! all knowledge.db files under the user's agents directory, aggregating
 //! results and deduplicating by title.
 
-use crate::memory::knowledge_graph::{KnowledgeGraph, KnowledgeNode, SearchResult};
+use crate::memory::knowledge_graph::{KnowledgeGraph, KnowledgeNode};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 

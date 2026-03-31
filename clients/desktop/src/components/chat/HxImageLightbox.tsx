@@ -93,22 +93,41 @@ export function HxPhotoProvider({ children }: { children: React.ReactNode }) {
         const currentImage = images[index];
         const src = currentImage?.src || '';
 
-        const handleDownload = () => {
+        const handleDownload = async () => {
           if (!src) return;
-          const link = document.createElement('a');
-          link.href = src;
-          
-          if (src.startsWith('data:')) {
-            const ext = src.split(';')[0].split('/')[1] || 'png';
-            link.download = `huanxing_image.${ext.replace('+xml', '')}`;
-          } else {
-            link.download = src.split('/').pop() || 'image';
+          try {
+            let downloadUrl = src;
+            let revoke = false;
+            
+            // 如果是 data: URI，转换为 blob 绕过 Tauri 的安全拦截
+            if (src.startsWith('data:')) {
+              const res = await fetch(src);
+              const blob = await res.blob();
+              downloadUrl = URL.createObjectURL(blob);
+              revoke = true;
+            }
+            
+            const link = document.createElement('a');
+            link.href = downloadUrl;
+            
+            if (src.startsWith('data:')) {
+              const ext = src.split(';')[0].split('/')[1] || 'png';
+              link.download = `huanxing_image.${ext.replace('+xml', '')}`;
+            } else {
+              link.download = src.split('/').pop() || 'image';
+            }
+            
+            link.target = '_blank';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
+            if (revoke) {
+              setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+            }
+          } catch (e) {
+            console.error('Failed to download image:', e);
           }
-          
-          link.target = '_blank';
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
         };
 
         return (
