@@ -48,6 +48,7 @@ impl MessageContextResolver for MultiTenantResolver {
             session_manager: tenant.session_manager.clone(),
             workspace_dir: tenant.workspace_dir.clone(),
             knowledge_graph: tenant.knowledge_graph.clone(),
+            cross_knowledge_index: tenant.cross_knowledge_index.clone(),
             knowledge_config: tenant.knowledge_config.clone(),
             security: tenant.security.clone(),
             non_cli_excluded_tools: Some(tenant.non_cli_excluded_tools.clone()),

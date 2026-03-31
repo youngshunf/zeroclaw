@@ -205,6 +205,9 @@ pub struct TenantContext {
     /// Desktop: shared via owner_dir. Cloud: isolated per workspace.
     pub knowledge_graph: Option<std::sync::Arc<crate::memory::knowledge_graph::KnowledgeGraph>>,
 
+    /// Multi-agent cross-workspace knowledge index.
+    pub cross_knowledge_index: Option<std::sync::Arc<crate::memory::knowledge_cross::CrossWorkspaceKnowledgeIndex>>,
+
     /// Per-tenant knowledge config (for auto_capture, suggest_on_query, etc.).
     pub knowledge_config: crate::config::KnowledgeConfig,
 }
@@ -427,6 +430,23 @@ impl TenantContext {
                 None
             };
 
+        // ── B3. Create multi-agent cross-workspace knowledge index ────────────
+        let cross_knowledge_index = if effective_knowledge_config.enabled && effective_knowledge_config.cross_workspace_search {
+            if let Some(agents_dir) = crate::memory::knowledge_cross::agents_dir_from_workspace(&workspace_dir) {
+                let max_nodes = effective_knowledge_config.max_nodes;
+                Some(std::sync::Arc::new(
+                    tokio::task::spawn_blocking(move || {
+                        crate::memory::knowledge_cross::CrossWorkspaceKnowledgeIndex::discover(&agents_dir, max_nodes)
+                    })
+                    .await?
+                ))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         // ── C. Session backend (JSONL or SQLite based on channels_config) ──
         let tenant_session_manager: Option<Arc<dyn SessionBackend>> =
             create_session_backend(&workspace_dir, global_config);
@@ -519,6 +539,7 @@ impl TenantContext {
             message_timeout_secs: effective_message_timeout,
             reliability: effective_reliability,
             knowledge_graph,
+            cross_knowledge_index,
             knowledge_config: effective_knowledge_config,
         })
     }
@@ -689,6 +710,7 @@ impl TenantContext {
             message_timeout_secs: effective_message_timeout,
             reliability: effective_reliability,
             knowledge_graph: None,
+            cross_knowledge_index: None,
             knowledge_config: Default::default(),
         })
     }

@@ -10,9 +10,9 @@
  * - 工具栏操作
  */
 import React, { useCallback } from 'react';
-import { PhotoProvider, PhotoView } from 'react-photo-view';
-import 'react-photo-view/dist/react-photo-view.css';
 import { RotateCw, FlipHorizontal, ZoomIn, ZoomOut, Download } from 'lucide-react';
+import { PhotoProvider, PhotoView as BasePhotoView } from 'react-photo-view';
+import 'react-photo-view/dist/react-photo-view.css';
 
 // ── 辅助：将本地文件路径转为可在 webview 中显示的 URL ──────────
 
@@ -97,7 +97,14 @@ export function HxPhotoProvider({ children }: { children: React.ReactNode }) {
           if (!src) return;
           const link = document.createElement('a');
           link.href = src;
-          link.download = src.split('/').pop() || 'image';
+          
+          if (src.startsWith('data:')) {
+            const ext = src.split(';')[0].split('/')[1] || 'png';
+            link.download = `huanxing_image.${ext.replace('+xml', '')}`;
+          } else {
+            link.download = src.split('/').pop() || 'image';
+          }
+          
           link.target = '_blank';
           document.body.appendChild(link);
           link.click();
@@ -121,4 +128,4 @@ export function HxPhotoProvider({ children }: { children: React.ReactNode }) {
 }
 
 // re-export PhotoView for convenience
-export { PhotoView } from 'react-photo-view';
+export const PhotoView = BasePhotoView;

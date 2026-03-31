@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
 import mermaid from 'mermaid';
 import { Download, Maximize2, Loader2, AlertCircle } from 'lucide-react';
-import { PhotoProvider, PhotoView } from 'react-photo-view';
-import 'react-photo-view/dist/react-photo-view.css';
+import { HxPhotoProvider, PhotoView } from '../chat/HxImageLightbox';
 
 export interface MermaidViewerProps {
   code: string;
@@ -88,7 +87,9 @@ export default function MermaidViewer({ code }: MermaidViewerProps) {
       const a = document.createElement('a');
       a.href = jpgUrl;
       a.download = `mermaid-diagram-${new Date().getTime()}.jpg`;
+      document.body.appendChild(a);
       a.click();
+      document.body.removeChild(a);
     };
     img.src = svgDataUrl;
   };
@@ -111,7 +112,7 @@ export default function MermaidViewer({ code }: MermaidViewerProps) {
       <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10 bg-hx-bg-main/90 backdrop-blur-sm p-1 rounded-hx-radius-sm border border-hx-border shadow-sm">
         {svgDataUrl && (
           <>
-            <PhotoProvider>
+            <HxPhotoProvider>
               <PhotoView src={svgDataUrl}>
                 <button
                   className="w-8 h-8 flex items-center justify-center rounded hover:bg-hx-bg-hover text-hx-text-secondary hover:text-hx-text-primary transition-colors cursor-pointer"
@@ -120,7 +121,7 @@ export default function MermaidViewer({ code }: MermaidViewerProps) {
                   <Maximize2 size={15} />
                 </button>
               </PhotoView>
-            </PhotoProvider>
+            </HxPhotoProvider>
             
             <div className="w-[1px] h-4 bg-hx-border mx-1"></div>
             
