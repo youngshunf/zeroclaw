@@ -8,9 +8,14 @@ export interface TipTapEditorProps {
   value: string;
   onChange: (value: string) => void;
   editable?: boolean;
+  /** Called when pasted markdown's first line is a heading — useful to auto-fill title */
+  onPasteTitle?: (title: string) => void;
 }
 
-export default function TipTapEditor({ value, onChange, editable = true }: TipTapEditorProps) {
+export default function TipTapEditor({ value, onChange, editable = true, onPasteTitle }: TipTapEditorProps) {
+  // Keep a ref so the handlePaste closure always sees the latest callback
+  const onPasteTitleRef = React.useRef(onPasteTitle);
+  React.useEffect(() => { onPasteTitleRef.current = onPasteTitle; }, [onPasteTitle]);
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
@@ -38,31 +43,44 @@ export default function TipTapEditor({ value, onChange, editable = true }: TipTa
         const clipboardData = event.clipboardData;
         if (!clipboardData) return false;
 
-        const html = clipboardData.getData('text/html');
         const text = clipboardData.getData('text/plain');
-        if (!text || !html) return false;
+        if (!text) return false;
 
-        const parsed = new DOMParser().parseFromString(html, 'text/html');
-        const hasSemanticHtml = !!(
-          parsed.querySelector('h1, h2, h3, h4, h5, h6') ||
-          parsed.querySelector('strong, b, em, i') ||
-          parsed.querySelector('table, ul, ol, li') ||
-          parsed.querySelector('blockquote') ||
-          parsed.querySelector('a[href]')
-        );
+        const html = clipboardData.getData('text/html');
 
-        if (!hasSemanticHtml) {
+        // If clipboard has rich HTML with semantic structure (real headings/lists),
+        // let TipTap's default HTML handler deal with it
+        if (html) {
+          const parsed = new DOMParser().parseFromString(html, 'text/html');
+          const hasSemanticHtml = !!(
+            parsed.querySelector('h1, h2, h3, h4, h5, h6') ||
+            parsed.querySelector('table, ul, ol, li') ||
+            parsed.querySelector('blockquote, pre')
+          );
+          if (hasSemanticHtml) return false;
+        }
+
+        // Try to parse as markdown using tiptap-markdown's text parser
+        try {
           const mdParser = (view as any).someProp('clipboardTextParser');
           if (mdParser) {
-            try {
-              const slice = mdParser(text, view.state.selection.$from, false, view);
-              if (slice) {
-                view.dispatch(view.state.tr.replaceSelection(slice));
-                return true;
+            const slice = mdParser(text, view.state.selection.$from, false, view);
+            if (slice && slice.content.childCount > 0) {
+              event.preventDefault();
+              view.dispatch(view.state.tr.replaceSelection(slice));
+
+              // Extract first-line heading as document title
+              const headingMatch = text.match(/^#{1,6}\s+(.+)/);
+              if (headingMatch && onPasteTitleRef.current) {
+                onPasteTitleRef.current(headingMatch[1].trim());
               }
-            } catch { /* ignore */ }
+              return true;
+            }
           }
+        } catch (e) {
+          console.warn('[TipTap] Markdown paste fallback:', e);
         }
+
         return false;
       },
     },

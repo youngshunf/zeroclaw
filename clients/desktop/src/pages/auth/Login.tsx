@@ -216,7 +216,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
   };
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-surface-base transition-colors duration-500">
+    <div className="dark relative min-h-screen overflow-hidden bg-surface-base transition-colors duration-500" data-theme="dark">
       {/* 星空 Canvas */}
       <StarfieldCanvas />
 
@@ -273,15 +273,18 @@ export default function Login({ onLoginSuccess }: LoginProps) {
                     <span className="absolute left-4 top-1/2 -translate-y-1/2 text-sm text-brand">
                       +86
                     </span>
-                    <Input
+                    <input
                       type="tel"
                       value={phone}
                       onChange={(e) =>
                         setPhone(e.target.value.replace(/\D/g, "").slice(0, 11))
                       }
-                      onKeyDown={handleKeyDown}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") handleKeyDown(e);
+                      }}
                       placeholder="手机号"
-                      className="pl-14 pr-4 py-3 !text-base rounded-xl border-border-subtle bg-surface-hover"
+                      className="hx-input pr-4 py-3 !text-base rounded-xl border-border-subtle bg-surface-hover"
+                      style={{ paddingLeft: '80px' }}
                       maxLength={11}
                       autoFocus
                     />

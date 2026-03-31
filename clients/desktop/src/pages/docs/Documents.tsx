@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useMemo } from 'react';
-import { FileText, Plus, Search, Loader2, Save, Trash2, Globe, Lock, Clock, Edit3, Share2, BookOpen, ExternalLink, X, Copy, ChevronRight, ChevronDown, Folder, FolderPlus, FilePlus, ArrowRightLeft } from 'lucide-react';
+import { FileText, Plus, Search, Loader2, Save, Trash2, Globe, Lock, Edit3, Share2, BookOpen, X, Copy, ChevronRight, ChevronDown, Folder, FolderPlus, FilePlus, ArrowRightLeft, PanelRightClose, PanelRightOpen, Check, Clock, KeyRound, Eye, Pencil } from 'lucide-react';
 import TipTapEditor from '@/components/TipTapEditor';
 import MarkdownPreview from '@/components/MarkdownPreview';
 import { getHuanxingSession } from '@/config';
@@ -12,6 +12,8 @@ import {
   createHuanxingFolderApi,
   deleteHuanxingFolderApi,
   moveHuanxingDocumentApi,
+  createShareLinkApi,
+  cancelShareLinkApi,
   type HuanxingDocumentResult,
   type HuanxingFolderTreeNode,
 } from '@/lib/document-api';
@@ -62,6 +64,17 @@ export default function Documents() {
   const [moveDocTarget, setMoveDocTarget] = useState<HuanxingDocumentResult | null>(null);
   const [newFolderName, setNewFolderName] = useState('');
   const [moveTargetFolderId, setMoveTargetFolderId] = useState<number | null>(null);
+  
+  // 大纲折叠状态
+  const [isTocExpanded, setIsTocExpanded] = useState(true);
+
+  // 分享状态
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const [isShareLoading, setIsShareLoading] = useState(false);
+  const [sharePermission, setSharePermission] = useState<'view' | 'edit'>('view');
+  const [shareExpiresHours, setShareExpiresHours] = useState(72);
+  const [sharePassword, setSharePassword] = useState('');
+  const [shareCopied, setShareCopied] = useState(false);
 
   const fetchFolders = useCallback(async () => {
     try {
@@ -224,24 +237,69 @@ export default function Documents() {
     }
   };
 
-  // 生成分享并更改可见性
-  const handleToggleShare = async () => {
+  // ========== 分享逻辑 ==========
+  const handleOpenShareModal = () => {
+    if (!selectedDoc) return;
+    // 如果已有分享链接，预填 URL
+    if (selectedDoc.share_token) {
+      // 从后端 service 中知道 share_url 的格式
+      setShareUrl(`https://huanxing.cloud/s/${selectedDoc.share_token}`);
+      setSharePermission((selectedDoc.share_permission as 'view' | 'edit') || 'view');
+    } else {
+      setShareUrl(null);
+    }
+    setSharePassword('');
+    setShareExpiresHours(72);
+    setShareCopied(false);
+    setShowShareModal(true);
+  };
+
+  const handleCreateShareLink = async () => {
     if (!selectedDoc) return;
     try {
+      setIsShareLoading(true);
       const session = getHuanxingSession();
       if (!session?.accessToken) return;
-      const isPublic = !selectedDoc.is_public;
-      const shareToken = isPublic ? (selectedDoc.share_token || Math.random().toString(36).substring(2, 10)) : '';
-      
-      const res = await updateHuanxingDocumentApi(session.accessToken, selectedDoc.id, {
-        is_public: isPublic,
-        share_token: shareToken,
+      const res = await createShareLinkApi(session.accessToken, selectedDoc.id, {
+        permission: sharePermission,
+        expires_hours: shareExpiresHours,
+        password: sharePassword || undefined,
       });
-      const updatedDoc = (res as any).data || res;
-      setSelectedDoc(updatedDoc);
-      setDocuments(docs => docs.map(d => (d.id === updatedDoc.id ? updatedDoc : d)));
+      const url = (res as any)?.data?.share_url || (res as any)?.share_url;
+      setShareUrl(url);
+      // 刷新文档列表以获取最新 share_token
+      fetchDocuments();
     } catch (e) {
-      console.error('Share update failed', e);
+      console.error('Create share link failed:', e);
+    } finally {
+      setIsShareLoading(false);
+    }
+  };
+
+  const handleCancelShare = async () => {
+    if (!selectedDoc) return;
+    try {
+      setIsShareLoading(true);
+      const session = getHuanxingSession();
+      if (!session?.accessToken) return;
+      await cancelShareLinkApi(session.accessToken, selectedDoc.id);
+      setShareUrl(null);
+      // 更新本地文档状态
+      const updatedDoc = { ...selectedDoc, share_token: undefined, share_permission: undefined, share_expires_at: undefined };
+      setSelectedDoc(updatedDoc);
+      setDocuments(docs => docs.map(d => d.id === updatedDoc.id ? updatedDoc : d));
+    } catch (e) {
+      console.error('Cancel share failed:', e);
+    } finally {
+      setIsShareLoading(false);
+    }
+  };
+
+  const handleCopyShareUrl = () => {
+    if (shareUrl) {
+      navigator.clipboard.writeText(shareUrl);
+      setShareCopied(true);
+      setTimeout(() => setShareCopied(false), 2000);
     }
   };
 
@@ -273,11 +331,14 @@ export default function Documents() {
     for (const line of lines) {
       const match = line.match(/^(#{1,6})\s+(.*)$/);
       if (match) {
-        nodes.push({
-          id: `toc-${idCounter++}`,
-          level: match[1].length,
-          text: match[2].trim(),
-        });
+        const level = match[1].length;
+        if (level <= 3) { // 限制深度，防止大纲过长
+          nodes.push({
+            id: `toc-${idCounter++}`,
+            level,
+            text: match[2].trim(),
+          });
+        }
       }
     }
     return nodes;
@@ -306,9 +367,11 @@ export default function Documents() {
             : 'hover:bg-hx-bg-hover text-hx-text-secondary hover:text-hx-text-primary'
         }`}
       >
-        <div className="flex items-center gap-2 truncate">
-          <FileText size={14} className={selectedDoc?.id === doc.id ? 'text-hx-purple' : 'opacity-60'} />
-          <span className="truncate text-[13px]">{doc.title || '未命名'}</span>
+        <div className="flex items-start gap-1.5 min-w-0 flex-1 pr-2 py-0.5">
+          <div className="shrink-0 mt-[2px] flex items-center justify-center">
+            <FileText size={14} className={selectedDoc?.id === doc.id ? 'text-hx-purple' : 'opacity-60'} />
+          </div>
+          <span className="text-[13px] line-clamp-2 break-words leading-tight">{doc.title || '未命名'}</span>
         </div>
         <div className="flex gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
           {doc.is_public && <Globe size={12} className="text-hx-blue mr-1" />}
@@ -451,7 +514,7 @@ export default function Documents() {
 
       {/* 右侧主区 */}
       <div className="flex-1 flex flex-col min-w-0 bg-hx-bg-main relative">
-        {(selectedDoc || (!selectedDoc && editorTitle === '未命名文档')) ? (
+        {(selectedDoc || isEditing) ? (
           <div className="flex flex-col h-full w-full">
             {/* Header 控制栏 */}
             <div data-tauri-drag-region="true" className="h-14 shrink-0 px-6 border-b border-hx-border flex items-center justify-between bg-hx-bg-panel/50 z-10 w-full">
@@ -473,10 +536,10 @@ export default function Documents() {
              
               <div className="flex items-center gap-3 shrink-0">
                 {selectedDoc && (
-                   <button
-                     onClick={() => setShowShareModal(true)}
-                     className="px-3 py-1.5 rounded-hx-radius-sm border border-hx-border bg-transparent text-hx-text-secondary text-[13px] font-medium cursor-pointer hover:bg-hx-bg-hover hover:text-hx-text-primary transition-colors flex items-center gap-1.5"
-                   >
+                    <button
+                      onClick={handleOpenShareModal}
+                      className="px-3 py-1.5 rounded-hx-radius-sm border border-hx-border bg-transparent text-hx-text-secondary text-[13px] font-medium cursor-pointer hover:bg-hx-bg-hover hover:text-hx-text-primary transition-colors flex items-center gap-1.5"
+                    >
                      <Share2 size={14} /> 分享
                    </button>
                 )}
@@ -509,6 +572,11 @@ export default function Documents() {
                     <TipTapEditor
                       value={editorContent}
                       onChange={setEditorContent}
+                      onPasteTitle={(title) => {
+                        if (editorTitle === '未命名文档' || !editorTitle.trim()) {
+                          setEditorTitle(title);
+                        }
+                      }}
                     />
                   ) : (
                     <MarkdownPreview content={editorContent} />
@@ -517,25 +585,35 @@ export default function Documents() {
 
                {/* 右：TOC 大纲 */}
                {tocNodes.length > 0 && (
-                 <div className="w-[240px] shrink-0 bg-hx-bg-panel flex flex-col p-4 shadow-[-4px_0_12px_rgba(0,0,0,0.02)] z-0">
-                    <span className="text-[12px] font-bold text-hx-text-tertiary tracking-wider mb-4 uppercase">此页目录大纲</span>
-                    <div className="flex flex-col gap-2 overflow-y-auto pr-2">
-                       {tocNodes.map(node => (
-                         <button 
-                           key={node.id}
-                           onClick={() => scrollToHeading(node.text)}
-                           title={node.text}
-                           className={`text-left text-[13px] truncate transition-colors bg-transparent border-none outline-none cursor-pointer text-hx-text-secondary hover:text-hx-purple
-                            ${node.level === 1 ? 'font-semibold text-hx-text-primary mt-1' : ''}
-                            ${node.level === 2 ? 'pl-3' : ''}
-                            ${node.level === 3 ? 'pl-6 text-[12px]' : ''}
-                           ${node.level > 3 ? 'pl-8 text-[11px] text-hx-text-tertiary' : ''}
-                           `}
-                         >
-                           {node.text.replace(/[#*`_]+/g, '')}
-                         </button>
-                       ))}
+                 <div className={`shrink-0 bg-hx-bg-panel shadow-[-4px_0_12px_rgba(0,0,0,0.02)] z-0 transition-all flex flex-col pt-4 pb-4 border-l border-hx-border/50 ${isTocExpanded ? 'w-[240px] px-4' : 'w-12 px-2 items-center'}`}>
+                    <div className={`flex items-center mb-4 ${isTocExpanded ? 'justify-between' : 'justify-center'}`}>
+                      {isTocExpanded && <span className="text-[12px] font-bold text-hx-text-tertiary tracking-wider uppercase">此页目录大纲</span>}
+                      <button 
+                        onClick={() => setIsTocExpanded(!isTocExpanded)}
+                        className="p-1.5 bg-transparent border-none text-hx-text-secondary hover:text-hx-text-primary hover:bg-hx-bg-hover rounded-md cursor-pointer transition-colors"
+                        title={isTocExpanded ? "收起大纲" : "展开大纲"}
+                      >
+                         {isTocExpanded ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
+                      </button>
                     </div>
+                    {isTocExpanded && (
+                      <div className="flex flex-col gap-2 overflow-y-auto pr-1 hx-scrollbar">
+                         {tocNodes.map(node => (
+                           <button 
+                             key={node.id}
+                             onClick={() => scrollToHeading(node.text)}
+                             title={node.text}
+                             className={`text-left text-[13px] leading-relaxed transition-colors bg-transparent border-none outline-none cursor-pointer text-hx-text-secondary hover:text-hx-purple line-clamp-2 break-words
+                              ${node.level === 1 ? 'font-semibold text-hx-text-primary mt-1' : ''}
+                              ${node.level === 2 ? 'pl-3' : ''}
+                              ${node.level === 3 ? 'pl-6 text-[12px]' : ''}
+                             `}
+                           >
+                             {node.text.replace(/[#*`_]+/g, '')}
+                           </button>
+                         ))}
+                      </div>
+                    )}
                  </div>
                )}
             </div>
@@ -553,53 +631,134 @@ export default function Documents() {
 
       {/* Share Dialog */}
       <Dialog open={showShareModal} onOpenChange={setShowShareModal}>
-        <DialogContent className="sm:max-w-[480px]">
+        <DialogContent className="sm:max-w-[500px]">
           <DialogHeader>
             <DialogTitle>文档共享设置</DialogTitle>
-            <DialogDescription>获取文档外部链接，分享给团队、互联网的任何用户，或者 Agent 大模型代理引擎使用。</DialogDescription>
+            <DialogDescription>生成外部链接，支持设置权限、有效期和访问密码。</DialogDescription>
           </DialogHeader>
 
           {selectedDoc && (
-            <div className="bg-hx-bg-main p-4 rounded-hx-radius-md border border-hx-border flex flex-col gap-4 mt-2">
-              <div className="flex items-center justify-between border-b border-hx-border pb-4">
+            <div className="flex flex-col gap-4 mt-2">
+              {/* 当前状态 */}
+              <div className="bg-hx-bg-main p-4 rounded-hx-radius-md border border-hx-border flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <div className={`w-10 h-10 rounded-full flex items-center justify-center ${selectedDoc.is_public ? 'bg-hx-blue/20 text-hx-blue' : 'bg-hx-bg-hover text-hx-text-secondary'}`}>
-                    {selectedDoc.is_public ? <Globe size={18}/> : <Lock size={18}/>}
+                  <div className={`w-10 h-10 rounded-full flex items-center justify-center ${shareUrl ? 'bg-green-500/15 text-green-500' : 'bg-hx-bg-hover text-hx-text-secondary'}`}>
+                    {shareUrl ? <Globe size={18}/> : <Lock size={18}/>}
                   </div>
                   <div>
-                    <div className="font-semibold text-[14px] text-hx-text-primary">{selectedDoc.is_public ? '已开启公开链接' : '当前为私密状态'}</div>
-                    <div className="text-[12px] text-hx-text-tertiary">{selectedDoc.is_public ? '任何获得此链接的人/机器均可查看' : '仅在您的桌面客户端可见'}</div>
+                    <div className="font-semibold text-[14px] text-hx-text-primary">{shareUrl ? '分享链接已生成' : '当前为私密状态'}</div>
+                    <div className="text-[12px] text-hx-text-tertiary">{shareUrl ? '获得链接的人可根据权限访问' : '仅在您的桌面客户端可见'}</div>
                   </div>
                 </div>
-                <button 
-                  onClick={handleToggleShare}
-                  className={`px-4 py-1.5 rounded-full text-[13px] font-semibold border-none cursor-pointer transition-colors ${selectedDoc.is_public ? 'bg-hx-bg-hover text-hx-text-secondary' : 'bg-hx-blue text-white'}`}
-                >
-                  {selectedDoc.is_public ? '关闭共享' : '开启共享'}
-                </button>
+                {shareUrl && (
+                  <button 
+                    onClick={handleCancelShare}
+                    disabled={isShareLoading}
+                    className="px-3 py-1.5 rounded-full text-[12px] font-medium bg-red-500/10 text-red-500 hover:bg-red-500/20 border-none cursor-pointer transition-colors disabled:opacity-50"
+                  >
+                    取消分享
+                  </button>
+                )}
               </div>
 
-              {selectedDoc.is_public && selectedDoc.share_token && (
+              {/* 分享链接展示 */}
+              {shareUrl && (
                 <div className="flex flex-col gap-2">
                   <span className="text-[12px] font-medium text-hx-text-secondary">外部访问链接</span>
                   <div className="flex border border-hx-border rounded-hx-radius-sm bg-hx-bg-panel overflow-hidden">
                     <Input 
                       type="text" 
                       readOnly 
-                      value={`https://huanxing.cloud/docs/share/${selectedDoc.share_token}`} 
+                      value={shareUrl} 
                       className="flex-1 bg-transparent border-none shadow-none focus:ring-0"
                     />
                     <button 
-                      className="px-3 border-l border-hx-border bg-hx-bg-hover hover:bg-hx-purple/10 text-hx-text-secondary hover:text-hx-purple cursor-pointer transition-colors"
-                      onClick={() => {
-                        navigator.clipboard.writeText(`https://huanxing.cloud/docs/share/${selectedDoc.share_token}`);
-                        alert('已复制分享链接！');
-                      }}
+                      className={`px-3 border-l border-hx-border transition-colors cursor-pointer flex items-center gap-1 text-[12px] font-medium ${shareCopied ? 'bg-green-500/10 text-green-500' : 'bg-hx-bg-hover hover:bg-hx-purple/10 text-hx-text-secondary hover:text-hx-purple'}`}
+                      onClick={handleCopyShareUrl}
                     >
-                      <Copy size={16} />
+                      {shareCopied ? <><Check size={14}/> 已复制</> : <><Copy size={14}/> 复制</>}
                     </button>
                   </div>
                 </div>
+              )}
+
+              {/* 分享配置区 */}
+              {!shareUrl && (
+                <div className="flex flex-col gap-4 bg-hx-bg-main p-4 rounded-hx-radius-md border border-hx-border">
+                  {/* 权限选择 */}
+                  <div className="flex flex-col gap-2">
+                    <label className="text-[12px] font-medium text-hx-text-secondary flex items-center gap-1"><Eye size={12}/> 访问权限</label>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setSharePermission('view')}
+                        className={`flex-1 px-3 py-2 rounded-md text-[13px] font-medium border cursor-pointer transition-colors flex items-center justify-center gap-1.5 ${
+                          sharePermission === 'view'
+                            ? 'border-hx-purple bg-hx-purple/10 text-hx-purple'
+                            : 'border-hx-border bg-transparent text-hx-text-secondary hover:border-hx-purple/50'
+                        }`}
+                      >
+                        <Eye size={14}/> 仅查看
+                      </button>
+                      <button
+                        onClick={() => setSharePermission('edit')}
+                        className={`flex-1 px-3 py-2 rounded-md text-[13px] font-medium border cursor-pointer transition-colors flex items-center justify-center gap-1.5 ${
+                          sharePermission === 'edit'
+                            ? 'border-hx-purple bg-hx-purple/10 text-hx-purple'
+                            : 'border-hx-border bg-transparent text-hx-text-secondary hover:border-hx-purple/50'
+                        }`}
+                      >
+                        <Pencil size={14}/> 可编辑
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 有效期 */}
+                  <div className="flex flex-col gap-2">
+                    <label className="text-[12px] font-medium text-hx-text-secondary flex items-center gap-1"><Clock size={12}/> 有效期</label>
+                    <div className="flex gap-2">
+                      {[24, 72, 168, 720].map(hrs => (
+                        <button
+                          key={hrs}
+                          onClick={() => setShareExpiresHours(hrs)}
+                          className={`px-3 py-1.5 rounded-md text-[12px] font-medium border cursor-pointer transition-colors ${
+                            shareExpiresHours === hrs
+                              ? 'border-hx-purple bg-hx-purple/10 text-hx-purple'
+                              : 'border-hx-border bg-transparent text-hx-text-secondary hover:border-hx-purple/50'
+                          }`}
+                        >
+                          {hrs === 24 ? '1天' : hrs === 72 ? '3天' : hrs === 168 ? '7天' : '30天'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* 密码(可选) */}
+                  <div className="flex flex-col gap-2">
+                    <label className="text-[12px] font-medium text-hx-text-secondary flex items-center gap-1"><KeyRound size={12}/> 访问密码（可选）</label>
+                    <Input
+                      type="text"
+                      placeholder="留空则无需密码"
+                      value={sharePassword}
+                      onChange={(e) => setSharePassword(e.target.value)}
+                      className="w-full"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* 操作按钮 */}
+              {!shareUrl && (
+                <DialogFooter>
+                  <button onClick={() => setShowShareModal(false)} className="hx-btn hx-btn-outline">取消</button>
+                  <button 
+                    onClick={handleCreateShareLink} 
+                    disabled={isShareLoading}
+                    className="hx-btn hx-btn-primary flex items-center gap-1.5"
+                  >
+                    {isShareLoading ? <Loader2 size={14} className="animate-spin"/> : <Share2 size={14}/>}
+                    生成分享链接
+                  </button>
+                </DialogFooter>
               )}
             </div>
           )}

@@ -173,3 +173,34 @@ export async function moveHuanxingDocumentApi(
     body: JSON.stringify({ target_folder_id: targetFolderId }),
   });
 }
+
+/** 生成/更新分享链接 */
+export async function createShareLinkApi(
+  token: string,
+  pk: number,
+  options?: {
+    permission?: 'view' | 'edit';
+    expires_hours?: number;
+    password?: string;
+  },
+): Promise<{ data: { share_url: string } }> {
+  const url = new URL(`/api/v1/huanxing/app/docs/${pk}/share`, 'http://localhost');
+  url.searchParams.set('permission', options?.permission || 'view');
+  url.searchParams.set('expires_hours', String(options?.expires_hours || 72));
+  if (options?.password) {
+    url.searchParams.set('password', options.password);
+  }
+  return authRequest(url.pathname + url.search, token, {
+    method: 'POST',
+  });
+}
+
+/** 取消分享 */
+export async function cancelShareLinkApi(
+  token: string,
+  pk: number,
+): Promise<void> {
+  return authRequest(`/api/v1/huanxing/app/docs/${pk}/share`, token, {
+    method: 'DELETE',
+  });
+}

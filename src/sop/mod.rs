@@ -42,11 +42,20 @@ fn sops_dir(workspace_dir: &Path) -> PathBuf {
 }
 
 /// Resolve the SOPs directory from config, falling back to workspace default.
+///
+/// When `config_dir` is a relative path (e.g. `"sops"`), it is resolved
+/// relative to `workspace_dir` — NOT relative to the process CWD.
+/// Absolute paths and `~`-prefixed paths are used as-is.
 pub fn resolve_sops_dir(workspace_dir: &Path, config_dir: Option<&str>) -> PathBuf {
     match config_dir {
         Some(dir) if !dir.is_empty() => {
             let expanded = shellexpand::tilde(dir);
-            PathBuf::from(expanded.as_ref())
+            let path = PathBuf::from(expanded.as_ref());
+            if path.is_absolute() {
+                path
+            } else {
+                workspace_dir.join(path)
+            }
         }
         _ => sops_dir(workspace_dir),
     }
@@ -801,6 +810,13 @@ type = "manual"
         let ws = Path::new("/home/user/.zeroclaw/workspace");
         let dir = resolve_sops_dir(ws, Some("/custom/sops"));
         assert_eq!(dir, PathBuf::from("/custom/sops"));
+    }
+
+    #[test]
+    fn resolve_sops_dir_relative_joined_with_workspace() {
+        let ws = Path::new("/home/user/.huanxing/agents/default");
+        let dir = resolve_sops_dir(ws, Some("sops"));
+        assert_eq!(dir, PathBuf::from("/home/user/.huanxing/agents/default/sops"));
     }
 
     #[test]

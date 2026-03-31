@@ -209,6 +209,29 @@ function AppContent() {
     return () => { unlisten?.(); };
   }, [logout]);
 
+  // 主题管理：登录页强制 dark，登录后默认切换回 light (或尊重已存偏好)
+  useEffect(() => {
+    const root = document.documentElement;
+    if (!isAuthenticated) {
+      // 登录页：必须是暗色
+      root.setAttribute('data-theme', 'dark');
+      root.classList.add('dark');
+    } else {
+      // 登录成功后：如果没存过偏好，强制设为 light (符合用户“登录成功切换为 light”的需求)
+      const savedTheme = localStorage.getItem('huanxing_theme');
+      if (!savedTheme) {
+        root.setAttribute('data-theme', 'light');
+        root.classList.remove('dark');
+        localStorage.setItem('huanxing_theme', 'light');
+      } else {
+        // 已有偏好，按照偏好应用
+        root.setAttribute('data-theme', savedTheme);
+        if (savedTheme === 'dark') root.classList.add('dark');
+        else root.classList.remove('dark');
+      }
+    }
+  }, [isAuthenticated]);
+
   if (loading || (isAuthenticated && !configChecked)) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#050b1a]">
