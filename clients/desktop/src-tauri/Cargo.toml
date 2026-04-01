@@ -35,5 +35,4 @@ hostname = "0.4"
 serde_yaml = "0.9"
 tempfile = "3"
 
-# 唤星 HASN SDK (workspace crate)
-hasn-client-core = { path = "../../../crates/hasn-client-core" }
+# removed hasn-client-core

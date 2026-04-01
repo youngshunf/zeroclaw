@@ -31,13 +31,13 @@ impl AgentBridge {
         }
     }
 
-    /// 通过 hasn_id 查找对应的 Agent 工作区目录
+    /// 通过 hasn_id 查找对应的 Agent 工作区目录 (Unified Node Architecture)
     ///
-    /// 扫描 agents_dir 下所有子目录的 config.toml，找到 hasn_id 匹配的目录。
-    /// 结果会缓存，避免重复扫描。
+    /// 1. 查缓存
+    /// 2. 查 TenantDb，获取 tenant_dir 和 agent_id，解析真实路径
     pub async fn resolve_workspace_by_hasn_id(
         &self,
-        agents_dir: &Path,
+        state: &AppState,
         hasn_id: &str,
     ) -> Option<PathBuf> {
         // 1. 先查缓存
@@ -50,32 +50,28 @@ impl AgentBridge {
             }
         }
 
-        // 2. 扫描所有 Agent 工作区
-        let mut entries = match tokio::fs::read_dir(agents_dir).await {
-            Ok(e) => e,
-            Err(e) => {
-                warn!(agents_dir = %agents_dir.display(), "扫描 agents 目录失败: {e}");
-                return None;
-            }
-        };
+        // 2. 查 TenantDb (Unified Node Architecture)
+        let config = state.config.lock().clone();
+        let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
+        let db_path = config.huanxing.resolve_db_path(config_dir);
 
-        while let Ok(Some(entry)) = entries.next_entry().await {
-            let path = entry.path();
-            if !path.is_dir() {
-                continue;
-            }
+        if let Ok(db) = crate::huanxing::db::TenantDb::open(&db_path) {
+            if let Ok(Some(record)) = db.find_by_hasn_id(hasn_id).await {
+                let workspace = config.huanxing.resolve_agent_workspace(
+                    config_dir,
+                    record.tenant_dir.as_deref(),
+                    &record.agent_id,
+                );
 
-            let config_path = path.join("config.toml");
-            if let Ok(content) = tokio::fs::read_to_string(&config_path).await {
-                if let Ok(cfg) = toml::from_str::<BridgeWorkspaceConfig>(&content) {
-                    if cfg.hasn_id.as_deref() == Some(hasn_id) {
-                        debug!(hasn_id, workspace = %path.display(), "hasn_id 解析命中");
-                        self.hasn_id_cache
-                            .lock()
-                            .await
-                            .insert(hasn_id.to_string(), path.clone());
-                        return Some(path);
-                    }
+                if workspace.exists() {
+                    debug!(hasn_id, workspace = %workspace.display(), "hasn_id 解析命中");
+                    self.hasn_id_cache
+                        .lock()
+                        .await
+                        .insert(hasn_id.to_string(), workspace.clone());
+                    return Some(workspace);
+                } else {
+                    warn!(hasn_id, workspace = %workspace.display(), "数据库找到记录，但工作区目录不存在");
                 }
             }
         }
@@ -154,6 +150,65 @@ impl AgentBridge {
         Ok(InvokeResult {
             reply: response,
         })
+    }
+
+    /// 流式同步调用 Agent 处理一条消息（供 WS UI 消费用）
+    pub async fn invoke_streaming(
+        &self,
+        state: &AppState,
+        workspace: &Path,
+        session_id: &str,
+        message: &str,
+        tx: tokio::sync::mpsc::UnboundedSender<String>,
+    ) -> anyhow::Result<()> {
+        let config = state.config.lock().clone();
+
+        // 创建隔离 Agent
+        let mut agent_config = config.clone();
+        agent_config.workspace_dir = workspace.to_path_buf();
+        let mut agent = crate::agent::Agent::from_config(&agent_config).await?;
+        agent.set_memory_session_id(Some(session_id.to_string()));
+
+        let session_key = format!("hasn_{session_id}");
+        let per_user_backend =
+            crate::huanxing::tenant::create_session_backend_for_workspace(workspace, &config)
+                .or_else(|| state.session_backend.clone());
+
+        if let Some(ref backend) = per_user_backend {
+            let messages = backend.load(&session_key);
+            if !messages.is_empty() {
+                agent.seed_history(&messages);
+            }
+            let user_msg = crate::providers::ChatMessage::user(message);
+            let _ = backend.append(&session_key, &user_msg);
+        }
+
+        info!(session_id, workspace = %workspace.display(), "HASN invoke_streaming: Agent.turn_streamed()");
+        
+        let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<crate::agent::TurnEvent>(100);
+        
+        let tx_clone = tx.clone();
+        tokio::spawn(async move {
+            while let Some(event) = event_rx.recv().await {
+                match event {
+                    crate::agent::TurnEvent::Chunk { delta, .. } => {
+                        let _ = tx_clone.send(delta);
+                    }
+                    _ => {}
+                }
+            }
+        });
+
+        let full_reply = agent.turn_streamed(message, event_tx).await?;
+
+        if let Some(ref backend) = per_user_backend {
+            if !full_reply.is_empty() {
+                let assistant_msg = crate::providers::ChatMessage::assistant(&full_reply);
+                let _ = backend.append(&session_key, &assistant_msg);
+            }
+        }
+
+        Ok(())
     }
 
     /// 清除 hasn_id 缓存（Agent 注册/注销时调用）

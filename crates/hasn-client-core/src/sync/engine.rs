@@ -75,39 +75,56 @@ impl SyncEngine {
         Ok(())
     }
 
-    /// 发送消息 (本地优先)
+    /// 发送消息 (本地优先, v4.0 Envelope 模式)
     pub async fn send_message(
         &self,
-        to_star_id: &str,
+        to_hasn_id: &str,
+        to_owner_id: &str,
         content: &str,
-        content_type: i32,
-        reply_to: Option<i64>,
-    ) -> Result<HasnMessage, HasnError> {
+        _content_type: &str,
+    ) -> Result<HasnEnvelope, HasnError> {
         let hasn_id = self
             .current_hasn_id()
             .await
             .ok_or_else(|| HasnError::Auth("未登录".to_string()))?;
 
-        // 1. 创建本地消息 (状态=sending)
-        let local_msg = HasnMessage::new_outgoing("pending", &hasn_id, content, content_type, reply_to);
-        let local_id = local_msg.local_id.clone();
+        // 1. 构造本地 Envelope (状态=sending)
+        let envelope = HasnEnvelope::new_text(
+            EntityRef {
+                hasn_id: hasn_id.clone(),
+                entity_type: EntityType::Human,
+                owner_id: hasn_id.clone(),
+            },
+            EntityRef {
+                hasn_id: to_hasn_id.to_string(),
+                entity_type: EntityType::Human, // 外部调用者可以后续覆盖
+                owner_id: to_owner_id.to_string(),
+            },
+            "pending",
+            content,
+        );
 
+        let msg_id = envelope.id.clone();
+
+        // 2. 写入本地 DB
+        let mut record = HasnMessageRecord::from_envelope(&envelope);
+        record.send_status = SendStatus::Sending;
         self.db
-            .insert_message(&local_msg)
+            .insert_message(&record)
             .map_err(|e| HasnError::Db(e.to_string()))?;
 
-        // 2. 调 API 发送
+        // 3. 调 API 发送
+        // TODO: API 层需要升级为接受 HasnEnvelope 参数
         match self
             .api
-            .send_message(to_star_id, content, content_type)
+            .send_message(to_hasn_id, content, 1) // 临时兼容旧 API
             .await
         {
             Ok(resp) => {
-                // 3a. 成功: 用服务端数据更新本地记录
+                // 3a. 成功: 更新本地记录
                 self.db
                     .update_message_after_send(
-                        &local_id,
-                        resp.id,
+                        &msg_id,
                         &resp.conversation_id,
                         resp.created_at.as_deref(),
                     )
@@ -125,74 +142,63 @@ impl SyncEngine {
                     resp.created_at.as_deref().unwrap_or(""),
                 );
 
-                let mut result = local_msg;
-                result.id = resp.id;
-                result.conversation_id = resp.conversation_id;
-                result.send_status = SendStatus::Sent;
-                result.created_at = resp.created_at;
+                let mut result = envelope;
+                result.context.conversation_id = resp.conversation_id;
                 Ok(result)
             }
             Err(e) => {
                 // 3b. 失败: 标记
                 self.db
-                    .mark_message_failed(&local_id)
+                    .mark_message_failed(&msg_id)
                     .map_err(|e| HasnError::Db(e.to_string()))?;
 
-                let mut result = local_msg;
-                result.send_status = SendStatus::Failed;
                 error!("[Sync] 发送消息失败: {}", e);
                 Err(e)
             }
         }
     }
 
-    /// 处理WS收到的新消息
+    /// 处理 WS 收到的新消息 (桥接传输层 → v4.0 Envelope)
     pub fn handle_incoming_message(
         &self,
         payload: WsMessagePayload,
-    ) -> Result<HasnMessage, HasnError> {
-        let msg = payload.into_hasn_message();
+    ) -> Result<HasnEnvelope, HasnError> {
+        let envelope = payload.into_envelope();
 
-        // 写入本地DB
+        // 写入本地 DB
+        let record = HasnMessageRecord::from_envelope(&envelope);
         self.db
-            .upsert_message(&msg)
+            .upsert_message(&record)
             .map_err(|e| HasnError::Db(e.to_string()))?;
 
         // 更新会话
-        let preview = if msg.content.len() > 200 {
-            &msg.content[..200]
+        let preview_text = envelope.text_content();
+        let preview = if preview_text.len() > 200 {
+            &preview_text[..200]
         } else {
-            &msg.content
+            &preview_text
         };
         let _ = self.db.update_conversation_last_message(
-            &msg.conversation_id,
+            &envelope.context.conversation_id,
             preview,
-            msg.created_at.as_deref().unwrap_or(""),
+            &envelope.metadata.created_at,
         );
 
         // 增加未读
-        let _ = self.db.increment_unread(&msg.conversation_id);
+        let _ = self.db.increment_unread(&envelope.context.conversation_id);
 
-        // 更新同步游标
-        if msg.id > 0 {
-            let _ = self.db.update_sync_cursor(&msg.conversation_id, msg.id);
-        }
-
-        Ok(msg)
+        Ok(envelope)
     }
 
     /// 处理 ACK 回执
     pub fn handle_ack(
         &self,
-        msg_id: i64,
+        msg_id: &str,
         conversation_id: &str,
-        local_id: Option<&str>,
     ) -> Result<(), HasnError> {
-        if let Some(lid) = local_id {
-            self.db
-                .update_message_after_send(lid, msg_id, conversation_id, None)
-                .map_err(|e| HasnError::Db(e.to_string()))?;
-        }
+        self.db
+            .update_message_after_send(msg_id, conversation_id, None)
+            .map_err(|e| HasnError::Db(e.to_string()))?;
         Ok(())
     }
 }

@@ -1,5 +1,5 @@
-import { useState, useCallback, useEffect, useMemo } from 'react';
-import { FileText, Plus, Search, Loader2, Save, Trash2, Globe, Lock, Edit3, Share2, BookOpen, X, Copy, ChevronRight, ChevronDown, Folder, FolderPlus, FilePlus, ArrowRightLeft, PanelRightClose, PanelRightOpen, Check, Clock, KeyRound, Eye, Pencil, Download } from 'lucide-react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import { FileText, Plus, Search, Loader2, Save, Trash2, Globe, Lock, Edit3, Share2, BookOpen, X, Copy, ChevronRight, ChevronDown, Folder, FolderPlus, FilePlus, ArrowRightLeft, PanelRightClose, PanelRightOpen, Check, Clock, KeyRound, Eye, Pencil, Download, Link, Handshake } from 'lucide-react';
 import TipTapEditor from '@/components/TipTapEditor';
 import MarkdownPreview from '@/components/MarkdownPreview';
 import { getHuanxingSession, HUANXING_CONFIG } from '@/config';
@@ -15,6 +15,8 @@ import {
   createShareLinkApi,
   cancelShareLinkApi,
   exportHuanxingDocumentApi,
+  getHuanxingSharedDocumentApi,
+  saveHuanxingSharedDocumentApi,
   type HuanxingDocumentResult,
   type HuanxingFolderTreeNode,
 } from '@/lib/document-api';
@@ -80,6 +82,97 @@ export default function Documents() {
   // 导出状态
   const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
   const [isExporting, setIsExporting] = useState<string | null>(null);
+
+  // 分享解析与收藏
+  const [showParseShareLinkModal, setShowParseShareLinkModal] = useState(false);
+  const [parseShareTokenInput, setParseShareTokenInput] = useState('');
+  const [previewSharedDoc, setPreviewSharedDoc] = useState<HuanxingDocumentResult | null>(null);
+  const [isParsingShare, setIsParsingShare] = useState(false);
+  const [saveSharedTargetFolder, setSaveSharedTargetFolder] = useState<number | null>(null);
+  const [isSavingShared, setIsSavingShared] = useState(false);
+
+  // Markdown 渲染 LRU 缓存 (最大 10 个页签) 采用 Refs 和组件重用来实现 <keep-alive> 零滞后切换
+  const previewCacheRef = useRef<{ id: number; content: string }[]>([]);
+  useMemo(() => {
+    const currentDocId = selectedDoc?.id;
+    if (currentDocId && !isEditing) {
+      const cache = previewCacheRef.current;
+      const idx = cache.findIndex(c => c.id === currentDocId);
+      if (idx !== -1) {
+        if (cache[idx].content !== editorContent) {
+          const [item] = cache.splice(idx, 1);
+          item.content = editorContent;
+          cache.push(item);
+        } else if (idx !== cache.length - 1) {
+          const [item] = cache.splice(idx, 1);
+          cache.push(item);
+        }
+      } else {
+        cache.push({ id: currentDocId, content: editorContent });
+        if (cache.length > 10) cache.shift();
+      }
+    }
+  }, [selectedDoc?.id, editorContent, isEditing]);
+
+  // 剪贴板嗅探
+  useEffect(() => {
+    const checkClipboardForShareLink = async () => {
+      try {
+        const text = await navigator.clipboard.readText();
+        if (!text) return;
+        const match = text.match(/\/doc\/share\/([a-zA-Z0-9_\-]+)/);
+        if (match && match[1]) {
+          const token = match[1];
+          if (!showParseShareLinkModal && parseShareTokenInput !== token && parseShareTokenInput !== text) {
+            setParseShareTokenInput(text);
+            setShowParseShareLinkModal(true);
+          }
+        }
+      } catch (err) {
+        // read text failed (no permission or focus lost), ignore securely
+      }
+    };
+    window.addEventListener('focus', checkClipboardForShareLink);
+    return () => window.removeEventListener('focus', checkClipboardForShareLink);
+  }, [showParseShareLinkModal, parseShareTokenInput]);
+
+  const handleParseShareLink = async () => {
+    if (!parseShareTokenInput.trim()) return;
+    try {
+      setIsParsingShare(true);
+      const session = getHuanxingSession();
+      let token = parseShareTokenInput.trim();
+      const match = token.match(/\/doc\/share\/([a-zA-Z0-9_\-]+)/);
+      if (match && match[1]) token = match[1];
+
+      const res = await getHuanxingSharedDocumentApi((session?.accessToken) || '', token);
+      setPreviewSharedDoc(res.data);
+    } catch (err) {
+      console.error('Parse share link failed', err);
+      setPreviewSharedDoc(null);
+    } finally {
+      setIsParsingShare(false);
+    }
+  };
+
+  const handleSaveSharedDocument = async () => {
+    if (!previewSharedDoc?.share_token) return;
+    try {
+      setIsSavingShared(true);
+      const session = getHuanxingSession();
+      if (!session?.accessToken) return;
+      await saveHuanxingSharedDocumentApi(session.accessToken, previewSharedDoc.share_token, saveSharedTargetFolder || undefined);
+      setShowParseShareLinkModal(false);
+      setPreviewSharedDoc(null);
+      setParseShareTokenInput('');
+      fetchFolders();
+      fetchDocuments();
+    } catch (err) {
+      console.error('Save shared doc failed:', err);
+    } finally {
+      setIsSavingShared(false);
+    }
+  };
 
   const fetchFolders = useCallback(async () => {
     try {
@@ -364,6 +457,17 @@ export default function Documents() {
     doc && doc.title && doc.title.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  // 预先将文档按所属目录分组，避免按目录暴力 filter 的 O(N^2) 问题
+  const docsByFolder = useMemo(() => {
+    const map = new Map<number | null, HuanxingDocumentResult[]>();
+    for (const doc of filteredDocs) {
+      const fId = doc.folder_id || null;
+      if (!map.has(fId)) map.set(fId, []);
+      map.get(fId)!.push(doc);
+    }
+    return map;
+  }, [filteredDocs]);
+
   // 解析 TOC 行目录
   const tocNodes = useMemo(() => {
     const nodes: { id: string; text: string; level: number }[] = [];
@@ -411,7 +515,11 @@ export default function Documents() {
       >
         <div className="flex items-start gap-1.5 min-w-0 flex-1 pr-2 py-0.5">
           <div className="shrink-0 mt-[2px] flex items-center justify-center">
-            <FileText size={14} className={selectedDoc?.id === doc.id ? 'text-hx-purple' : 'opacity-60'} />
+            {doc.is_shared ? (
+              <Handshake size={14} className={selectedDoc?.id === doc.id ? 'text-hx-purple' : 'text-hx-blue opacity-80'} />
+            ) : (
+              <FileText size={14} className={selectedDoc?.id === doc.id ? 'text-hx-purple' : 'opacity-60'} />
+            )}
           </div>
           <span className="text-[13px] line-clamp-2 break-words leading-tight">{doc.title || '未命名'}</span>
         </div>
@@ -446,7 +554,7 @@ export default function Documents() {
   const renderTree = (folders: HuanxingFolderTreeNode[], depth: number): any => {
     return folders.map(folder => {
       const isExpanded = expandedFolders.has(folder.id) || searchQuery !== '';
-      const folderDocs = filteredDocs.filter(d => d.folder_id === folder.id);
+      const folderDocs = docsByFolder.get(folder.id) || [];
       
       // 在搜索的时候，只展示有内容的文件夹
       if (searchQuery && folderDocs.length === 0 && (!folder.children || folder.children.length === 0)) return null;
@@ -542,7 +650,7 @@ export default function Documents() {
           ) : (
             <>
               {renderTree(folderTree, 0)}
-              {filteredDocs.filter(d => !d.folder_id).map(doc => renderDocNode(doc, 0))}
+              {(docsByFolder.get(null) || []).map(doc => renderDocNode(doc, 0))}
               {folderTree.length === 0 && filteredDocs.length === 0 && !loading && (
                  <div className="py-[60px] flex flex-col items-center justify-center text-hx-text-tertiary">
                    <FileText size={40} className="opacity-30 mb-2" />
@@ -615,13 +723,14 @@ export default function Documents() {
                      </div>
                    </div>
                 )}
-                
-                <button
-                  onClick={() => setIsEditing(!isEditing)}
-                  className={`px-3 py-1.5 rounded-hx-radius-sm border-none text-[13px] font-medium cursor-pointer transition-colors flex items-center gap-1.5 ${isEditing ? 'bg-hx-bg-hover text-hx-text-secondary' : 'bg-hx-purple/10 text-hx-purple'}`}
-                >
-                  {isEditing ? <><BookOpen size={14} /> 返回预览</> : <><Edit3 size={14} /> 进入编辑</>}
-                </button>
+                {(!selectedDoc?.is_shared || selectedDoc?.share_permission === 'edit') && (
+                  <button
+                    onClick={() => setIsEditing(!isEditing)}
+                    className={`px-3 py-1.5 rounded-hx-radius-sm border-none text-[13px] font-medium cursor-pointer transition-colors flex items-center gap-1.5 ${isEditing ? 'bg-hx-bg-hover text-hx-text-secondary' : 'bg-hx-purple/10 text-hx-purple'}`}
+                  >
+                    {isEditing ? <><BookOpen size={14} /> 返回预览</> : <><Edit3 size={14} /> 进入编辑</>}
+                  </button>
+                )}
                 
                 {isEditing && (
                   <button
@@ -643,20 +752,35 @@ export default function Documents() {
             {/* 布局区：正文 + TOC */}
             <div className="flex-1 overflow-hidden flex flex-row">
                {/* 左：正文预览或编辑 */}
-               <div className="flex-1 min-w-0 flex flex-col h-full border-r border-hx-border">
-                  {isEditing ? (
-                    <TipTapEditor
-                      value={editorContent}
-                      onChange={setEditorContent}
-                      onPasteTitle={(title) => {
-                        if (editorTitle === '未命名文档' || !editorTitle.trim()) {
-                          setEditorTitle(title);
-                        }
-                      }}
-                    />
-                  ) : (
-                    <MarkdownPreview content={editorContent} />
-                  )}
+               <div className="flex-1 min-w-0 flex flex-col h-full border-r border-hx-border relative">
+                  <div className="absolute inset-0 z-20 bg-hx-bg-main" style={{ display: isEditing ? 'block' : 'none' }}>
+                    {isEditing && (
+                      <TipTapEditor
+                        value={editorContent}
+                        onChange={setEditorContent}
+                        onPasteTitle={(title) => {
+                          if (editorTitle === '未命名文档' || !editorTitle.trim()) {
+                            setEditorTitle(title);
+                          }
+                        }}
+                      />
+                    )}
+                  </div>
+                  
+                  {previewCacheRef.current.map(cacheNode => (
+                     <div 
+                       key={`preview-cache-${cacheNode.id}`}
+                       className="absolute inset-0 bg-hx-bg-main"
+                       style={{ 
+                          visibility: (!isEditing && cacheNode.id === selectedDoc?.id) ? 'visible' : 'hidden',
+                          opacity: (!isEditing && cacheNode.id === selectedDoc?.id) ? 1 : 0,
+                          pointerEvents: (!isEditing && cacheNode.id === selectedDoc?.id) ? 'auto' : 'none',
+                          zIndex: (!isEditing && cacheNode.id === selectedDoc?.id) ? 10 : 0
+                       }}
+                     >
+                       <MarkdownPreview content={cacheNode.content} />
+                     </div>
+                  ))}
                </div>
 
                {/* 右：TOC 大纲 */}
@@ -922,6 +1046,68 @@ export default function Documents() {
           <DialogFooter>
             <button onClick={() => setMoveDocTarget(null)} className="hx-btn hx-btn-outline">取消</button>
             <button onClick={confirmMoveDocument} className="hx-btn hx-btn-primary">确认移动</button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Parse Share Link Dialog */}
+      <Dialog open={showParseShareLinkModal} onOpenChange={setShowParseShareLinkModal}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>唤星安全档案交接换防提取站</DialogTitle>
+            <DialogDescription>
+              探针检测到加密链路特征。如需提取高维文件，请输入提取标识（分享链接）。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4 space-y-4">
+            <div className="space-y-2">
+               <label className="text-[12px] font-medium text-hx-text-secondary">加密访问信标 (Token/URL)</label>
+               <Input 
+                 placeholder="输入提取链接或密钥字符"
+                 value={parseShareTokenInput}
+                 onChange={e => setParseShareTokenInput(e.target.value)}
+                 className="w-full"
+               />
+               <div className="flex justify-end pt-2">
+                  <button onClick={handleParseShareLink} disabled={!parseShareTokenInput.trim() || isParsingShare} className="hx-btn hx-btn-primary h-8 px-4 flex items-center gap-2">
+                    {isParsingShare ? <Loader2 size={14} className="animate-spin" /> : <Eye size={14} />}
+                    尝试解码提取
+                  </button>
+               </div>
+            </div>
+            
+            {previewSharedDoc && (
+              <div className="bg-hx-purple/10 border border-hx-purple/30 p-4 rounded-hx-radius mt-4">
+                 <h4 className="text-[14px] font-semibold flex items-center gap-2 m-0 mb-3 text-hx-text-primary">
+                    <Handshake size={16} className="text-hx-purple" />
+                    解密档案发现：{previewSharedDoc.title}
+                 </h4>
+                 <div className="text-[12px] text-hx-text-secondary space-y-1.5 mb-4">
+                    <p>文档长度: {previewSharedDoc.word_count || 0} 个矩阵波符</p>
+                    <p>授予权限: {previewSharedDoc.share_permission === 'edit' ? '协同编辑 (Full Control)' : '只读 (Read Only)'}</p>
+                 </div>
+                 
+                 <div className="space-y-2 pt-2 border-t border-hx-border/50">
+                   <label className="text-[12px] font-medium text-hx-text-secondary">分配您的存放区 (留空默认丢入"分享文档"容器)</label>
+                   <FolderTreeSelect 
+                     tree={folderTree}
+                     selectedId={saveSharedTargetFolder}
+                     onSelect={setSaveSharedTargetFolder}
+                   />
+                 </div>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+             <button onClick={() => { setShowParseShareLinkModal(false); setPreviewSharedDoc(null); setParseShareTokenInput(''); }} className="hx-btn hx-btn-outline">
+                中断连接
+             </button>
+             {previewSharedDoc && (
+               <button onClick={handleSaveSharedDocument} disabled={isSavingShared} className="hx-btn hx-btn-primary flex items-center gap-2">
+                 {isSavingShared ? <Loader2 size={14} className="animate-spin"/> : <Save size={14}/>}
+                 归档入库
+               </button>
+             )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

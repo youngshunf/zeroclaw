@@ -113,18 +113,7 @@ pub struct OnboardingConfig {
 // Workspace variant
 // ═══════════════════════════════════════════════════════
 
-/// Determines which config.toml template is used when creating a workspace.
-///
-/// - `Cloud`: multi-tenant server deployment — writes `api_key`, `default_provider`,
-///   security restrictions. Uses `_base/config.toml.template`.
-/// - `Desktop`: single-user desktop deployment — inherits LLM credentials from the
-///   global `config.toml`; only writes `display_name`, `default_model`, `default_temperature`.
-///   Uses `_base_desktop/config.toml.template`.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum WorkspaceVariant {
-    Cloud,
-    Desktop,
-}
+
 
 // ═══════════════════════════════════════════════════════
 // Template engine
@@ -245,129 +234,88 @@ impl TemplateEngine {
     /// 1. Create workspace directory structure
     /// 2. Copy ALL _base files → overlay with template-specific files → then def.files extras
     /// 3. Install skills from hub registry (or fallback to template dir scanning)
-    /// 4. Generate per-agent config.toml (cloud vs desktop variant)
+    /// 4. Generate per-agent config.toml
     pub async fn create_workspace(
         &self,
-        workspace_dir: &Path,
+        tenant_workspace_dir: Option<&Path>,
+        agent_workspace_dir: &Path,
         user_info: &UserInfo<'_>,
         provider: Option<&str>,
         api_key: Option<&str>,
-        variant: WorkspaceVariant,
     ) -> Result<Vec<String>> {
         let template_name = user_info.template;
         let def = self.load_definition(template_name)?;
 
-        // 1. Create directory structure
-        tokio::fs::create_dir_all(workspace_dir).await?;
-        tokio::fs::create_dir_all(workspace_dir.join("memory")).await?;
-        tokio::fs::create_dir_all(workspace_dir.join("files")).await?;
-        tokio::fs::create_dir_all(workspace_dir.join("files/ideas")).await?;
-        tokio::fs::create_dir_all(workspace_dir.join("files/drafts")).await?;
-        tokio::fs::create_dir_all(workspace_dir.join("files/published")).await?;
+        // 1. Create directory structures
+        tokio::fs::create_dir_all(agent_workspace_dir).await?;
+        
+        if let Some(tdir) = tenant_workspace_dir {
+            tokio::fs::create_dir_all(tdir).await?;
+            tokio::fs::create_dir_all(tdir.join("memory")).await?;
+            tokio::fs::create_dir_all(tdir.join("files")).await?;
+            tokio::fs::create_dir_all(tdir.join("files/ideas")).await?;
+            tokio::fs::create_dir_all(tdir.join("files/drafts")).await?;
+            tokio::fs::create_dir_all(tdir.join("files/published")).await?;
+        }
 
         let mut created_files = Vec::new();
 
-        // 2. Copy ALL _base files first (foundation), then overlay template-specific files.
         let template_dir = self.templates_dir.join(template_name);
+        
+        // Unified base directory
         let base_dir = self.templates_dir.join("_base");
 
-        // 2a. Copy all files from _base/ directory
-        if base_dir.exists() {
-            let mut entries = tokio::fs::read_dir(&base_dir).await?;
-            while let Some(entry) = entries.next_entry().await? {
+        // Helper to process directory files and substitute placeholders
+        let process_dir = |src_dir: &Path, dest_dir: &Path, files_list: &mut Vec<String>| -> Result<()> {
+            if !src_dir.exists() {
+                return Ok(());
+            }
+            let entries = std::fs::read_dir(src_dir)?;
+            for entry in entries {
+                let entry = entry?;
                 let path = entry.path();
                 if !path.is_file() {
                     continue;
                 }
                 let file_name = entry.file_name().to_string_lossy().to_string();
-                // Skip hidden files
-                if file_name.starts_with('.') {
+                if file_name.starts_with('.') || file_name == "template.yaml" || file_name == "template.json" {
                     continue;
                 }
-
                 let dest_name = if file_name.ends_with(".template") {
                     file_name.trim_end_matches(".template").to_string()
                 } else {
                     file_name.clone()
                 };
-                let dest = workspace_dir.join(&dest_name);
-
-                let content = tokio::fs::read_to_string(&path).await?;
+                let dest = dest_dir.join(&dest_name);
+                if dest.exists() { continue; } // Don't overwrite existing
+                
+                let content = std::fs::read_to_string(&path)?;
                 let content = self.substitute_placeholders(&content, user_info);
-                tokio::fs::write(&dest, &content).await?;
-                created_files.push(file_name.clone());
-                tracing::debug!(file = %file_name, "Copied from _base");
+                std::fs::write(&dest, content)?;
+                
+                if !files_list.contains(&file_name) {
+                    files_list.push(file_name);
+                }
             }
+            Ok(())
+        };
+
+        // 2a. Copy tenant files (if requested)
+        if let Some(tdir) = tenant_workspace_dir {
+            process_dir(&base_dir.join("owner"), tdir, &mut created_files)?;
         }
 
-        // 2b. Overlay template-specific files (overwrite _base versions)
-        if template_dir.exists() {
-            let mut entries = tokio::fs::read_dir(&template_dir).await?;
-            while let Some(entry) = entries.next_entry().await? {
-                let path = entry.path();
-                if !path.is_file() {
-                    continue;
-                }
-                let file_name = entry.file_name().to_string_lossy().to_string();
-                // Skip hidden files and template definition files
-                if file_name.starts_with('.')
-                    || file_name == "template.yaml"
-                    || file_name == "template.json"
-                {
-                    continue;
-                }
+        // 2b. Copy agent files from base
+        process_dir(&base_dir.join("agent"), agent_workspace_dir, &mut created_files)?;
 
-                let dest_name = if file_name.ends_with(".template") {
-                    file_name.trim_end_matches(".template").to_string()
-                } else {
-                    file_name.clone()
-                };
-                let dest = workspace_dir.join(&dest_name);
-
-                let content = tokio::fs::read_to_string(&path).await?;
-                let content = self.substitute_placeholders(&content, user_info);
-                tokio::fs::write(&dest, &content).await?;
-                if !created_files.contains(&file_name) {
-                    created_files.push(file_name.clone());
-                }
-                tracing::debug!(file = %file_name, template = template_name, "Overlaid from template");
-            }
-        }
-
-        // 2c. Also copy any explicitly listed files from def.files (in case they
-        //     are not in _base or template dir as loose files)
-        for file_name in &def.files {
-            let dest_name = if file_name.ends_with(".template") {
-                file_name.trim_end_matches(".template").to_string()
-            } else {
-                file_name.clone()
-            };
-            let dest = workspace_dir.join(&dest_name);
-            if dest.exists() {
-                continue; // already copied above
-            }
-
-            let source = if template_dir.join(file_name).exists() {
-                template_dir.join(file_name)
-            } else if base_dir.join(file_name).exists() {
-                base_dir.join(file_name)
-            } else {
-                tracing::debug!("Template file not found, skipping: {file_name}");
-                continue;
-            };
-
-            let content = tokio::fs::read_to_string(&source).await?;
-            let content = self.substitute_placeholders(&content, user_info);
-            tokio::fs::write(&dest, &content).await?;
-            created_files.push(file_name.clone());
-        }
+        // 2c. Overlay template-specific files to agent dir
+        process_dir(&template_dir, agent_workspace_dir, &mut created_files)?;
 
         // 3. Install skills
-        let installed_skills = self.install_skills(workspace_dir, &def).await?;
+        let installed_skills = self.install_skills(agent_workspace_dir, &def).await?;
 
-        // 4. Generate per-agent config.toml (variant-specific)
-        self.generate_agent_config(workspace_dir, &def, provider, api_key, variant, user_info)
-            .await?;
+        // 4. Generate per-agent config.toml
+        self.generate_agent_config(agent_workspace_dir, &def, provider, api_key, user_info).await?;
         created_files.push("config.toml".to_string());
 
         tracing::info!(
@@ -533,7 +481,6 @@ impl TemplateEngine {
         def: &TemplateDefinition,
         provider: Option<&str>,
         api_key: Option<&str>,
-        variant: WorkspaceVariant,
         user_info: &UserInfo<'_>,
     ) -> Result<()> {
         let model = if def.model.is_empty() {
@@ -546,49 +493,26 @@ impl TemplateEngine {
             .map(|t| t.to_string())
             .unwrap_or_else(|| "0.7".to_string());
 
-        let config = match variant {
-            WorkspaceVariant::Desktop => {
-                // 桌面端：只写 display_name / model / temperature，继承全局 LLM 配置
-                let template_path = self.templates_dir.join("_base_desktop/config.toml.template");
-                if template_path.exists() {
-                    let tmpl = tokio::fs::read_to_string(&template_path).await?;
-                    self.substitute_placeholders(&tmpl, user_info)
-                        .replace("{{default_model}}", model)
-                        .replace("{{default_temperature}}", &temperature)
-                } else {
-                    tracing::warn!(
-                        "桌面端 config 模板不存在: {}，使用内置回退",
-                        template_path.display()
-                    );
-                    format!(
-                        "display_name = {:?}\ndefault_model = \"{model}\"\ndefault_temperature = {temperature}\n",
-                        user_info.star_name
-                    )
-                }
-            }
-            WorkspaceVariant::Cloud => {
-                // 云端：必须有 provider，写入完整 LLM 配置
-                let provider_str = provider.ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "default_provider not configured in [huanxing] section of config.toml"
-                    )
-                })?;
-                let api_key_str = api_key.unwrap_or("");
+        let provider_str = provider.unwrap_or("anthropic");
+        let api_key_str = api_key.unwrap_or("");
 
-                let template_path = self.templates_dir.join("_base/config.toml.template");
-                if template_path.exists() {
-                    let tmpl = tokio::fs::read_to_string(&template_path).await?;
-                    tmpl.replace("{{default_provider}}", provider_str)
-                        .replace("{{default_model}}", model)
-                        .replace("{{default_temperature}}", &temperature)
-                        .replace("{{api_key}}", api_key_str)
-                } else {
-                    tracing::warn!(
-                        "云端 config 模板不存在: {}，使用内置回退",
-                        template_path.display()
-                    );
-                    format!(
-                        r#"default_provider = "{provider_str}"
+        let template_path = self.templates_dir.join("_base/config.toml.template");
+        let config = if template_path.exists() {
+            let tmpl = tokio::fs::read_to_string(&template_path).await?;
+            let mut result = tmpl
+                .replace("{{default_provider}}", provider_str)
+                .replace("{{default_model}}", model)
+                .replace("{{default_temperature}}", &temperature)
+                .replace("{{api_key}}", api_key_str);
+            result = self.substitute_placeholders(&result, user_info);
+            result
+        } else {
+            tracing::warn!(
+                "config 模板不存在: {}，使用内置回退",
+                template_path.display()
+            );
+            let mut result = format!(
+                r#"default_provider = "{provider_str}"
 default_model = "{model}"
 default_temperature = {temperature}
 api_key = "{api_key_str}"
@@ -602,9 +526,9 @@ max_messages = 100
 [memory]
 auto_save = true
 "#
-                    )
-                }
-            }
+            );
+            result = self.substitute_placeholders(&result, user_info);
+            result
         };
 
         tokio::fs::write(workspace_dir.join("config.toml"), config).await?;

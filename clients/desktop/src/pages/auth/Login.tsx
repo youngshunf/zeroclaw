@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { saveHuanxingSession, type HuanxingLoginData } from "@/config";
-import { autoOnboard, registerHasnIdentity, registerHasnAgent, connectHasn } from "@/onboard";
+import { autoOnboard, registerHasnIdentity, registerHasnAgent } from "@/onboard";
 import { sendVerifyCode, phoneLogin } from "@/lib/huanxing-api";
 import { startTokenRefresh } from "@/lib/token-refresh";
 
@@ -33,7 +33,6 @@ export default function Login({ onLoginSuccess }: LoginProps) {
     { id: "agent", label: "初始化默认助手", status: "pending" },
     { id: "engine", label: "启动 AI 引擎", status: "pending" },
     { id: "hasn", label: "注册 HASN 身份", status: "pending" },
-    { id: "hasn_connect", label: "连接 HASN 网络", status: "pending" },
     { id: "ready", label: "一切就绪", status: "pending" },
   ]);
 
@@ -154,21 +153,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
         hasnIdentity = null;
       }
 
-      // ── Step 6: 连接 HASN 网络 ──
-      if (hasnIdentity) {
-        updateStep("hasn_connect", "running");
-        try {
-          await connectHasn(session, hasnIdentity);
-          updateStep("hasn_connect", "done");
-        } catch (err) {
-          console.warn("[huanxing] HASN 连接失败（非致命）:", err);
-          updateStep("hasn_connect", "error", err instanceof Error ? err.message : "HASN 连接失败");
-        }
-      } else {
-        updateStep("hasn_connect", "done"); // 跳过
-      }
-
-      // ── Step 7: 就绪 ──
+      // ── Step 6: 就绪 ──
       updateStep("ready", "running");
       await new Promise((r) => setTimeout(r, 400));
       updateStep("ready", "done");

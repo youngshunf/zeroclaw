@@ -17,18 +17,37 @@ export interface Conversation {
   unread_count: number;
 }
 
-export interface Message {
-  id: number;
-  local_id: string;
+export interface EntityRef {
+  hasn_id: string;
+  owner_id?: string;
+  entity_type: "human" | "agent" | "system";
+}
+
+export interface MessageContent {
+  type: string; // "text", "tool_call", "image", etc.
+  text?: string;
+  [key: string]: any;
+}
+
+export interface MessageContext {
   conversation_id: string;
-  from_id: string;
-  from_type: number;
-  content: string;
-  content_type: number;
-  status: number;
-  send_status: string;
-  created_at?: string;
-  reply_to_id?: number;
+  thread_id?: string;
+  relation_type?: string;
+}
+
+export interface HasnEnvelope {
+  id: string;
+  version: "4.0";
+  from: EntityRef;
+  to: EntityRef;
+  message_type: string; // "chat", "command", "event"
+  qos: number;
+  content: MessageContent;
+  context: MessageContext;
+  timestamp: string;
+  // Legacy fields for backward compatibility during transition
+  local_id?: string;
+  send_status?: string;
 }
 
 export interface Contact {
@@ -63,18 +82,16 @@ export interface AgentInfo {
   created_time?: string;
 }
 
-// ---------- 环境检测 ----------
+// ---------- 环境检测与路径解析 ----------
 
-function getTauriInvoke(): ((cmd: string, args?: Record<string, unknown>) => Promise<unknown>) | null {
-  const internals = (window as any).__TAURI_INTERNALS__;
-  return internals?.invoke ?? null;
-}
+import { HUANXING_CONFIG } from '../config';
 
-const HASN_API_BASE = "/api/v1/hasn_core/app/hasn";
+const CLOUD_API_BASE = `${HUANXING_CONFIG.backendBaseUrl}/api/v1/hasn/app/hasn`;
+const SIDECAR_API_BASE = `${HUANXING_CONFIG.sidecarBaseUrl}/api/v1/hasn`;
 
-async function httpGet<T>(path: string): Promise<T> {
+async function cloudGet<T>(path: string): Promise<T> {
   const token = localStorage.getItem("hasn:platform_token");
-  const resp = await fetch(`${HASN_API_BASE}${path}`, {
+  const resp = await fetch(`${CLOUD_API_BASE}${path}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
   if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
@@ -82,9 +99,9 @@ async function httpGet<T>(path: string): Promise<T> {
   return json.data ?? json;
 }
 
-async function httpPost<T>(path: string, body: Record<string, unknown>): Promise<T> {
+async function cloudPost<T>(path: string, body: Record<string, unknown>): Promise<T> {
   const token = localStorage.getItem("hasn:platform_token");
-  const resp = await fetch(`${HASN_API_BASE}${path}`, {
+  const resp = await fetch(`${CLOUD_API_BASE}${path}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -97,110 +114,147 @@ async function httpPost<T>(path: string, body: Record<string, unknown>): Promise
   return json.data ?? json;
 }
 
-// ---------- 连接管理 ----------
+async function sidecarGet<T>(path: string): Promise<T> {
+  const resp = await fetch(`${SIDECAR_API_BASE}${path}`);
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
+  const json = await resp.json();
+  return json.data ?? json;
+}
+
+async function sidecarPost<T>(path: string, body: Record<string, unknown>): Promise<T> {
+  const resp = await fetch(`${SIDECAR_API_BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
+  const json = await resp.json();
+  return json.data ?? json;
+}
+
+// ---------- 连接管理 (呼叫 Sidecar) ----------
 
 export async function hasnConnect(platformToken: string, hasnId: string, starId: string): Promise<any> {
-  const invoke = getTauriInvoke();
-  if (invoke) return invoke("hasn_connect", { platformToken, hasnId, starId });
-  // Web 模式：存储 token 供后续 API 使用
   localStorage.setItem("hasn:platform_token", platformToken);
   localStorage.setItem("hasn:hasn_id", hasnId);
-  return { connected: true, hasn_id: hasnId };
+  return sidecarPost("/connect", { platform_token: platformToken, hasn_id: hasnId, star_id: starId });
 }
 
 export async function hasnDisconnect(): Promise<void> {
-  const invoke = getTauriInvoke();
-  if (invoke) { await invoke("hasn_disconnect"); return; }
   localStorage.removeItem("hasn:platform_token");
+  await sidecarPost("/disconnect", {});
 }
 
 export async function hasnStatus(): Promise<string> {
-  const invoke = getTauriInvoke();
-  if (invoke) return invoke("hasn_status") as Promise<string>;
-  return localStorage.getItem("hasn:platform_token") ? "connected" : "disconnected";
+  try {
+    const res = await sidecarGet<any>("/status");
+    return res.status;
+  } catch {
+    return localStorage.getItem("hasn:platform_token") ? "connected" : "disconnected";
+  }
 }
 
-// ---------- 会话 API ----------
+// ---------- 会话 API (呼叫 Cloud) ----------
 
 export async function getConversations(): Promise<Conversation[]> {
-  const invoke = getTauriInvoke();
-  if (invoke) return invoke("get_conversations") as Promise<Conversation[]>;
-  return httpGet<Conversation[]>("/conversations");
+  return cloudGet<Conversation[]>("/conversationss");
+}
+
+// 适配器：将后端的旧版 Message 转换为 v4.0 HasnEnvelope
+function mapLegacyMessageToEnvelope(msg: any): HasnEnvelope {
+  return {
+    id: msg.id ? String(msg.id) : `msg_${Date.now()}`,
+    version: "4.0",
+    from: {
+      hasn_id: msg.from_id || "",
+      entity_type: msg.from_type === 1 ? "human" : "agent"
+    },
+    to: {
+      hasn_id: msg.to_id || "",
+      entity_type: "human" // Defaulting to human for legacy
+    },
+    message_type: "chat",
+    qos: 1,
+    content: {
+      type: msg.content_type === 6 ? "tool_call" : "text",
+      text: msg.content || ""
+    },
+    context: {
+      conversation_id: msg.conversation_id || ""
+    },
+    timestamp: msg.created_at || new Date().toISOString(),
+    local_id: msg.local_id,
+    send_status: msg.send_status || "delivered"
+  };
 }
 
 export async function getMessages(
   conversationId: string,
   limit = 50,
-  beforeId?: number,
-): Promise<Message[]> {
-  const invoke = getTauriInvoke();
-  if (invoke) return invoke("get_messages", { conversationId, beforeId, limit }) as Promise<Message[]>;
+  beforeId?: number | string,
+): Promise<HasnEnvelope[]> {
   const params = new URLSearchParams({ limit: String(limit) });
   if (beforeId) params.set("before_id", String(beforeId));
-  return httpGet<Message[]>(`/conversations/${conversationId}/messages?${params}`);
+  const legacyMessages = await cloudGet<any[]>(`/conversationss/${conversationId}/messages?${params}`);
+  return legacyMessages.map(mapLegacyMessageToEnvelope);
 }
 
-export async function sendMessage(to: string, content: string, replyToId?: number): Promise<Message> {
-  const invoke = getTauriInvoke();
-  if (invoke) return invoke("send_message", { to, content, replyToId: replyToId ?? null }) as Promise<Message>;
-  return httpPost<Message>("/messages/send", { to, content: { text: content }, content_type: 1, reply_to_id: replyToId });
+export async function sendMessage(to: string, content: string, replyToId?: number): Promise<HasnEnvelope> {
+  // 发送消息通过 Sidecar 代理发出，实现双端一致性
+  const hasnId = localStorage.getItem("hasn:hasn_id") || "";
+  await sidecarPost("/send", { hasn_id: hasnId, target: to, message: content });
+  
+  // 乐观构建一个 v4.0 HasnEnvelope 返回给前端
+  return {
+    id: `temp_${Date.now()}`,
+    version: "4.0",
+    from: { hasn_id: hasnId, entity_type: "human" },
+    to: { hasn_id: to, entity_type: "human" },
+    message_type: "chat",
+    qos: 1,
+    content: { type: "text", text: content },
+    context: { conversation_id: "" }, // Will be filled by WS return
+    timestamp: new Date().toISOString(),
+    local_id: `temp_${Date.now()}`,
+    send_status: "sent"
+  };
 }
 
 export async function markConversationRead(conversationId: string, lastMsgId?: number): Promise<void> {
-  const invoke = getTauriInvoke();
-  if (invoke) { await invoke("mark_conversation_read", { conversationId, lastMsgId }); return; }
-  await httpPost(`/conversations/${conversationId}/read`, { last_msg_id: lastMsgId ?? 0 });
+  await cloudPost(`/conversationss/${conversationId}/read`, { last_msg_id: lastMsgId ?? 0 });
 }
 
-// ---------- 联系人 API ----------
+// ---------- 联系人 API (呼叫 Cloud) ----------
 
 export async function getContacts(relationType?: string): Promise<Contact[]> {
-  const invoke = getTauriInvoke();
-  if (invoke) return invoke("get_contacts", { relationType }) as Promise<Contact[]>;
   const params = relationType ? `?relation_type=${relationType}` : "";
-  return httpGet<Contact[]>(`/social/contacts${params}`);
+  return cloudGet<Contact[]>(`/contactss${params}`);
 }
 
 export async function sendFriendRequest(starId: string, message?: string): Promise<void> {
-  const invoke = getTauriInvoke();
-  if (invoke) { await invoke("send_friend_request", { starId, message }); return; }
-  await httpPost("/social/contacts/request", { target_star_id: starId, message });
+  await cloudPost("/contactss/request", { target_star_id: starId, message });
 }
 
 export async function getFriendRequests(): Promise<FriendRequest[]> {
-  const invoke = getTauriInvoke();
-  if (invoke) return invoke("get_friend_requests") as Promise<FriendRequest[]>;
-  return httpGet<FriendRequest[]>("/social/contacts/requests");
+  return cloudGet<FriendRequest[]>("/contactss/requests");
 }
 
 export async function respondFriendRequest(requestId: number, accept: boolean): Promise<void> {
-  const invoke = getTauriInvoke();
-  if (invoke) { await invoke("respond_friend_request", { requestId, accept }); return; }
-  await httpPost(`/social/contacts/requests/${requestId}/respond`, { action: accept ? "accept" : "reject" });
+  await cloudPost(`/contactss/requests/${requestId}/respond`, { action: accept ? "accept" : "reject" });
 }
 
-// ---------- Agent API ----------
+// ---------- Agent API (呼叫 Cloud) ----------
 
 export async function getMyAgents(): Promise<AgentInfo[]> {
-  const invoke = getTauriInvoke();
-  if (invoke) return invoke("get_my_agents") as Promise<AgentInfo[]>;
-  return httpGet<AgentInfo[]>("/me/agents");
+  return cloudGet<AgentInfo[]>("/agentss");
 }
 
 // ---------- Client ID 读取 ----------
 
 /**
- * 读取当前 HASN 客户端 ID（从 ~/.huanxing/hasn/client.json）
- * 用于 Agent 注册时绑定 client_id
+ * 读取当前 HASN 客户端 ID
+ * 统一 Node 架构下不需要前端绑定 client_id。这仅用于兼容老逻辑。
  */
 export async function loadClientId(): Promise<string | undefined> {
-  const invoke = getTauriInvoke();
-  if (!invoke) return undefined;
-  try {
-    // 调用 Rust 侧读取 client.json
-    const result = await invoke("hasn_get_client_id") as string | null;
-    return result ?? undefined;
-  } catch {
-    return undefined;
-  }
+  return undefined;
 }

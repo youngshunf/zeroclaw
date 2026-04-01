@@ -303,6 +303,8 @@ pub async fn download_and_install_agent(
     let target_dir = dirs::home_dir()
         .unwrap_or_default()
         .join(".huanxing")
+        .join("users")
+        .join("default")
         .join("agents")
         .join(&agent_name);
         
@@ -519,6 +521,8 @@ pub async fn download_and_install_skill(
     let target_dir = dirs::home_dir()
         .unwrap_or_default()
         .join(".huanxing")
+        .join("users")
+        .join("default")
         .join("agents")
         .join(&agent_name)
         .join("skills")
@@ -538,6 +542,8 @@ pub async fn download_and_install_skill(
     let config_path = dirs::home_dir()
         .unwrap_or_default()
         .join(".huanxing")
+        .join("users")
+        .join("default")
         .join("agents")
         .join(&agent_name)
         .join("config.toml");
@@ -605,6 +611,8 @@ pub async fn download_and_install_sop(
     let target_dir = dirs::home_dir()
         .unwrap_or_default()
         .join(".huanxing")
+        .join("users")
+        .join("default")
         .join("agents")
         .join(&agent_name)
         .join("sops")
@@ -627,6 +635,8 @@ pub async fn download_and_install_sop(
             let skills_dir = dirs::home_dir()
                 .unwrap_or_default()
                 .join(".huanxing")
+                .join("users")
+                .join("default")
                 .join("agents")
                 .join(&agent_name)
                 .join("skills");

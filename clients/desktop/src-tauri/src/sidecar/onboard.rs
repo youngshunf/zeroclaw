@@ -33,9 +33,10 @@ impl SidecarManager {
 
         // 1. 创建目录结构
         std::fs::create_dir_all(&self.config_dir).map_err(|e| format!("创建配置目录失败: {e}"))?;
-        let workspace_dir = self.config_dir.join("agents").join("default");
+        let user_tenant_dir = self.config_dir.join("users").join("default");
+        let default_agent_dir = user_tenant_dir.join("agents").join("default");
+        let workspace_dir = default_agent_dir.join("workspace");
         std::fs::create_dir_all(&workspace_dir).ok();
-        std::fs::create_dir_all(self.config_dir.join("agents")).ok();
 
         // 2. 生成 config.toml
         let api_base = req
@@ -71,12 +72,12 @@ impl SidecarManager {
         tracing::info!("Config created: {}", config_path.display());
 
         // 3. 创建默认 agent 配置
-        let agent_dir = self.config_dir.join("agents").join("default");
+        let agent_dir = self.config_dir.join("users").join("default").join("agents").join("default").join("workspace");
         std::fs::create_dir_all(&agent_dir).ok();
         let (default_model, title_model) = extract_models_from_template(&app);
-        let fallback_agent_config = load_scaffold_file(&app, "default/config.toml.template")
+        let fallback_agent_config = load_scaffold_file(&app, "agent-scaffold/config.toml.template")
             .unwrap_or_else(|| {
-                tracing::warn!("default/config.toml.template not found! Using empty fallback.");
+                tracing::warn!("agent-scaffold/config.toml.template not found! Using empty fallback.");
                 String::new()
             });
 
@@ -106,7 +107,10 @@ impl SidecarManager {
             ("{{comm_style}}", comm_style),
         ];
 
-        let scaffold_result = scaffold_workspace(&app, &self.config_dir, &workspace_dir, placeholders);
+        let owner_dir = self.config_dir.join("users").join("default").join("workspace");
+        std::fs::create_dir_all(&owner_dir).ok();
+
+        let scaffold_result = scaffold_workspace(&app, &owner_dir, &workspace_dir, placeholders);
         match scaffold_result {
             Ok(count) => {
                 tracing::info!(
@@ -119,28 +123,14 @@ impl SidecarManager {
             }
         }
 
-        // 4.5. 创建 Guardian 工作区（从 workspace-scaffold/guardian/ 复制）
-        let guardian_dir = self.config_dir.join("guardian");
-        std::fs::create_dir_all(&guardian_dir).ok();
-        let guardian_result = scaffold_guardian_workspace(&app, &guardian_dir, placeholders);
-        match guardian_result {
-            Ok(count) => {
-                tracing::info!(
-                    "Guardian workspace scaffolded: {count} files created in {}",
-                    guardian_dir.display()
-                );
-            }
-            Err(e) => {
-                tracing::warn!("Guardian scaffold failed (non-fatal): {e}");
-            }
-        }
+
 
         // 4.6. 初始化 data/users.db
         let data_dir = self.config_dir.join("data");
         std::fs::create_dir_all(&data_dir).ok();
         let users_db_path = data_dir.join("users.db");
         if !users_db_path.exists() {
-            match init_users_db(&users_db_path, user_uuid, user_phone, nickname) {
+            match init_users_db(&users_db_path, user_uuid, user_phone, nickname, star_name) {
                 Ok(_) => tracing::info!("users.db initialized: {}", users_db_path.display()),
                 Err(e) => tracing::warn!("users.db init failed (non-fatal): {e}"),
             }
@@ -206,140 +196,78 @@ fn scaffold_workspace(
     agent_dir: &std::path::Path,
     placeholders: &[(&str, &str)],
 ) -> Result<usize, String> {
-    let scaffold_dir = app
+    let scaffold_base = app
         .path()
         .resource_dir()
         .map_err(|e| format!("获取资源目录失败: {e}"))?
-        .join("workspace-scaffold")
-        .join("default");
+        .join("workspace-scaffold");
 
-    let scaffold_dir = if scaffold_dir.exists() {
-        scaffold_dir
+    let scaffold_base = if scaffold_base.exists() {
+        scaffold_base
     } else {
         let dev_path =
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../workspace-scaffold").join("default");
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../workspace-scaffold");
         if dev_path.exists() {
             dev_path
         } else {
             return Err(format!(
-                "workspace-scaffold/default 目录不存在: {} 或 {}",
-                scaffold_dir.display(),
-                dev_path.display()
+                "workspace-scaffold 目录不存在: {}",
+                scaffold_base.display()
             ));
         }
     };
 
     let mut count = 0;
-    let entries =
-        std::fs::read_dir(&scaffold_dir).map_err(|e| format!("读取 scaffold 目录失败: {e}"))?;
 
-    for entry in entries {
-        let entry = entry.map_err(|e| format!("读取目录条目失败: {e}"))?;
-        let file_name = entry.file_name().to_string_lossy().to_string();
-
-        if !file_name.ends_with(".md") || file_name == "README.md" {
-            continue;
+    // Helper closure to process a directory
+    let mut process_dir = |src_dir: &std::path::Path, dest_dir: &std::path::Path| -> Result<(), String> {
+        if !src_dir.exists() {
+            return Ok(()); // tolerate missing parts
         }
+        let entries = std::fs::read_dir(src_dir).map_err(|e| format!("读取 scaffold 目录失败: {e}"))?;
+        for entry in entries {
+            let entry = entry.map_err(|e| format!("读取目录条目失败: {e}"))?;
+            let file_name = entry.file_name().to_string_lossy().to_string();
 
-        let is_owner_file = matches!(file_name.as_str(), "USER.md" | "MEMORY.md" | "BOOTSTRAP.md");
-        let dest = if is_owner_file {
-            owner_dir.join(&file_name)
-        } else {
-            agent_dir.join(&file_name)
-        };
+            if !file_name.ends_with(".md") || file_name == "README.md" {
+                continue;
+            }
 
-        if dest.exists() {
-            continue;
+            let dest = dest_dir.join(&file_name);
+            if dest.exists() {
+                continue;
+            }
+
+            let content = std::fs::read_to_string(entry.path())
+                .map_err(|e| format!("读取模板 {file_name} 失败: {e}"))?;
+
+            let mut content = content;
+            for (placeholder, value) in placeholders {
+                content = content.replace(placeholder, value);
+            }
+
+            std::fs::write(&dest, &content).map_err(|e| format!("写入 {file_name} 失败: {e}"))?;
+            count += 1;
         }
-
-        let content = std::fs::read_to_string(entry.path())
-            .map_err(|e| format!("读取模板 {file_name} 失败: {e}"))?;
-
-        let mut content = content;
-        for (placeholder, value) in placeholders {
-            content = content.replace(placeholder, value);
-        }
-
-        std::fs::write(&dest, &content).map_err(|e| format!("写入 {file_name} 失败: {e}"))?;
-
-        count += 1;
-    }
-
-    Ok(count)
-}
-
-fn scaffold_guardian_workspace(
-    app: &AppHandle,
-    guardian_dir: &std::path::Path,
-    placeholders: &[(&str, &str)],
-) -> Result<usize, String> {
-    let scaffold_dir = app
-        .path()
-        .resource_dir()
-        .map_err(|e| format!("获取资源目录失败: {e}"))?
-        .join("workspace-scaffold")
-        .join("guardian");
-
-    let scaffold_dir = if scaffold_dir.exists() {
-        scaffold_dir
-    } else {
-        let dev_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../workspace-scaffold/guardian");
-        if dev_path.exists() {
-            dev_path
-        } else {
-            return Err(format!(
-                "guardian scaffold 目录不存在: {} 或 {}",
-                scaffold_dir.display(),
-                dev_path.display()
-            ));
-        }
+        Ok(())
     };
 
-    let mut count = 0;
-    let entries =
-        std::fs::read_dir(&scaffold_dir).map_err(|e| format!("读取 guardian scaffold 失败: {e}"))?;
-
-    for entry in entries {
-        let entry = entry.map_err(|e| format!("读取目录条目失败: {e}"))?;
-        let path = entry.path();
-
-        if !path.is_file() {
-            continue;
-        }
-
-        let file_name = entry.file_name().to_string_lossy().to_string();
-
-        if !file_name.ends_with(".md") && !file_name.ends_with(".toml") {
-            continue;
-        }
-
-        let dest = guardian_dir.join(&file_name);
-
-        if dest.exists() {
-            continue;
-        }
-
-        let content = std::fs::read_to_string(&path)
-            .map_err(|e| format!("读取模板 {file_name} 失败: {e}"))?;
-
-        let mut content = content;
-        for (placeholder, value) in placeholders {
-            content = content.replace(placeholder, value);
-        }
-
-        std::fs::write(&dest, &content).map_err(|e| format!("写入 {file_name} 失败: {e}"))?;
-        count += 1;
-    }
+    // 1. Owner files -> owner_dir
+    process_dir(&scaffold_base.join("owner-scaffold"), owner_dir)?;
+    
+    // 2. Agent files -> agent_dir
+    process_dir(&scaffold_base.join("agent-scaffold"), agent_dir)?;
 
     Ok(count)
 }
+
 
 fn init_users_db(
     db_path: &std::path::Path,
     user_uuid: &str,
     phone: &str,
     nickname: &str,
+    star_name: &str,
 ) -> Result<(), String> {
     use std::io::Write;
 
@@ -347,32 +275,52 @@ fn init_users_db(
         r#"
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_uuid TEXT NOT NULL UNIQUE,
+    user_id TEXT NOT NULL UNIQUE,
     phone TEXT,
     nickname TEXT,
-    agent_id TEXT,
-    server_id TEXT DEFAULT 'local',
+    tenant_dir TEXT,
+    plan TEXT,
+    plan_expires DATETIME,
     status TEXT DEFAULT 'active',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS channel_bindings (
+CREATE TABLE IF NOT EXISTS agents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id TEXT NOT NULL UNIQUE,
+    user_id TEXT NOT NULL,
+    template TEXT NOT NULL DEFAULT 'finance',
+    star_name TEXT,
+    hasn_id TEXT UNIQUE,
+    status TEXT DEFAULT 'active',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(user_id)
+);
+
+CREATE TABLE IF NOT EXISTS routing (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     channel_type TEXT NOT NULL,
     sender_id TEXT NOT NULL,
-    agent_name TEXT NOT NULL,
-    user_uuid TEXT,
+    agent_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(channel_type, sender_id)
+    UNIQUE(channel_type, sender_id),
+    FOREIGN KEY (agent_id) REFERENCES agents(agent_id),
+    FOREIGN KEY (user_id) REFERENCES users(user_id)
 );
 
-INSERT OR IGNORE INTO users (user_uuid, phone, nickname, agent_id)
+INSERT OR IGNORE INTO users (user_id, phone, nickname, tenant_dir)
 VALUES ('{user_uuid}', '{phone}', '{nickname}', 'default');
+
+INSERT OR IGNORE INTO agents (agent_id, user_id, template, star_name)
+VALUES ('default', '{user_uuid}', 'default', '{star_name}');
 "#,
         user_uuid = user_uuid,
         phone = phone,
         nickname = nickname,
+        star_name = star_name,
     );
 
     let sql_path = db_path.with_extension("init.sql");

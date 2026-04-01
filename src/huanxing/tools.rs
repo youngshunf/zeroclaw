@@ -11,7 +11,7 @@ use super::registry::RegistryLoader;
 use crate::huanxing::api_client::ApiClient;
 use crate::huanxing::db::TenantDb;
 use crate::huanxing::router::TenantRouter;
-use crate::huanxing::templates::{TemplateEngine, UserInfo, WorkspaceVariant};
+use crate::huanxing::templates::{TemplateEngine, UserInfo};
 use crate::tools::traits::{Tool, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
@@ -124,7 +124,8 @@ impl Tool for HxLookupSender {
 pub struct HxRegisterUser {
     db: TenantDb,
     api: ApiClient,
-    agents_dir: PathBuf,
+    config_dir: PathBuf,
+    hx_config: crate::huanxing::config::HuanXingConfig,
     common_skills_dir: PathBuf,
     template_engine: TemplateEngine,
     default_template: String,
@@ -138,7 +139,8 @@ impl HxRegisterUser {
     pub fn new(
         db: TenantDb,
         api: ApiClient,
-        agents_dir: PathBuf,
+        config_dir: PathBuf,
+        hx_config: crate::huanxing::config::HuanXingConfig,
         common_skills_dir: PathBuf,
         templates_dir: PathBuf,
         default_template: String,
@@ -150,7 +152,8 @@ impl HxRegisterUser {
         Self {
             db,
             api,
-            agents_dir,
+            config_dir,
+            hx_config,
             common_skills_dir,
             template_engine: TemplateEngine::new(templates_dir),
             default_template,
@@ -165,7 +168,8 @@ impl HxRegisterUser {
     pub fn with_registry(
         db: TenantDb,
         api: ApiClient,
-        agents_dir: PathBuf,
+        config_dir: PathBuf,
+        hx_config: crate::huanxing::config::HuanXingConfig,
         common_skills_dir: PathBuf,
         templates_dir: PathBuf,
         default_template: String,
@@ -178,7 +182,8 @@ impl HxRegisterUser {
         Self {
             db,
             api,
-            agents_dir,
+            config_dir,
+            hx_config,
             common_skills_dir,
             template_engine: TemplateEngine::with_registry(templates_dir, registry),
             default_template,
@@ -291,7 +296,10 @@ impl Tool for HxRegisterUser {
         let seq = self.db.get_next_user_seq().await.unwrap_or(1);
         let agent_id = format!("{seq:03}-{phone}-{template}");
         let tenant_dir_name = format!("{seq:03}-{phone}");
-        let workspace = self.agents_dir.join(&agent_id);
+        // Calculate isolated tenant paths
+        let tenant_dir = format!("{:03}-{}", seq, phone);
+        let owner_workspace = self.hx_config.resolve_owner_dir(&self.config_dir, Some(&tenant_dir));
+        let agent_workspace = self.hx_config.resolve_agent_workspace(&self.config_dir, Some(&tenant_dir), &agent_id);
 
         // Step 2: Save user to local DB with tokens + channel binding + routing
         match self
@@ -303,7 +311,7 @@ impl Tool for HxRegisterUser {
                 Some(nickname),
                 template,
                 Some(star_name),
-                Some(&workspace.to_string_lossy()),
+                Some(&agent_workspace.to_string_lossy()),
                 Some(&tenant_dir_name),
                 Some(access_token),
                 Some(llm_token),
@@ -320,15 +328,6 @@ impl Tool for HxRegisterUser {
                     error: Some(format!("保存用户记录失败: {e}")),
                 });
             }
-        }
-
-        // Bind channel
-        if let Err(e) = self
-            .db
-            .bind_channel(user_id, channel_type, sender_id, None)
-            .await
-        {
-            tracing::warn!("Failed to bind channel: {e}");
         }
 
         // Add routing
@@ -387,7 +386,7 @@ impl Tool for HxRegisterUser {
 
         match self
             .template_engine
-            .create_workspace(&workspace, &user_info, provider, api_key, WorkspaceVariant::Cloud)
+            .create_workspace(Some(&owner_workspace), &agent_workspace, &user_info, provider, api_key)
             .await
         {
             Ok(files) => {
@@ -407,7 +406,7 @@ impl Tool for HxRegisterUser {
                 .default_provider
                 .as_deref()
                 .unwrap_or("anthropic-custom:https://llm.dcfuture.cn");
-            match configure_agent_llm(&workspace, llm_token, provider_for_llm).await {
+            match configure_agent_llm(&agent_workspace, llm_token, provider_for_llm).await {
                 Ok(()) => {
                     steps.push(format!(
                         "✅ Step3.5: LLM 网关配置完成 (provider={provider_for_llm})"
@@ -482,7 +481,7 @@ impl Tool for HxRegisterUser {
 
                                 // 将 hasn_id 写回 Agent 的 config.toml
                                 if !agent_hasn_id.is_empty() {
-                                    let config_path = workspace.join("config.toml");
+                                    let config_path = agent_workspace.join("config.toml");
                                     if let Ok(content) =
                                         tokio::fs::read_to_string(&config_path).await
                                     {

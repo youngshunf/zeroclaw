@@ -130,9 +130,8 @@ impl TenantRouter {
                     .map(|p| p.to_path_buf())
                     .unwrap_or_else(|| self.workspace_dir.clone());
 
-                // Resolve paths using the new dual-track architecture.
-                // Cloud: config_dir/users/{tenant_dir}/agents/{agent_id}/workspace/
-                // Desktop: config_dir/agents/{agent_id}/workspace/ (tenant_dir is None)
+                // Resolve paths using the unified architecture.
+                // Root: config_dir/users/{tenant_dir}/...
                 let tenant_dir_str = record.tenant_dir.as_deref();
                 let owner_dir = self.config.resolve_owner_dir(&config_dir, tenant_dir_str);
                 let agent_workspace = self.config.resolve_agent_workspace(

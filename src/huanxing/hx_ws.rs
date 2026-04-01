@@ -317,9 +317,6 @@ async fn handle_socket(socket: WebSocket, state: AppState, default_session_id: O
     }
 }
 
-/// Resolve the per-agent workspace directory (if multi-tenant is enabled
-/// and the agent exists).  Returns `None` in single-tenant mode or when
-/// the agent name is absent / workspace doesn't exist.
 fn resolve_agent_workspace(
     agent_name: Option<&str>,
     config: &crate::config::Config,
@@ -328,10 +325,29 @@ fn resolve_agent_workspace(
         return None;
     }
     let agent_id = agent_name?;
-    let agents_dir = config
-        .huanxing
-        .resolve_agents_dir(config.config_path.parent().unwrap_or(&config.workspace_dir));
-    let workspace = agents_dir.join(agent_id);
+    
+    // Unified Node Architecture path resolution
+    let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
+    let db_path = config.huanxing.resolve_db_path(config_dir);
+    
+    // Try to resolve using db, fallback to default `None` for tenant_dir if not found
+    let mut tenant_dir = None;
+    if let Ok(db) = crate::huanxing::db::TenantDb::open(&db_path) {
+        // Since agent_name could be either hasn_id (from network) or agent_id (from local UI), try both
+        if let Ok(Some(record)) = tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(db.find_by_agent_id(agent_id))) {
+            tenant_dir = record.tenant_dir;
+        } else if let Ok(Some(record)) = tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(db.find_by_hasn_id(agent_id))) {
+            tenant_dir = record.tenant_dir;
+        }
+    }
+    
+    // Fallback to None if not found in db. `resolve_agent_workspace` handles `tenant_dir = None`.
+    let workspace = config.huanxing.resolve_agent_workspace(
+        config_dir,
+        tenant_dir.as_deref(),
+        agent_id,
+    );
+    
     workspace.exists().then_some(workspace)
 }
 

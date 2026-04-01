@@ -62,14 +62,10 @@ pub async fn hasn_invoke(
             .into_response();
     }
 
-    let agents_dir = config
-        .huanxing
-        .resolve_agents_dir(config.config_path.parent().unwrap_or(&config.workspace_dir));
-
     // 通过 hasn_id 解析工作区路径
     let bridge = agent_bridge::global_bridge();
     let workspace = match bridge
-        .resolve_workspace_by_hasn_id(&agents_dir, &req.hasn_id)
+        .resolve_workspace_by_hasn_id(&state, &req.hasn_id)
         .await
     {
         Some(ws) => ws,

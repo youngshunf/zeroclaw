@@ -1,0 +1,148 @@
+# ═══════════════════════════════════════════════════════════════
+# Admin Agent — 管理员专用，高权限
+# 路径: server-config/admin/config.toml
+# ═══════════════════════════════════════════════════════════════
+
+default_provider = "custom:https://llm.dcfuture.cn/v1"
+default_model = "MiniMax-M2.7"
+default_temperature = 0.7
+api_key = "sk-CBUn2XGX9ZGbPBbq8oXpSTKLcBmKmsKGrmfW5I6bHBHGAHkC"
+
+
+# ── Agent ─────────────────────────────────────────────────────
+[agent]
+compact_context = false
+max_tool_iterations = 50
+max_history_messages = 100
+
+[agent.session]
+backend = "sqlite"
+strategy = "per-sender"
+ttl_seconds = 604800             # 7天 — 管理员需要长上下文
+max_messages = 200
+
+# ── 记忆 ──────────────────────────────────────────────────────
+[memory]
+backend = "sqlite"
+auto_save = true
+auto_hydrate = true
+hygiene_enabled = true
+archive_after_days = 14
+purge_after_days = 90
+conversation_retention_days = 90
+snapshot_enabled = true
+snapshot_on_hygiene = true
+
+# ── 向量记忆 ──────────────────────────────────────────────────
+embedding_provider = "custom:https://llm.dcfuture.cn/v1"
+embedding_model = "text-embedding-v4"
+embedding_dimensions = 1024
+vector_weight = 0.7
+keyword_weight = 0.3
+min_relevance_score = 0.4
+
+# ── 自治与安全（管理员全自主）──────────────────────────────────
+[autonomy]
+level = "full"
+workspace_only = false
+# 基础命令通配放行，监控类的高危/敏感命令在这里显式白名单放行
+allowed_commands = ["*", "netstat", "ps", "pm2", "systemctl", "bash", "sh", "top", "free", "df"]
+forbidden_paths = []
+max_actions_per_hour = 1000
+max_cost_per_day_cents = 10000
+# 保持对未知破坏性命令（如 rm -rf 等）的高危拦截
+block_high_risk_commands = true
+# 允许中风险（如 mv、copy、npm）后台静默执行
+require_approval_for_medium_risk = false
+auto_approve = []
+non_cli_excluded_tools = [
+    # ═══ 硬件外设（服务器无 GPIO/STM32）═══
+    "hardware_board_info",
+    "hardware_memory_map",
+    "hardware_memory_read",
+
+    # ═══ 第三方集成（未部署）═══
+    "composio",
+    "discord_search",
+    "google_workspace",
+    "jira",
+    "linkedin",
+    "microsoft365",
+    "notion",
+    "pushover",
+
+    # ═══ HASN 社交（admin 不做社交，只做运维）═══
+    "hasn_send",
+    "hasn_contacts",
+    "hasn_add_friend",
+    "hasn_inbox",
+    "hasn_respond_request",
+
+    # ═══ 用户注册流程（Guardian 专用）═══
+    "hx_send_sms",
+    "hx_verify_sms",
+    "hx_local_bind_channel",
+
+    # ═══ 个人文档（用户私有数据，admin 不直接操作）═══
+    "hx_doc_create", "hx_doc_update", "hx_doc_delete", "hx_doc_move", "hx_doc_share",
+    "hx_folder_create", "hx_folder_delete", "hx_folder_move",
+
+    # ═══ 服务器无 GUI ═══
+    "screenshot",
+    "browser",
+    "browser_open",
+    "browser_delegate",
+    "image_gen",
+    "image_info",
+
+    # ═══ 低价值 / 内部测试工具 ═══
+    "reaction",                  # 已由渠道层处理
+    "vi_verify",                 # 内部测试工具
+    "weather",                   # 可用 web_search_tool 替代
+    "canvas",                    # 交互式画布（非 CLI 无意义）
+    "dashscope",                 # 语音合成（admin 无需 TTS）
+    "hx_tts",                    # 同上
+
+    # ═══ 多 Agent 协作（admin 单机运维，无需委托）═══
+    "swarm",
+    "delegate",
+    "sessions_history",
+    "sessions_list",
+    "sessions_send",
+]
+
+# ── 安全 ──────────────────────────────────────────────────────
+[security]
+canary_tokens = false
+semantic_guard = false
+
+[security.otp]
+enabled = false
+
+# ── 心跳（定时巡检）──────────────────────────────────────────
+[heartbeat]
+enabled = true
+interval_minutes = 30
+max_tasks_per_tick = 3
+
+# ── Cron ──────────────────────────────────────────────────────
+[cron]
+enabled = true
+max_run_history = 50
+
+# ── 开放功能 ──────────────────────────────────────────────────
+[web_search]
+enabled = true
+
+[web_fetch]
+enabled = true
+
+[browser]
+enabled = false
+
+[http_request]
+enabled = false
+
+[channels_config]
+cli = false
+message_timeout_secs = 600

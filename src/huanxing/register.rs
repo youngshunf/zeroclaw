@@ -137,7 +137,7 @@ pub fn huanxing_all_tools(
     };
 
     // Resolve common paths
-    let agents_dir = root_config
+    let _agents_dir = root_config
         .huanxing
         .resolve_agents_dir(
             root_config
@@ -197,7 +197,8 @@ pub fn huanxing_all_tools(
             super::tools::HxRegisterUser::with_registry(
                 hx_db.clone(),
                 api.clone(),
-                agents_dir.clone(),
+                root_config.config_path.parent().unwrap_or(&root_config.workspace_dir).to_path_buf(),
+                hx_config.clone(),
                 common_skills_dir.clone(),
                 templates_dir.clone(),
                 default_template.clone(),
@@ -211,7 +212,8 @@ pub fn huanxing_all_tools(
             super::tools::HxRegisterUser::new(
                 hx_db.clone(),
                 api.clone(),
-                agents_dir.clone(),
+                root_config.config_path.parent().unwrap_or(&root_config.workspace_dir).to_path_buf(),
+                hx_config.clone(),
                 common_skills_dir.clone(),
                 templates_dir.clone(),
                 default_template.clone(),

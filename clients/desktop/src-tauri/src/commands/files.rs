@@ -43,7 +43,7 @@ pub async fn copy_file_to_workspace(
 #[tauri::command]
 pub fn get_workspace_dir() -> Result<String, String> {
     let home = dirs::home_dir().ok_or("无法获取 home 目录")?;
-    let workspace = home.join(".huanxing").join("agents").join("default");
+    let workspace = home.join(".huanxing").join("users").join("default").join("agents").join("default");
 
     // 确保目录存在
     std::fs::create_dir_all(&workspace)

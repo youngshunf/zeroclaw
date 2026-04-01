@@ -24,6 +24,7 @@ export interface HuanxingDocumentResult {
   created_at: string;
   updated_at?: string;
   deleted_at?: string;
+  is_shared?: boolean;
 }
 
 export interface HuanxingDocumentParams {
@@ -252,4 +253,35 @@ export async function exportHuanxingDocumentApi(
   }
 
   return { blob, filename };
+}
+
+/** 获取分享文档预览元数据 (公开接口) */
+export async function getHuanxingSharedDocumentApi(
+  token: string,
+  shareToken: string,
+  password?: string
+): Promise<{ data: HuanxingDocumentResult }> {
+  // 即使是 open 接口，也可携带 token (不强求)
+  const url = new URL(`/api/v1/huanxing/open/share/${shareToken}`, 'http://localhost');
+  if (password) {
+    url.searchParams.set('password', password);
+  }
+  return authRequest(url.pathname + url.search, token, {
+    method: 'GET',
+  });
+}
+
+/** 入库/保存他人的分享链接到自己的空间 */
+export async function saveHuanxingSharedDocumentApi(
+  token: string,
+  shareToken: string,
+  folderId?: number
+): Promise<{ data: any }> {
+  return authRequest(`/api/v1/huanxing/app/docs/share/save`, token, {
+    method: 'POST',
+    body: JSON.stringify({
+      share_token: shareToken,
+      folder_id: folderId ?? null
+    }),
+  });
 }

@@ -273,7 +273,6 @@ impl TenantContext {
             &owner_dir,
             agent_wrapper_dir,
             &workspace_dir,
-            &global_config.huanxing.deployment_mode,
         ).await;
 
         // Effective model/provider: workspace config > DB record > global [huanxing] default
@@ -746,34 +745,7 @@ impl TenantContext {
         Ok(ctx)
     }
 
-    /// 桌面端专用：直接从 Agent 工作区加载，不需要 DB 查询。
-    ///
-    /// 桌面端是单用户模式，agent 所有者即当前登录用户，无需多用户 DB。
-    /// `user_id` 传空字符串，model/provider/template 等均从工作区 config.toml 读取。
-    pub async fn load_desktop(
-        agent_id: &str,
-        workspace_dir: PathBuf,
-        global_config: &crate::config::Config,
-    ) -> anyhow::Result<Self> {
-        // Desktop: config_dir = ~/.huanxing/, owner_dir = ~/.huanxing/workspace/
-        let config_dir = global_config.config_path.parent()
-            .unwrap_or(&global_config.workspace_dir);
-        let owner_dir = global_config.huanxing.resolve_owner_dir(config_dir, None);
-        Self::load(
-            agent_id,
-            "",         // 桌面端单用户，无 DB user_id
-            workspace_dir,
-            owner_dir,
-            None,       // model：从工作区 config.toml 读取
-            None,       // provider：从工作区 config.toml 读取
-            None,       // template
-            None,       // nickname
-            None,       // star_name
-            None,       // plan
-            global_config,
-        )
-        .await
-    }
+
 }
 
 // ── Helpers ──────────────────────────────────────────────────
@@ -819,10 +791,9 @@ async fn load_workspace_overrides(workspace_dir: &std::path::Path) -> WorkspaceO
     load_overrides_from_path(&workspace_dir.join("config.toml")).await
 }
 
-/// Load and cascade config.toml overrides according to deployment mode.
+/// Load and cascade config.toml overrides uniformly (3-level).
 ///
-/// - **Cloud (3-level)**: user config.toml → agent config.toml (agent overrides user)
-/// - **Desktop (2-level)**: agent config.toml only (global config already loaded by ZeroClaw core)
+/// global config.toml → user config.toml → agent config.toml (agent overrides user)
 ///
 /// The user-level config is at `{tenant_root}/config.toml` (same dir as owner workspace).
 /// The agent-level config is at `{agent_wrapper_dir}/config.toml`.
@@ -830,37 +801,22 @@ async fn load_cascaded_overrides(
     _owner_dir: &std::path::Path,
     agent_wrapper_dir: &std::path::Path,
     workspace_dir: &std::path::Path,
-    deployment_mode: &super::config::DeploymentMode,
 ) -> WorkspaceOverrides {
-    match deployment_mode {
-        super::config::DeploymentMode::Cloud => {
-            // 3-level: user config → agent config
-            // tenant_root is owner_dir's parent (owner_dir = tenant_root/workspace/)
-            let tenant_root = _owner_dir.parent().unwrap_or(_owner_dir);
-            let user_config = load_overrides_from_path(&tenant_root.join("config.toml")).await;
+    // 3-level: user config → agent config
+    // tenant_root is owner_dir's parent (owner_dir = tenant_root/workspace/)
+    let tenant_root = _owner_dir.parent().unwrap_or(_owner_dir);
+    let user_config = load_overrides_from_path(&tenant_root.join("config.toml")).await;
 
-            // Try agent_wrapper_dir/config.toml first, fallback to workspace_dir/config.toml
-            let agent_config_path = agent_wrapper_dir.join("config.toml");
-            let agent_config = if agent_config_path.exists() {
-                load_overrides_from_path(&agent_config_path).await
-            } else {
-                load_overrides_from_path(&workspace_dir.join("config.toml")).await
-            };
+    // Try agent_wrapper_dir/config.toml first, fallback to workspace_dir/config.toml
+    let agent_config_path = agent_wrapper_dir.join("config.toml");
+    let agent_config = if agent_config_path.exists() {
+        load_overrides_from_path(&agent_config_path).await
+    } else {
+        load_overrides_from_path(&workspace_dir.join("config.toml")).await
+    };
 
-            // Merge: agent overrides user
-            merge_overrides(user_config, agent_config)
-        }
-        super::config::DeploymentMode::Desktop => {
-            // 2-level: just agent config (global is already loaded by ZeroClaw core).
-            // Try agent_wrapper_dir/config.toml first, fallback to workspace_dir/config.toml
-            let agent_config_path = agent_wrapper_dir.join("config.toml");
-            if agent_config_path.exists() {
-                load_overrides_from_path(&agent_config_path).await
-            } else {
-                load_overrides_from_path(&workspace_dir.join("config.toml")).await
-            }
-        }
-    }
+    // Merge: agent overrides user
+    merge_overrides(user_config, agent_config)
 }
 
 /// Load overrides from a specific config.toml path.

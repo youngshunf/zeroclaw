@@ -26,9 +26,7 @@ pub struct TenantRecord {
     pub status: String,
     /// Custom AI name.
     pub star_name: Option<String>,
-    /// Workspace path.
-    pub workspace: Option<String>,
-    /// Tenant directory name in `{seq}-{phone}` format (e.g. "001-13888888888").
+        /// Tenant directory name in `{seq}-{phone}` format (e.g. "001-13888888888").
     /// Used to resolve the tenant root: `{config_dir}/users/{tenant_dir}/`.
     pub tenant_dir: Option<String>,
     /// Plan expiry date.
@@ -59,6 +57,17 @@ pub struct VerifiedCredentials {
     pub llm_token: Option<String>,
     pub gateway_token: Option<String>,
     pub is_new_user: bool,
+}
+
+/// Channel binding record.
+#[derive(Debug, Clone)]
+pub struct RoutingRecord {
+    pub id: i64,
+    pub channel_type: String,
+    pub sender_id: String,
+    pub agent_id: String,
+    pub user_id: String,
+    pub created_at: Option<String>,
 }
 
 /// Channel binding record.
@@ -134,13 +143,10 @@ impl TenantDb {
         conn.execute_batch(
             "
             CREATE TABLE IF NOT EXISTS users (
-                user_id       TEXT PRIMARY KEY,
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id       TEXT NOT NULL UNIQUE,
                 phone         TEXT UNIQUE,
                 nickname      TEXT,
-                star_name     TEXT,
-                template      TEXT NOT NULL DEFAULT 'finance',
-                agent_id      TEXT UNIQUE,
-                workspace     TEXT,
                 tenant_dir    TEXT,
                 status        TEXT DEFAULT 'active',
                 plan          TEXT DEFAULT 'star_dust',
@@ -150,18 +156,32 @@ impl TenantDb {
                 gateway_token TEXT,
                 token_expires TEXT,
                 server_id     TEXT,
-                created_at    TEXT DEFAULT (datetime('now')),
+                created_at    DATETIME DEFAULT (datetime('now')),
+                updated_at    DATETIME DEFAULT (datetime('now')),
                 last_active   TEXT
             );
-            CREATE TABLE IF NOT EXISTS channels (
+            CREATE TABLE IF NOT EXISTS agents (
                 id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                agent_id      TEXT NOT NULL UNIQUE,
                 user_id       TEXT NOT NULL,
+                template      TEXT NOT NULL DEFAULT 'finance',
+                star_name     TEXT,
+                hasn_id       TEXT UNIQUE,
+                status        TEXT DEFAULT 'active',
+                created_at    DATETIME DEFAULT (datetime('now')),
+                updated_at    DATETIME DEFAULT (datetime('now')),
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            );
+            CREATE TABLE IF NOT EXISTS routing (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
                 channel_type  TEXT NOT NULL,
-                peer_id       TEXT NOT NULL,
-                peer_name     TEXT,
-                bound_at      TEXT DEFAULT (datetime('now')),
-                FOREIGN KEY (user_id) REFERENCES users(user_id),
-                UNIQUE(channel_type, peer_id)
+                sender_id     TEXT NOT NULL,
+                agent_id      TEXT NOT NULL,
+                user_id       TEXT NOT NULL,
+                created_at    DATETIME DEFAULT (datetime('now')),
+                UNIQUE(channel_type, sender_id),
+                FOREIGN KEY (agent_id) REFERENCES agents(agent_id),
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
             );
             CREATE TABLE IF NOT EXISTS verified_credentials (
                 phone         TEXT PRIMARY KEY,
@@ -212,6 +232,30 @@ impl TenantDb {
             }
         }
 
+        // Migrate existing agents table: add hasn_id if missing
+        let agents_exists: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='agents')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+
+        if agents_exists {
+            let agent_columns: Vec<String> = conn
+                .prepare("PRAGMA table_info(agents)")?
+                .query_map([], |row| row.get::<_, String>(1))?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+
+            if !agent_columns.iter().any(|c| c == "hasn_id") {
+                conn.execute_batch(
+                    "ALTER TABLE agents ADD COLUMN hasn_id TEXT DEFAULT NULL;
+                     CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_hasn_id ON agents(hasn_id) WHERE hasn_id IS NOT NULL;"
+                )?;
+                tracing::info!("Migrated agents table: added column hasn_id");
+            }
+        }
+
         Ok(())
     }
 
@@ -222,71 +266,30 @@ impl TenantDb {
     pub async fn find_by_channel(
         &self,
         channel_type: &str,
-        peer_id: &str,
+        sender_id: &str,
     ) -> Result<Option<TenantRecord>> {
         let conn = self.conn.lock().await;
         let mut stmt = conn.prepare_cached(
-            "SELECT u.user_id, u.agent_id, u.nickname, u.phone, u.template,
-                    u.plan, u.status, u.star_name, u.workspace, u.tenant_dir,
+            "SELECT u.user_id, a.agent_id, u.nickname, u.phone, a.template,
+                    u.plan, u.status, a.star_name, u.tenant_dir,
                     u.plan_expires, u.created_at, u.last_active,
-                    u.access_token, u.llm_token, u.gateway_token, u.token_expires, u.server_id
-             FROM users u
-             JOIN channels c ON u.user_id = c.user_id
-             WHERE c.channel_type = ?1 AND c.peer_id = ?2 AND u.status = 'active'
+                    u.access_token, u.llm_token, u.gateway_token, NULL as token_expires, u.server_id
+             FROM routing r
+             JOIN users u ON r.user_id = u.user_id
+             JOIN agents a ON r.agent_id = a.agent_id
+             WHERE r.channel_type = ?1 AND r.sender_id = ?2
+               AND u.status = 'active'
              LIMIT 1",
         )?;
-
-        let result = stmt.query_row(rusqlite::params![channel_type, peer_id], |row| {
+        match stmt.query_row(rusqlite::params![channel_type, sender_id], |row| {
             Ok(Self::row_to_record(row))
-        });
-
-        match result {
+        }) {
             Ok(record) => Ok(Some(record)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(e.into()),
         }
     }
 
-    /// Register a new user with channel binding (includes tokens).
-    pub async fn register_user(
-        &self,
-        user_id: &str,
-        phone: &str,
-        agent_id: &str,
-        nickname: Option<&str>,
-        template: &str,
-        star_name: Option<&str>,
-        channel_type: &str,
-        peer_id: &str,
-        workspace: Option<&str>,
-        tenant_dir: Option<&str>,
-    ) -> Result<()> {
-        let conn = self.conn.lock().await;
-
-        conn.execute(
-            "INSERT INTO users (user_id, phone, agent_id, nickname, template, star_name, workspace, tenant_dir, status)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'active')",
-            rusqlite::params![user_id, phone, agent_id, nickname, template, star_name, workspace, tenant_dir],
-        )?;
-
-        conn.execute(
-            "INSERT INTO channels (user_id, channel_type, peer_id)
-             VALUES (?1, ?2, ?3)",
-            rusqlite::params![user_id, channel_type, peer_id],
-        )?;
-
-        tracing::info!(
-            user_id,
-            phone,
-            agent_id,
-            ?tenant_dir,
-            channel_type,
-            peer_id,
-            "User registered"
-        );
-
-        Ok(())
-    }
 
     /// Save a full user record including tokens (used by register flow).
     pub async fn save_user_full(
@@ -297,7 +300,7 @@ impl TenantDb {
         nickname: Option<&str>,
         template: &str,
         star_name: Option<&str>,
-        workspace: Option<&str>,
+        _workspace: Option<&str>, // Kept for API compatibility but ignored
         tenant_dir: Option<&str>,
         access_token: Option<&str>,
         llm_token: Option<&str>,
@@ -305,35 +308,32 @@ impl TenantDb {
         server_id: Option<&str>,
     ) -> Result<()> {
         let conn = self.conn.lock().await;
-
         conn.execute(
-            "INSERT OR REPLACE INTO users
-             (user_id, phone, agent_id, nickname, template, star_name, workspace, tenant_dir, status,
-              access_token, llm_token, gateway_token, server_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'active', ?9, ?10, ?11, ?12)",
+            "INSERT OR REPLACE INTO users (
+                user_id, phone, nickname, tenant_dir,
+                access_token, llm_token, gateway_token, server_id
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             rusqlite::params![
                 user_id,
                 phone,
-                agent_id,
                 nickname,
-                template,
-                star_name,
-                workspace,
                 tenant_dir,
                 access_token,
                 llm_token,
                 gateway_token,
-                server_id
+                server_id,
             ],
         )?;
 
-        tracing::info!(user_id, phone, agent_id, ?tenant_dir, "User saved with tokens");
+        conn.execute(
+            "INSERT OR REPLACE INTO agents (agent_id, user_id, template, star_name)
+             VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![agent_id, user_id, template, star_name],
+        )?;
 
         Ok(())
     }
 
-    /// Save verified credentials after successful phone-login.
-    /// These are consumed by hx_register_user.
     pub async fn save_verified_credentials(&self, creds: &VerifiedCredentials) -> Result<()> {
         let conn = self.conn.lock().await;
         conn.execute(
@@ -393,18 +393,26 @@ impl TenantDb {
         }
     }
 
-    /// Add a routing entry (agent_id → channel+peer_id).
+    /// Add a routing entry.
     pub async fn add_routing(
         &self,
         agent_id: &str,
         channel_type: &str,
-        peer_id: &str,
+        sender_id: &str,
     ) -> Result<()> {
         let conn = self.conn.lock().await;
+
+        // Find user_id for this agent
+        let user_id: String = conn.query_row(
+            "SELECT user_id FROM agents WHERE agent_id = ?1",
+            rusqlite::params![agent_id],
+            |row| row.get(0),
+        )?;
+
         conn.execute(
-            "INSERT OR REPLACE INTO routing (agent_id, channel_type, peer_id)
-             VALUES (?1, ?2, ?3)",
-            rusqlite::params![agent_id, channel_type, peer_id],
+            "INSERT OR REPLACE INTO routing (channel_type, sender_id, agent_id, user_id)
+             VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![channel_type, sender_id, agent_id, user_id],
         )?;
         Ok(())
     }
@@ -415,30 +423,55 @@ impl TenantDb {
     pub async fn find_by_phone(&self, phone: &str) -> Result<Option<TenantRecord>> {
         let conn = self.conn.lock().await;
         let mut stmt = conn.prepare_cached(
-            "SELECT user_id, agent_id, nickname, phone, template,
-                    plan, status, star_name, workspace, tenant_dir,
-                    plan_expires, created_at, last_active,
-                    access_token, llm_token, gateway_token, token_expires, server_id
-             FROM users WHERE phone = ?1 LIMIT 1",
+            "SELECT u.user_id, a.agent_id, u.nickname, u.phone, a.template,
+                    u.plan, u.status, a.star_name, u.tenant_dir,
+                    u.plan_expires, u.created_at, u.last_active,
+                    u.access_token, u.llm_token, u.gateway_token, NULL as token_expires, u.server_id
+             FROM users u
+             LEFT JOIN agents a ON u.user_id = a.user_id
+             WHERE u.phone = ?1 LIMIT 1",
         )?;
-        match stmt.query_row(rusqlite::params![phone], |row| Ok(Self::row_to_record(row))) {
+        match stmt.query_row(rusqlite::params![phone], |row| {
+            Ok(Self::row_to_record(row))
+        }) {
             Ok(record) => Ok(Some(record)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(e.into()),
         }
     }
 
-    /// Find a user by agent_id.
     pub async fn find_by_agent_id(&self, agent_id: &str) -> Result<Option<TenantRecord>> {
         let conn = self.conn.lock().await;
         let mut stmt = conn.prepare_cached(
-            "SELECT user_id, agent_id, nickname, phone, template,
-                    plan, status, star_name, workspace, tenant_dir,
-                    plan_expires, created_at, last_active,
-                    access_token, llm_token, gateway_token, token_expires, server_id
-             FROM users WHERE agent_id = ?1 LIMIT 1",
+            "SELECT u.user_id, a.agent_id, u.nickname, u.phone, a.template,
+                    u.plan, u.status, a.star_name, u.tenant_dir,
+                    u.plan_expires, u.created_at, u.last_active,
+                    u.access_token, u.llm_token, u.gateway_token, NULL as token_expires, u.server_id
+             FROM agents a
+             JOIN users u ON a.user_id = u.user_id
+             WHERE a.agent_id = ?1 LIMIT 1",
         )?;
         match stmt.query_row(rusqlite::params![agent_id], |row| {
+            Ok(Self::row_to_record(row))
+        }) {
+            Ok(record) => Ok(Some(record)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    pub async fn find_by_hasn_id(&self, hasn_id: &str) -> Result<Option<TenantRecord>> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare_cached(
+            "SELECT u.user_id, a.agent_id, u.nickname, u.phone, a.template,
+                    u.plan, u.status, a.star_name, u.tenant_dir,
+                    u.plan_expires, u.created_at, u.last_active,
+                    u.access_token, u.llm_token, u.gateway_token, NULL as token_expires, u.server_id
+             FROM agents a
+             JOIN users u ON a.user_id = u.user_id
+             WHERE a.hasn_id = ?1 AND u.status = 'active' LIMIT 1",
+        )?;
+        match stmt.query_row(rusqlite::params![hasn_id], |row| {
             Ok(Self::row_to_record(row))
         }) {
             Ok(record) => Ok(Some(record)),
@@ -451,11 +484,13 @@ impl TenantDb {
     pub async fn get_user(&self, user_id: &str) -> Result<Option<TenantRecord>> {
         let conn = self.conn.lock().await;
         let mut stmt = conn.prepare_cached(
-            "SELECT user_id, agent_id, nickname, phone, template,
-                    plan, status, star_name, workspace, tenant_dir,
-                    plan_expires, created_at, last_active,
-                    access_token, llm_token, gateway_token, token_expires, server_id
-             FROM users WHERE user_id = ?1 LIMIT 1",
+            "SELECT u.user_id, a.agent_id, u.nickname, u.phone, a.template,
+                    u.plan, u.status, a.star_name, u.tenant_dir,
+                    u.plan_expires, u.created_at, u.last_active,
+                    u.access_token, u.llm_token, u.gateway_token, NULL as token_expires, u.server_id
+             FROM users u
+             LEFT JOIN agents a ON u.user_id = a.user_id
+             WHERE u.user_id = ?1 LIMIT 1",
         )?;
         match stmt.query_row(rusqlite::params![user_id], |row| {
             Ok(Self::row_to_record(row))
@@ -466,12 +501,11 @@ impl TenantDb {
         }
     }
 
-    /// Get all channel bindings for a user.
     pub async fn get_channels(&self, user_id: &str) -> Result<Vec<ChannelRecord>> {
         let conn = self.conn.lock().await;
         let mut stmt = conn.prepare_cached(
-            "SELECT id, user_id, channel_type, peer_id, peer_name, bound_at
-             FROM channels WHERE user_id = ?1 ORDER BY bound_at",
+            "SELECT r.id, r.user_id, r.channel_type, r.sender_id as peer_id, r.sender_id as peer_name, r.created_at as bound_at
+             FROM routing r WHERE r.user_id = ?1 ORDER BY r.created_at",
         )?;
         let rows = stmt
             .query_map(rusqlite::params![user_id], |row| {
@@ -494,19 +528,29 @@ impl TenantDb {
         user_id: &str,
         channel_type: &str,
         peer_id: &str,
-        peer_name: Option<&str>,
+        _peer_name: Option<&str>,
     ) -> Result<()> {
         let conn = self.conn.lock().await;
+        
+        // Find first agent for this user
+        let agent_id: String = match conn.query_row(
+            "SELECT agent_id FROM agents WHERE user_id = ?1 LIMIT 1",
+            rusqlite::params![user_id],
+            |row| row.get(0),
+        ) {
+            Ok(id) => id,
+            Err(_) => return Err(anyhow::anyhow!("No agent found for user")),
+        };
+
         conn.execute(
-            "INSERT OR REPLACE INTO channels (user_id, channel_type, peer_id, peer_name)
+            "INSERT OR REPLACE INTO routing (channel_type, sender_id, agent_id, user_id)
              VALUES (?1, ?2, ?3, ?4)",
-            rusqlite::params![user_id, channel_type, peer_id, peer_name],
+            rusqlite::params![channel_type, peer_id, agent_id, user_id],
         )?;
-        tracing::info!(user_id, channel_type, peer_id, "Channel bound");
+        tracing::info!(user_id, channel_type, peer_id, "Channel bound into routing");
         Ok(())
     }
 
-    /// Update user fields. Only non-None values are updated.
     pub async fn update_user(
         &self,
         user_id: &str,
@@ -517,40 +561,60 @@ impl TenantDb {
         status: Option<&str>,
     ) -> Result<bool> {
         let conn = self.conn.lock().await;
-        let mut sets = Vec::new();
-        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+        
+        // Update user table
+        let mut user_sets = Vec::new();
+        let mut user_params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
         if let Some(v) = nickname {
-            sets.push("nickname = ?");
-            params.push(Box::new(v.to_string()));
-        }
-        if let Some(v) = star_name {
-            sets.push("star_name = ?");
-            params.push(Box::new(v.to_string()));
+            user_sets.push("nickname = ?");
+            user_params.push(Box::new(v.to_string()));
         }
         if let Some(v) = plan {
-            sets.push("plan = ?");
-            params.push(Box::new(v.to_string()));
+            user_sets.push("plan = ?");
+            user_params.push(Box::new(v.to_string()));
         }
         if let Some(v) = plan_expires {
-            sets.push("plan_expires = ?");
-            params.push(Box::new(v.to_string()));
+            user_sets.push("plan_expires = ?");
+            user_params.push(Box::new(v.to_string()));
         }
         if let Some(v) = status {
-            sets.push("status = ?");
-            params.push(Box::new(v.to_string()));
+            user_sets.push("status = ?");
+            user_params.push(Box::new(v.to_string()));
         }
 
-        if sets.is_empty() {
-            return Ok(false);
+        let mut did_update = false;
+
+        if !user_sets.is_empty() {
+            user_params.push(Box::new(user_id.to_string()));
+            let user_sql = format!(
+                "UPDATE users SET {} WHERE user_id = ?",
+                user_sets.join(", ")
+            );
+            let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+                user_params.iter().map(|p| p.as_ref()).collect();
+            let rows = conn.execute(&user_sql, param_refs.as_slice())?;
+            if rows > 0 {
+                did_update = true;
+            }
         }
 
-        params.push(Box::new(user_id.to_string()));
-        let sql = format!("UPDATE users SET {} WHERE user_id = ?", sets.join(", "));
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
-            params.iter().map(|p| p.as_ref()).collect();
-        let rows = conn.execute(&sql, param_refs.as_slice())?;
-        Ok(rows > 0)
+        // Update agents table
+        if let Some(v) = star_name {
+            let rows = conn.execute(
+                "UPDATE agents SET star_name = ? WHERE user_id = ?",
+                rusqlite::params![v, user_id],
+            )?;
+            if rows > 0 {
+                did_update = true;
+            }
+        }
+
+        if did_update {
+            tracing::info!(user_id, "User updated via update_user");
+        }
+        
+        Ok(did_update)
     }
 
     /// List users with optional filters.
@@ -584,10 +648,12 @@ impl TenantDb {
 
         let mut data_sql = count_sql.replace(
             "SELECT COUNT(*) FROM users",
-            "SELECT user_id, agent_id, nickname, phone, template,
-                    plan, status, star_name, workspace, tenant_dir,
-                    plan_expires, created_at, last_active,
-                    access_token, llm_token, gateway_token, token_expires, server_id FROM users",
+            "SELECT u.user_id, a.agent_id, u.nickname, u.phone, a.template,
+                    u.plan, u.status, a.star_name, u.tenant_dir,
+                    u.plan_expires, u.created_at, u.last_active,
+                    u.access_token, u.llm_token, u.gateway_token, NULL as token_expires, u.server_id
+             FROM users u
+             LEFT JOIN agents a ON u.user_id = a.user_id",
         );
         data_sql.push_str(&format!(
             " ORDER BY created_at DESC LIMIT {limit} OFFSET {offset}"
@@ -618,35 +684,16 @@ impl TenantDb {
     /// Get aggregate statistics.
     pub async fn get_stats(&self) -> Result<DbStats> {
         let conn = self.conn.lock().await;
+        let total_users: u64 = conn.query_row("SELECT COUNT(*) FROM users", [], |row| row.get(0))?;
+        let active_users: u64 = conn.query_row("SELECT COUNT(*) FROM users WHERE status = 'active'", [], |row| row.get(0))?;
+        let disabled_users: u64 = conn.query_row("SELECT COUNT(*) FROM users WHERE status != 'active'", [], |row| row.get(0))?;
+        let total_channels: u64 = conn.query_row("SELECT COUNT(*) FROM routing", [], |row| row.get(0))?;
 
-        let total_users: u64 = conn.query_row("SELECT COUNT(*) FROM users", [], |r| r.get(0))?;
-        let active_users: u64 = conn.query_row(
-            "SELECT COUNT(*) FROM users WHERE status = 'active'",
-            [],
-            |r| r.get(0),
-        )?;
-        let disabled_users = total_users - active_users;
-        let total_channels: u64 =
-            conn.query_row("SELECT COUNT(*) FROM channels", [], |r| r.get(0))?;
+        let mut stmt = conn.prepare("SELECT template, COUNT(*) FROM agents GROUP BY template")?;
+        let templates = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?.collect::<Result<Vec<_>, _>>()?;
 
-        let mut templates = Vec::new();
-        {
-            let mut stmt =
-                conn.prepare("SELECT template, COUNT(*) FROM users GROUP BY template")?;
-            let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, u64>(1)?)))?;
-            for row in rows {
-                templates.push(row?);
-            }
-        }
-
-        let mut plans = Vec::new();
-        {
-            let mut stmt = conn.prepare("SELECT plan, COUNT(*) FROM users GROUP BY plan")?;
-            let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, u64>(1)?)))?;
-            for row in rows {
-                plans.push(row?);
-            }
-        }
+        let mut stmt = conn.prepare("SELECT plan, COUNT(*) FROM users GROUP BY plan")?;
+        let plans = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?.collect::<Result<Vec<_>, _>>()?;
 
         Ok(DbStats {
             total_users,
@@ -658,7 +705,6 @@ impl TenantDb {
         })
     }
 
-    /// Get the next user sequence number (for agent_id generation).
     pub async fn get_next_user_seq(&self) -> Result<u32> {
         let conn = self.conn.lock().await;
         let count: u32 = conn.query_row("SELECT COUNT(*) FROM users", [], |r| r.get(0))?;
@@ -687,16 +733,15 @@ impl TenantDb {
             plan: row.get(5).unwrap_or(None),
             status: row.get(6).unwrap_or_else(|_| "active".to_string()),
             star_name: row.get(7).unwrap_or(None),
-            workspace: row.get(8).unwrap_or(None),
-            tenant_dir: row.get(9).unwrap_or(None),
-            plan_expires: row.get(10).unwrap_or(None),
-            created_at: row.get(11).unwrap_or(None),
-            last_active: row.get(12).unwrap_or(None),
-            access_token: row.get(13).unwrap_or(None),
-            llm_token: row.get(14).unwrap_or(None),
-            gateway_token: row.get(15).unwrap_or(None),
-            token_expires: row.get(16).unwrap_or(None),
-            server_id: row.get(17).unwrap_or(None),
+            tenant_dir: row.get(8).unwrap_or(None),
+            plan_expires: row.get(9).unwrap_or(None),
+            created_at: row.get(10).unwrap_or(None),
+            last_active: row.get(11).unwrap_or(None),
+            access_token: row.get(12).unwrap_or(None),
+            llm_token: row.get(13).unwrap_or(None),
+            gateway_token: row.get(14).unwrap_or(None),
+            token_expires: row.get(15).unwrap_or(None),
+            server_id: row.get(16).unwrap_or(None),
         }
     }
 
@@ -711,11 +756,10 @@ impl TenantDb {
             plan: row.get(5).unwrap_or(None),
             status: row.get(6).unwrap_or_else(|_| "active".to_string()),
             star_name: row.get(7).unwrap_or(None),
-            workspace: row.get(8).unwrap_or(None),
             tenant_dir: None,
-            plan_expires: row.get(9).unwrap_or(None),
-            created_at: row.get(10).unwrap_or(None),
-            last_active: row.get(11).unwrap_or(None),
+            plan_expires: row.get(8).unwrap_or(None),
+            created_at: row.get(9).unwrap_or(None),
+            last_active: row.get(10).unwrap_or(None),
             access_token: None,
             llm_token: None,
             gateway_token: None,

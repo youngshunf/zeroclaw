@@ -83,17 +83,13 @@ function AppContent() {
     }
   }, [isAuthenticated]);
 
-  // HASN 自动连接（由 Tauri 层管理，前端负责提供 token）
+  // HASN 本地 Agent 注册登记（仅用于确保本地身份创建，不再手动建立 WS 连接）
   useEffect(() => {
     if (!isAuthenticated) return;
 
-    const internals = (window as any).__TAURI_INTERNALS__;
-    if (!internals?.invoke) return;
-
     let cancelled = false;
 
-    // 提供 token 给 Tauri 的共用逻辑
-    const provideToken = async () => {
+    const registerLocalAgent = async () => {
       if (cancelled) return;
       try {
         const { getHuanxingSession } = await import('./config');
@@ -105,15 +101,6 @@ function AppContent() {
         const identity = await registerHasnIdentity(session);
         if (!identity?.hasn_id || cancelled) return;
 
-        // 调用 hasn_connect（内部会保存 client.json）
-        console.log('[App] HASN 提供 token，hasn_id:', identity.hasn_id);
-        await internals.invoke('hasn_connect', {
-          platformToken: session.accessToken,
-          hasnId: identity.hasn_id,
-          starId: identity.star_id,
-        });
-        console.log('[App] HASN 已连接');
-
         // 确保本地 Agent 的 HASN 身份已注册且 hasn_id 已写入 config.toml（幂等）
         try {
           const nickname = session.user?.nickname || '唤星用户';
@@ -122,29 +109,14 @@ function AppContent() {
           console.warn('[App] Agent HASN 注册（非致命）:', agentErr);
         }
       } catch (err) {
-        console.warn('[App] HASN 连接失败（非致命）:', err);
+        console.warn('[App] HASN 注册阶段失败:', err);
       }
     };
 
-    // 1. 主动检查：如果未连接，立即提供 token
-    internals.invoke('hasn_status').then((s: string) => {
-      if (s !== 'connected' && !cancelled) {
-        provideToken();
-      }
-    }).catch(() => {
-      provideToken();
-    });
-
-    // 2. 被动监听：Tauri 断线重连时也可能再次请求 token
-    let unlisten: (() => void) | null = null;
-    import('@tauri-apps/api/event').then(({ listen }) => {
-      listen('hasn:request-token', provideToken)
-        .then(fn => { unlisten = fn; });
-    }).catch(() => {});
+    registerLocalAgent();
 
     return () => {
       cancelled = true;
-      unlisten?.();
     };
   }, [isAuthenticated]);
 

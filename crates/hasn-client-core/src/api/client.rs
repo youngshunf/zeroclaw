@@ -161,12 +161,13 @@ impl HasnApiClient {
     }
 
     /// 获取消息历史 (游标分页)
+    /// 返回原始 JSON 值, 由调用方根据协议版本自行解析
     pub async fn get_messages(
         &self,
         conversation_id: &str,
         before_id: Option<i64>,
         limit: i32,
-    ) -> Result<Vec<HasnMessage>, HasnError> {
+    ) -> Result<Vec<serde_json::Value>, HasnError> {
         let mut params = vec![("limit".to_string(), limit.to_string())];
         if let Some(bid) = before_id {
             params.push(("before_id".to_string(), bid.to_string()));
@@ -231,7 +232,7 @@ impl HasnApiClient {
         &self,
         conversation_id: &str,
         last_msg_id: Option<i64>,
-    ) -> Result<Vec<HasnMessage>, HasnError> {
+    ) -> Result<Vec<serde_json::Value>, HasnError> {
         let mut params = vec![];
         if let Some(id) = last_msg_id {
             params.push(("last_msg_id", id.to_string()));

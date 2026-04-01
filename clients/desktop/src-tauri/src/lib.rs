@@ -7,67 +7,17 @@
 
 mod commands;
 mod sidecar;
-mod utils;
-mod services;
 mod tray;
 
-use commands::{auth, files, hasn, marketplace, zeroclaw};
-use hasn::HasnClientState;
+use commands::{auth, files, marketplace, zeroclaw};
 use sidecar::SidecarManager;
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
 
-/// 默认 HASN API 地址（配置中未设置时使用）
-const HASN_API_BASE_DEFAULT: &str = "https://api.huanxing.dcfuture.cn";
-
-/// 从 ~/.huanxing/config.toml 读取 [huanxing] api_base_url
-fn read_hasn_api_base() -> String {
-    let config_path = dirs::home_dir()
-        .unwrap_or_default()
-        .join(".huanxing")
-        .join("config.toml");
-
-    if let Ok(content) = std::fs::read_to_string(&config_path) {
-        // 解析 TOML 获取 huanxing.api_base_url
-        if let Ok(table) = content.parse::<toml::Table>() {
-            if let Some(huanxing) = table.get("huanxing").and_then(|v| v.as_table()) {
-                if let Some(url) = huanxing.get("api_base_url").and_then(|v| v.as_str()) {
-                    let url = url.trim().trim_end_matches('/');
-                    if !url.is_empty() {
-                        eprintln!("[huanxing-desktop] HASN API: {} (from config.toml)", url);
-                        return url.to_string();
-                    }
-                }
-            }
-        }
-    }
-
-    eprintln!("[huanxing-desktop] HASN API: {} (default)", HASN_API_BASE_DEFAULT);
-    HASN_API_BASE_DEFAULT.to_string()
-}
-
-/// HASN 本地数据库路径
-fn hasn_db_path() -> String {
-    let dir = dirs::home_dir()
-        .unwrap_or_default()
-        .join(".huanxing")
-        .join("hasn");
-    std::fs::create_dir_all(&dir).ok();
-    dir.join("hasn.db").to_string_lossy().to_string()
-}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let manager = Arc::new(SidecarManager::new());
-
-    // 从配置文件读取 HASN API 地址
-    let hasn_api_base = read_hasn_api_base();
-
-    // 初始化 HASN 客户端状态
-    let hasn_state = Arc::new(
-        HasnClientState::new(&hasn_api_base, &hasn_db_path())
-            .expect("初始化 HASN 客户端失败"),
-    );
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -76,10 +26,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .manage(manager.clone())
-        .manage(hasn_state.clone())
         .setup({
             let mgr = manager.clone();
-            let hasn_st = hasn_state.clone();
             move |app| {
                 let handle = app.handle().clone();
 
@@ -118,9 +66,6 @@ pub fn run() {
                             }
                         }
 
-                        // Sidecar 就绪后，尝试自动连接 HASN
-                        hasn::hasn_auto_connect(hasn_st, handle.clone()).await;
-
                         // 异步更新后台缓存应用市场数据
                         tauri::async_runtime::spawn(async move {
                             marketplace::sync_marketplace_data().await;
@@ -154,26 +99,6 @@ pub fn run() {
             auth::login,
             auth::logout,
             auth::get_auth_state,
-            // HASN 连接管理
-            hasn::hasn_connect,
-            hasn::hasn_disconnect,
-            hasn::hasn_status,
-            hasn::hasn_provide_token,
-            hasn::hasn_get_client_id,
-            // HASN IM
-            hasn::get_conversations,
-            hasn::get_messages,
-            hasn::send_message,
-            hasn::mark_conversation_read,
-            // HASN 联系人
-            hasn::get_contacts,
-            hasn::send_friend_request,
-            hasn::get_friend_requests,
-            hasn::respond_friend_request,
-            // HASN Agent
-            hasn::get_my_agents,
-            hasn::set_hasn_sidecar_port,
-            hasn::update_tray_badge,
             // ZeroClaw sidecar
             zeroclaw::start_zeroclaw,
             zeroclaw::stop_zeroclaw,

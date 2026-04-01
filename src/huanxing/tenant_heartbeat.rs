@@ -305,16 +305,11 @@ impl TenantHeartbeatManager {
 
     /// Resolve workspace directory for a tenant.
     fn resolve_workspace(&self, tenant: &TenantRecord) -> PathBuf {
-        if let Some(ref ws) = tenant.workspace {
-            PathBuf::from(ws)
-        } else {
-            let hx = &self.config.huanxing;
-            let config_dir = self.config.config_path.parent()
-                .map(|p| p.to_path_buf())
-                .unwrap_or_else(|| self.config.workspace_dir.clone());
-            hx.resolve_agents_dir(&config_dir)
-                .join(&tenant.agent_id)
-        }
+        let hx = &self.config.huanxing;
+        let config_dir = self.config.config_path.parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| self.config.workspace_dir.clone());
+        hx.resolve_agent_workspace(&config_dir, tenant.tenant_dir.as_deref(), &tenant.agent_id)
     }
 
     /// Simple hash of task text for deduplication.

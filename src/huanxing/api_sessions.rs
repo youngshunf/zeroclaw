@@ -344,15 +344,13 @@ async fn get_session(
     Query(q): Query<GetSessionQuery>,
 ) -> impl IntoResponse {
     let config = state.config.lock().clone();
-    let agents_dir = config
-        .huanxing
-        .resolve_agents_dir(config.config_path.parent().unwrap_or(&config.workspace_dir));
+    let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
 
     let limit = q.limit.unwrap_or(50).min(200).max(1);
 
     // 找到该 session 所属的 agent workspace
     let agent_id_and_workspace = if let Some(ref aid) = q.agent_id {
-        let ws = agents_dir.join(aid);
+        let ws = config.huanxing.resolve_agent_workspace(config_dir, None, aid);
         if ws.exists() {
             Some((aid.clone(), ws))
         } else {
@@ -360,7 +358,7 @@ async fn get_session(
         }
     } else {
         // 扫描所有 agent 查找 session
-        find_session_owner(&agents_dir, &session_id).await
+        find_session_owner(&config, config_dir, &session_id).await
     };
 
     let Some((agent_id, workspace)) = agent_id_and_workspace else {
@@ -481,12 +479,10 @@ async fn rename_session(
     Json(req): Json<RenameSessionRequest>,
 ) -> impl IntoResponse {
     let config = state.config.lock().clone();
-    let agents_dir = config
-        .huanxing
-        .resolve_agents_dir(config.config_path.parent().unwrap_or(&config.workspace_dir));
+    let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
 
     let Some((_agent_id, workspace)) =
-        find_session_owner(&agents_dir, &session_id).await
+        find_session_owner(&config, config_dir, &session_id).await
     else {
         return (
             StatusCode::NOT_FOUND,
@@ -521,12 +517,10 @@ async fn delete_session(
     Path(session_id): Path<String>,
 ) -> impl IntoResponse {
     let config = state.config.lock().clone();
-    let agents_dir = config
-        .huanxing
-        .resolve_agents_dir(config.config_path.parent().unwrap_or(&config.workspace_dir));
+    let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
 
     let Some((_agent_id, workspace)) =
-        find_session_owner(&agents_dir, &session_id).await
+        find_session_owner(&config, config_dir, &session_id).await
     else {
         return (
             StatusCode::NOT_FOUND,
@@ -568,12 +562,10 @@ async fn clear_messages(
     Path(session_id): Path<String>,
 ) -> impl IntoResponse {
     let config = state.config.lock().clone();
-    let agents_dir = config
-        .huanxing
-        .resolve_agents_dir(config.config_path.parent().unwrap_or(&config.workspace_dir));
+    let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
 
     let Some((_agent_id, workspace)) =
-        find_session_owner(&agents_dir, &session_id).await
+        find_session_owner(&config, config_dir, &session_id).await
     else {
         return (
             StatusCode::NOT_FOUND,
@@ -615,12 +607,10 @@ async fn generate_title(
     Path(session_id): Path<String>,
 ) -> impl IntoResponse {
     let config = state.config.lock().clone();
-    let agents_dir = config
-        .huanxing
-        .resolve_agents_dir(config.config_path.parent().unwrap_or(&config.workspace_dir));
+    let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
 
     let Some((_agent_id, workspace)) =
-        find_session_owner(&agents_dir, &session_id).await
+        find_session_owner(&config, config_dir, &session_id).await
     else {
         return (
             StatusCode::NOT_FOUND,
@@ -727,10 +717,14 @@ async fn generate_title(
 
 /// 扫描所有 agent 目录，找到包含指定 session_id 的 agent workspace。
 async fn find_session_owner(
-    agents_dir: &FsPath,
+    config: &crate::config::schema::Config,
+    config_dir: &FsPath,
     session_id: &str,
 ) -> Option<(String, std::path::PathBuf)> {
-    let mut entries = tokio::fs::read_dir(agents_dir).await.ok()?;
+    let tenant_root = config.huanxing.resolve_tenant_root(config_dir, None);
+    let agents_dir = tenant_root.join("agents");
+    
+    let mut entries = tokio::fs::read_dir(&agents_dir).await.ok()?;
     let sid = session_id.to_string();
 
     while let Ok(Some(entry)) = entries.next_entry().await {
@@ -744,7 +738,14 @@ async fn find_session_owner(
         }
 
         let sid_clone = sid.clone();
-        let path_clone = path.clone();
+        
+        // Find the inner workspace directly
+        let workspace = config.huanxing.resolve_agent_workspace(config_dir, None, &name);
+        if !workspace.exists() {
+            continue;
+        }
+        
+        let path_clone = workspace.clone();
         let found = tokio::task::block_in_place(move || {
             let conn = match open_agent_sessions_db(&path_clone) {
                 Ok(c) => c,
@@ -759,7 +760,7 @@ async fn find_session_owner(
         });
 
         if found {
-            return Some((name, path));
+            return Some((name, workspace));
         }
     }
     None

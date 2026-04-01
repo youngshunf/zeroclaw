@@ -880,6 +880,24 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         },
     };
 
+    #[cfg(feature = "huanxing")]
+    {
+        if config.huanxing.enabled && config.huanxing.hasn.enabled && config.huanxing.hasn.auto_connect {
+            if let Some(ref url) = config.huanxing.hasn.central_url {
+                let st = std::sync::Arc::new(state.clone());
+                let url = url.clone();
+                tokio::spawn(async move {
+                    tracing::info!("[HASN] Gateway启动，触发 HASN 自动连接...");
+                    if let Err(e) = crate::huanxing::hasn_connector::global_connector().connect(&url, st).await {
+                        tracing::error!("[HASN] 自动连接 HASN 中央节点失败: {}", e);
+                    }
+                });
+            } else {
+                tracing::warn!("[HASN] HASN 已启用 auto_connect，但未配置 central_url");
+            }
+        }
+    }
+
     // Config PUT needs larger body limit (1MB)
     let config_put_router = Router::new()
         .route("/api/config", put(api::handle_api_config_put))
@@ -1029,6 +1047,34 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         "/api/v1/agent/hasn-invoke",
         axum::routing::post(crate::huanxing::hasn_invoke::hasn_invoke),
     );
+
+    // ── HASN 节点连接管理 API（Sidecar 统一 HASN 入口）──
+    #[cfg(feature = "huanxing")]
+    let inner = inner
+        .route(
+            "/api/v1/hasn/connect",
+            axum::routing::post(crate::huanxing::hasn_api::hasn_connect),
+        )
+        .route(
+            "/api/v1/hasn/disconnect",
+            axum::routing::post(crate::huanxing::hasn_api::hasn_disconnect),
+        )
+        .route(
+            "/api/v1/hasn/status",
+            axum::routing::get(crate::huanxing::hasn_api::hasn_status),
+        )
+        .route(
+            "/api/v1/hasn/send",
+            axum::routing::post(crate::huanxing::hasn_api::hasn_send),
+        )
+        .route(
+            "/api/v1/hasn/report",
+            axum::routing::post(crate::huanxing::hasn_api::hasn_report_agents),
+        )
+        .route(
+            "/ws/hasn-events",
+            axum::routing::get(crate::huanxing::hasn_api::hasn_events_ws),
+        );
 
     let inner = inner
         // ── SSE event stream ──

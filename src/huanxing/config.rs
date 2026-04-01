@@ -5,31 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-/// Deployment mode for HuanXing.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum DeploymentMode {
-    /// Single-user desktop environment. Config cascading: 2-level (global → agent).
-    Desktop,
-    /// Multi-tenant cloud environment. Config cascading: 3-level (global → user → agent).
-    Cloud,
-}
 
-impl Default for DeploymentMode {
-    fn default() -> Self {
-        Self::Desktop
-    }
-}
-
-impl DeploymentMode {
-    pub fn is_desktop(&self) -> bool {
-        matches!(self, Self::Desktop)
-    }
-
-    pub fn is_cloud(&self) -> bool {
-        matches!(self, Self::Cloud)
-    }
-}
 
 /// Top-level `[huanxing]` configuration section in config.toml.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -38,10 +14,7 @@ pub struct HuanXingConfig {
     /// Enable multi-tenant routing. When false, behaves as standard single-agent.
     pub enabled: bool,
 
-    /// Deployment mode: `"desktop"` (single-user, 2-level config) or `"cloud"` (multi-tenant, 3-level config).
-    /// Default: `"desktop"`.
-    #[serde(default)]
-    pub deployment_mode: DeploymentMode,
+
 
     /// Path to the SQLite user database.
     /// Default: `{config_dir}/data/users.db`
@@ -133,6 +106,10 @@ pub struct HuanXingConfig {
     /// HuanXing custom image generation tool (`[huanxing.hx_image_gen]`).
     #[serde(default)]
     pub hx_image_gen: HxImageGenConfig,
+
+    /// HASN node connection configuration (`[huanxing.hasn]`).
+    #[serde(default)]
+    pub hasn: HasnNodeConfig,
 }
 
 /// Standalone image generation tool configuration for HuanXing gateway (`[huanxing.hx_image_gen]`).
@@ -215,7 +192,6 @@ impl Default for HuanXingConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            deployment_mode: DeploymentMode::Desktop,
             db_path: None,
             agents_dir: None,
             guardian_workspace: None,
@@ -243,6 +219,7 @@ impl Default for HuanXingConfig {
             hub_sync: HubSyncConfig::default(),
             tenant_heartbeat: TenantHeartbeatConfig::default(),
             hx_image_gen: HxImageGenConfig::default(),
+            hasn: HasnNodeConfig::default(),
         }
     }
 }
@@ -252,24 +229,19 @@ impl HuanXingConfig {
 
     /// Resolve the tenant root directory.
     ///
-    /// - **Desktop**: always returns `config_dir` itself (`~/.huanxing/`).
-    /// - **Cloud**: returns `{config_dir}/users/{tenant_dir}/` where `tenant_dir`
-    ///   is in `{seq}-{phone}` format (e.g. `001-13888888888`).
+    /// Always returns `{config_dir}/users/{tenant_dir}/` where `tenant_dir`
+    /// is in `{seq}-{phone}` format (e.g. `001-13888888888`), unless no tenant_dir
+    /// is provided (system agents).
     pub fn resolve_tenant_root(
         &self,
         config_dir: &std::path::Path,
         tenant_dir: Option<&str>,
     ) -> PathBuf {
-        match self.deployment_mode {
-            DeploymentMode::Desktop => config_dir.to_path_buf(),
-            DeploymentMode::Cloud => {
-                if let Some(td) = tenant_dir {
-                    config_dir.join("users").join(td)
-                } else {
-                    // System-level agents have no tenant_dir
-                    config_dir.to_path_buf()
-                }
-            }
+        if let Some(td) = tenant_dir {
+            config_dir.join("users").join(td)
+        } else {
+            // System-level agents have no tenant_dir
+            config_dir.to_path_buf()
         }
     }
 
@@ -439,6 +411,60 @@ impl HuanXingConfig {
                 .and_then(|h| h.into_string().ok())
                 .unwrap_or_else(|| "zeroclaw-unknown".to_string())
         })
+    }
+}
+
+/// Per-template configuration for tenant agent creation.
+
+/// HASN 节点连接配置 (`[huanxing.hasn]`).
+///
+/// 配置当前 ZeroClaw 实例作为 HASN 节点接入中央网络。
+/// 桌面端和云端使用完全相同的配置结构，仅参数值不同。
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct HasnNodeConfig {
+    /// 是否启用 HASN 节点功能。默认: false
+    pub enabled: bool,
+
+    /// HASN 中央节点 WS URL。
+    /// 示例: `wss://api.huanxing.dcfuture.cn/api/v1/hasn/ws/node`
+    pub central_url: Option<String>,
+
+    /// 节点 API Key (hasn_ak_xxx 格式) 或 JWT token。
+    pub api_key: Option<String>,
+
+    /// 节点类型: desktop / mobile / web / cloud
+    #[serde(default = "default_node_type")]
+    pub node_type: String,
+
+    /// 最大 Agent 承载量。桌面端默认 3，云端可配置更高。
+    #[serde(default = "default_node_capacity")]
+    pub capacity: i32,
+
+    /// 启动时自动连接 HASN 网络。云端节点通常设为 true。
+    #[serde(default)]
+    pub auto_connect: bool,
+
+    /// 最大重连次数。默认: 10
+    #[serde(default = "default_max_retries")]
+    pub max_retries: u32,
+}
+
+fn default_node_type() -> String { "desktop".to_string() }
+fn default_node_capacity() -> i32 { 3 }
+fn default_max_retries() -> u32 { 10 }
+
+impl Default for HasnNodeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            central_url: None,
+            api_key: None,
+            node_type: default_node_type(),
+            capacity: default_node_capacity(),
+            auto_connect: false,
+            max_retries: default_max_retries(),
+        }
     }
 }
 

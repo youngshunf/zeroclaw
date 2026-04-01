@@ -337,26 +337,6 @@ export async function registerHasnIdentity(session: HuanxingSession): Promise<Ha
   };
 }
 
-/**
- * 连接 HASN 网络（Tauri 模式调用 IPC，Web 模式存 localStorage）
- *
- * 同时初始化前端 WS 事件监听（Tauri emit 事件 → React hooks）
- */
-export async function connectHasn(
-  session: HuanxingSession,
-  hasnIdentity: HasnIdentity,
-): Promise<void> {
-  const { hasnConnect } = await import('./lib/hasn-api');
-  const { hasnWs } = await import('./lib/hasn-ws');
-
-  // 1. 通过 Tauri IPC 建立后端 HASN 连接（注册客户端 + WS）
-  await hasnConnect(session.accessToken, hasnIdentity.hasn_id, hasnIdentity.star_id);
-
-  // 2. 前端订阅 Tauri WS 事件（Tauri emit → React hooks）
-  await hasnWs.connect();
-
-  console.log('[huanxing-onboard] HASN 连接成功:', hasnIdentity.hasn_id);
-}
 
 /** Agent HASN 注册结果 */
 export interface AgentHasnIdentity {

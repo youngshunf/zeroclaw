@@ -258,7 +258,7 @@ export default function HasnChat() {
               )}
 
               {messages.map((msg) => {
-                const isOutgoing = msg.from_id === myId;
+                const isOutgoing = msg.from.hasn_id === myId;
                 return (
                   <div
                     key={msg.local_id || msg.id}
@@ -271,18 +271,22 @@ export default function HasnChat() {
                     </div>
                     <div className="hx-msg-content">
                       <div className="hx-msg-bubble">
-                        {containsImageMarkers(msg.content) ? (
+                        {msg.content.type === 'tool_call' ? (
+                          <div className="font-mono text-[11px] opacity-70 p-1 bg-black/5 rounded">
+                            {`> 工具调用: ${msg.content.text || '执行中...'}`}
+                          </div>
+                        ) : containsImageMarkers(msg.content.text || '') ? (
                           <HxImageMessage
-                            content={msg.content}
+                            content={msg.content.text || ''}
                             renderText={(text) => <Markdown mode="minimal">{text}</Markdown>}
                           />
                         ) : (
-                          <Markdown mode="minimal">{msg.content}</Markdown>
+                          <Markdown mode="minimal">{msg.content.text || ''}</Markdown>
                         )}
                       </div>
                       <span className="hx-msg-time">
-                        {msg.created_at
-                          ? new Date(msg.created_at).toLocaleTimeString('zh-CN', {
+                        {msg.timestamp
+                          ? new Date(msg.timestamp).toLocaleTimeString('zh-CN', {
                               hour: '2-digit',
                               minute: '2-digit',
                             })

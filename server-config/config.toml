@@ -464,12 +464,13 @@ compress = true
 enabled = true
 
 # ── 数据路径（本地开发路径，服务器部署时改为 /opt/huanxing/...）──
-db_path = "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-zeroclaw/server-config/data/users.db"                     # 用户数据库
-agents_dir = "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-zeroclaw/server-config/agents"                         # 租户 Agent 工作区
-guardian_workspace = "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-zeroclaw/server-config/guardian"                # Guardian 工作区
-admin_workspace = "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-zeroclaw/server-config/admin"                     # Admin 工作区
-common_skills_dir = "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-zeroclaw/server-config/common-skills"           # 公共技能目录
-templates_dir = "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-hub/templates"                   # 模板目录（本地）
+# 下列路径默认通过 config.toml 所在目录结构自动派生，云端架构无需在此硬编码，极大简化部署
+# db_path = "data/users.db"                     # 默认机制：{config_dir}/data/users.db
+# agents_dir = "agents"                         # 默认机制：{config_dir}/users/{tenant_id}/agents/
+# guardian_workspace = "guardian"               # 默认机制：{config_dir}/guardian
+# admin_workspace = "admin"                     # 默认机制：{config_dir}/admin
+# common_skills_dir = "common-skills"           # 默认机制：{config_dir}/skills
+# templates_dir = ".../huanxing-hub/templates"  # 现由模板市场自动管理
 hub_dir = "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-hub"                                                # Hub 目录（服务器上设为 /opt/huanxing/hub）
 
 # ── Admin 配置 ──

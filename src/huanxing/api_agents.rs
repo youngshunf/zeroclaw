@@ -25,7 +25,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use crate::gateway::AppState;
-use crate::huanxing::templates::{TemplateEngine, UserInfo, WorkspaceVariant};
+use crate::huanxing::templates::{TemplateEngine, UserInfo};
 
 // ── 数据结构 ──────────────────────────────────────────────
 
@@ -108,7 +108,11 @@ async fn list_agents(State(state): State<AppState>) -> impl IntoResponse {
         return (StatusCode::OK, Json(AgentListResponse { agents: vec![], current: String::new() })).into_response();
     }
 
-    let agents_dir = config.huanxing.resolve_agents_dir(config.config_path.parent().unwrap_or(&config.workspace_dir));
+    let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
+    // Desktop list: we list all agents in the desktop tenant_root.
+    // However, the physical structure for Desktop is `config_dir/agents/{agent_id}/`.
+    // We can just read `config_dir/agents/` to find them.
+    let agents_dir = config.huanxing.resolve_tenant_root(config_dir, None).join("agents");
 
     let mut agents: Vec<AgentInfo> = Vec::new();
 
@@ -140,7 +144,7 @@ async fn list_agents(State(state): State<AppState>) -> impl IntoResponse {
                     .or_else(|| ws_cfg.identity.as_ref().and_then(|id| id.name.clone()));
 
                 agents.push(AgentInfo {
-                    config_dir: path.to_string_lossy().to_string(),
+                    config_dir: path.join("workspace").to_string_lossy().to_string(), // point to the inner workspace
                     model: ws_cfg.default_model,
                     display_name,
                     hasn_id: ws_cfg.hasn_id,
@@ -183,11 +187,11 @@ async fn create_agent(
     }
 
     let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
-    let agents_dir = config.huanxing.resolve_agents_dir(config_dir);
-    let workspace = agents_dir.join(&req.name);
+    let agent_wrapper = config.huanxing.resolve_agent_wrapper_dir(config_dir, None, &req.name);
+    let workspace = config.huanxing.resolve_agent_workspace(config_dir, None, &req.name);
 
     // 检查是否已存在
-    if workspace.exists() {
+    if agent_wrapper.exists() {
         return (
             StatusCode::CONFLICT,
             Json(serde_json::json!({"error": format!("agent '{}' 已存在", req.name)})),
@@ -215,7 +219,7 @@ async fn create_agent(
     let engine = TemplateEngine::new(templates_dir);
 
     match engine
-        .create_workspace(&workspace, &user_info, None, None, WorkspaceVariant::Desktop)
+        .create_workspace(None, &workspace, &user_info, None, None)
         .await
     {
         Ok(files) => {
@@ -238,7 +242,7 @@ async fn create_agent(
         }
         Err(e) => {
             // 创建失败时清理已创建的目录
-            let _ = tokio::fs::remove_dir_all(&workspace).await;
+            let _ = tokio::fs::remove_dir_all(&agent_wrapper).await;
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({"error": format!("创建工作区失败: {e}")})),
@@ -263,10 +267,10 @@ async fn delete_agent(
             .into_response();
     }
 
-    let agents_dir = config.huanxing.resolve_agents_dir(config.config_path.parent().unwrap_or(&config.workspace_dir));
-    let workspace = agents_dir.join(&name);
+    let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
+    let agent_wrapper = config.huanxing.resolve_agent_wrapper_dir(config_dir, None, &name);
 
-    if !workspace.exists() {
+    if !agent_wrapper.exists() {
         return (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": format!("agent '{}' 不存在", name)})),
@@ -274,7 +278,7 @@ async fn delete_agent(
             .into_response();
     }
 
-    if let Err(e) = tokio::fs::remove_dir_all(&workspace).await {
+    if let Err(e) = tokio::fs::remove_dir_all(&agent_wrapper).await {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": format!("删除工作区失败: {e}")})),
@@ -293,8 +297,8 @@ async fn list_files(
     Path(name): Path<String>,
 ) -> impl IntoResponse {
     let config = state.config.lock().clone();
-    let agents_dir = config.huanxing.resolve_agents_dir(config.config_path.parent().unwrap_or(&config.workspace_dir));
-    let workspace = agents_dir.join(&name);
+    let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
+    let workspace = config.huanxing.resolve_agent_workspace(config_dir, None, &name);
 
     if !workspace.exists() {
         return (
@@ -329,8 +333,9 @@ async fn read_file(
     axum::extract::Query(query): axum::extract::Query<ReadFileQuery>,
 ) -> impl IntoResponse {
     let config = state.config.lock().clone();
-    let agents_dir = config.huanxing.resolve_agents_dir(config.config_path.parent().unwrap_or(&config.workspace_dir));
-    let file_path = agents_dir.join(&name).join(&filename);
+    let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
+    let workspace = config.huanxing.resolve_agent_workspace(config_dir, None, &name);
+    let file_path = workspace.join(&filename);
 
     // 防止路径遍历
     if filename.contains("..") || filename.contains('/') {
@@ -395,8 +400,8 @@ async fn write_file(
     body: Bytes,
 ) -> impl IntoResponse {
     let config = state.config.lock().clone();
-    let agents_dir = config.huanxing.resolve_agents_dir(config.config_path.parent().unwrap_or(&config.workspace_dir));
-    let workspace = agents_dir.join(&name);
+    let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
+    let workspace = config.huanxing.resolve_agent_workspace(config_dir, None, &name);
 
     // 防止路径遍历
     if filename.contains("..") || filename.contains('/') {
@@ -558,11 +563,11 @@ async fn handle_file_upload(
 
     // 确定保存目录
     let config = state.config.lock().clone();
-    let agents_dir = config.huanxing.resolve_agents_dir(
-        config.config_path.parent().unwrap_or(&config.workspace_dir),
-    );
+    let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
+    let default_workspace = config.huanxing.resolve_agent_workspace(config_dir, None, "default");
+    
     // 桌面端默认使用 default agent
-    let files_dir = agents_dir.join("default").join("files");
+    let files_dir = default_workspace.join("files");
 
     // 创建 files/ 目录
     if let Err(e) = tokio::fs::create_dir_all(&files_dir).await {

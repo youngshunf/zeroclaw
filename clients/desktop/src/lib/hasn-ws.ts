@@ -41,73 +41,33 @@ class HasnWebSocket {
   }
 
   async connect(): Promise<void> {
-    if (this.isTauri()) {
-      await this.connectTauri();
-    } else {
-      this.connectWeb();
-    }
+    this.connectWeb();
   }
 
   disconnect(): void {
     this._connected = false;
-    this.tauriUnlisteners.forEach((fn) => fn());
-    this.tauriUnlisteners = [];
     if (this.ws) {
       this.ws.close();
       this.ws = null;
     }
   }
 
-  private isTauri(): boolean {
-    return !!(window as any).__TAURI_INTERNALS__?.invoke;
-  }
-
-  // ---------- Tauri 模式 ----------
-
-  private async connectTauri(): Promise<void> {
-    try {
-      // 动态导入 Tauri event API
-      const { listen } = await import("@tauri-apps/api/event");
-
-      // 监听 Tauri Rust 后端 emit 的事件（对齐 hasn.rs handle_ws_event）
-      const eventMap: Record<string, HasnEventType> = {
-        "hasn:connected": "connected",
-        "hasn:message": "message",
-        "hasn:ack": "ack",
-        "hasn:typing": "typing",
-        "hasn:presence": "presence",
-        "hasn:message_recalled": "message_recalled",
-        "hasn:agents_reported": "agents_reported",
-        "hasn:error": "error",
-      };
-
-      for (const [tauriEvent, hasnType] of Object.entries(eventMap)) {
-        const unlisten = await listen(tauriEvent, (event: any) => {
-          this.emit({ type: hasnType, data: event.payload });
-        });
-        this.tauriUnlisteners.push(unlisten);
-      }
-
-      this._connected = true;
-      this.emit({ type: "connected", data: {} });
-    } catch (e) {
-      console.error("[HasnWS] Tauri 事件监听失败:", e);
-    }
-  }
-
-  // ---------- Web 模式 ----------
-
   private connectWeb(): void {
-    const token = localStorage.getItem("hasn:client_jwt");
-    if (!token) {
-      console.warn("[HasnWS] 无 client_jwt，无法连接 WebSocket");
-      return;
-    }
+    const token = localStorage.getItem("hasn:platform_token") || "";
+    const hasnId = localStorage.getItem("hasn:hasn_id") || "";
+    
+    // 连接到 Sidecar 的 hasn-events 推流接口
+    // HTTP URL 形式如 http://localhost:42620
+    import('../config').then(({ HUANXING_CONFIG }) => {
+      const urlObj = new URL(HUANXING_CONFIG.sidecarBaseUrl);
+      const protocol = urlObj.protocol === "https:" ? "wss:" : "ws:";
+      const searchParams = new URLSearchParams({ 
+        token, 
+        hasn_id: hasnId, 
+      });
+      const wsUrl = `${protocol}//${urlObj.host}/api/v1/hasn/ws/hasn-events?${searchParams.toString()}`;
 
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const url = `${protocol}//${window.location.host}/api/v1/hasn/ws/client?token=${token}`;
-
-    this.ws = new WebSocket(url);
+      this.ws = new WebSocket(wsUrl);
 
     this.ws.onopen = () => {
       this._connected = true;
@@ -146,16 +106,17 @@ class HasnWebSocket {
       }
     };
 
-    this.ws.onclose = () => {
-      this._connected = false;
-      this.emit({ type: "disconnected", data: {} });
-      // 自动重连（指数退避简化版）
-      setTimeout(() => this.connectWeb(), 3000);
-    };
+      this.ws.onclose = () => {
+        this._connected = false;
+        this.emit({ type: "disconnected", data: {} });
+        // 自动重连（指数退避简化版）
+        setTimeout(() => this.connectWeb(), 3000);
+      };
 
-    this.ws.onerror = () => {
-      this.emit({ type: "error", data: { message: "WebSocket 连接错误" } });
-    };
+      this.ws.onerror = () => {
+        this.emit({ type: "error", data: { message: "WebSocket 连接错误" } });
+      };
+    });
   }
 
   /** 通过 Web WebSocket 发送命令 */

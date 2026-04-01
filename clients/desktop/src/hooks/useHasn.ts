@@ -5,7 +5,7 @@
  * 对齐 hasn-api.ts 类型和 hasn-ws.ts 事件。
  */
 import { useState, useEffect, useCallback, useRef } from "react";
-import type { Conversation, Message, Contact, FriendRequest } from "../lib/hasn-api";
+import type { Conversation, HasnEnvelope, Contact, FriendRequest } from "../lib/hasn-api";
 import * as hasnApi from "../lib/hasn-api";
 import { hasnWs, type HasnWsEvent } from "../lib/hasn-ws";
 
@@ -130,12 +130,12 @@ export function useHasnConversations() {
 // ---------- 消息列表 ----------
 
 export function useHasnMessages(conversationId: string | null) {
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<HasnEnvelope[]>([]);
   const [loading, setLoading] = useState(false);
   const convIdRef = useRef(conversationId);
   convIdRef.current = conversationId;
 
-  const loadMessages = useCallback(async (beforeId?: number) => {
+  const loadMessages = useCallback(async (beforeId?: number | string) => {
     if (!conversationId) return;
     setLoading(true);
     try {
@@ -162,19 +162,34 @@ export function useHasnMessages(conversationId: string | null) {
   useEffect(() => {
     const unsub = hasnWs.subscribe((event: HasnWsEvent) => {
       if (event.type === "message" && event.data.conversation_id === convIdRef.current) {
-        setMessages((prev) => [...prev, event.data]);
+        // Map WsMessagePayload to HasnEnvelope
+        const msg = event.data;
+        const mappedEnv: HasnEnvelope = {
+          id: msg.id ? String(msg.id) : `msg_${Date.now()}`,
+          version: "4.0",
+          from: { hasn_id: msg.from_id || "", entity_type: msg.from_type === 1 ? "human" : "agent" },
+          to: { hasn_id: msg.to_id || "", entity_type: "human" },
+          message_type: "chat",
+          qos: 1,
+          content: { type: msg.content_type === 6 ? "tool_call" : "text", text: msg.content || "" },
+          context: { conversation_id: msg.conversation_id || "" },
+          timestamp: msg.created_at || new Date().toISOString(),
+          local_id: msg.local_id,
+          send_status: msg.send_status || "delivered"
+        };
+        setMessages((prev) => [...prev, mappedEnv]);
       } else if (event.type === "ack" && event.data.conversation_id === convIdRef.current) {
         // 更新消息发送状态
         setMessages((prev) =>
           prev.map((m) =>
             m.local_id === event.data.local_id
-              ? { ...m, id: event.data.server_id ?? m.id, send_status: "sent" }
+              ? { ...m, id: event.data.server_id ? String(event.data.server_id) : m.id, send_status: "sent" }
               : m,
           ),
         );
       } else if (event.type === "message_recalled") {
         setMessages((prev) =>
-          prev.filter((m) => m.id !== event.data.message_id),
+          prev.filter((m) => m.id !== String(event.data.message_id)),
         );
       }
     });
@@ -184,18 +199,18 @@ export function useHasnMessages(conversationId: string | null) {
   const send = useCallback(async (content: string, replyToId?: number) => {
     if (!conversationId) return;
     // 乐观插入
-    const tempMsg: Message = {
-      id: 0,
+    const tempMsg: HasnEnvelope = {
+      id: `local_${Date.now()}`,
+      version: "4.0",
+      from: { hasn_id: "", entity_type: "human" },
+      to: { hasn_id: "", entity_type: "human" },
+      message_type: "chat",
+      qos: 1,
+      content: { type: "text", text: content },
+      context: { conversation_id: conversationId },
+      timestamp: new Date().toISOString(),
       local_id: `local_${Date.now()}`,
-      conversation_id: conversationId,
-      from_id: "",
-      from_type: 1,
-      content,
-      content_type: 1,
-      status: 0,
-      send_status: "sending",
-      created_at: new Date().toISOString(),
-      reply_to_id: replyToId,
+      send_status: "sending"
     };
     setMessages((prev) => [...prev, tempMsg]);
 

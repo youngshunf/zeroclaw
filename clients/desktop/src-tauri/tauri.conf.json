@@ -50,9 +50,10 @@
       "icons/icon.ico"
     ],
     "resources": [
-      "../workspace-scaffold/*",
-      "../workspace-scaffold/default/*",
-      "../workspace-scaffold/guardian/*"
+      "../workspace-scaffold/README.md",
+      "../workspace-scaffold/config.toml.template",
+      "../workspace-scaffold/owner-scaffold/*",
+      "../workspace-scaffold/agent-scaffold/*"
     ],
     "macOS": {
       "entitlements": "./Entitlements.plist",
