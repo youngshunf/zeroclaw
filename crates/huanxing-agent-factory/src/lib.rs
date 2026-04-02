@@ -74,4 +74,42 @@ impl AgentFactory {
             self.config_dir.join("users").join(name)
         }
     }
+
+    /// 生成全局配置文件 (`~/.huanxing/config.toml`)
+    /// 使用嵌入的 scaffold/global/config.toml.template，替换占位符。
+    /// 此配置是进程级的，与用户/租户无关。
+    pub fn generate_global_config(&self, vars: &GlobalConfigVars) -> String {
+        let template = scaffold::global_scaffold()
+            .into_iter()
+            .find(|s| s.name == "config.toml.template")
+            .map(|s| s.content.to_string())
+            .unwrap_or_default();
+
+        template
+            .replace("{{star_name}}", &vars.display_name)
+            .replace("{{default_provider}}", &vars.default_provider)
+            .replace("{{default_model}}", &vars.default_model)
+            .replace("{{title_model}}", &vars.title_model)
+            .replace("{{gateway_port}}", &vars.gateway_port.to_string())
+            .replace("{{llm_gateway}}", &vars.llm_gateway)
+            .replace("{{api_base_url}}", &vars.api_base_url)
+            .replace("{{agent_key}}", &vars.agent_key)
+            .replace("{{user_uuid}}", &vars.user_uuid)
+            .replace("{{hasn_api_key}}", &vars.hasn_api_key)
+    }
+}
+
+/// 全局配置生成所需的变量
+#[derive(Debug, Clone)]
+pub struct GlobalConfigVars {
+    pub display_name: String,
+    pub default_provider: String,
+    pub default_model: String,
+    pub title_model: String,
+    pub gateway_port: u16,
+    pub llm_gateway: String,
+    pub api_base_url: String,
+    pub agent_key: String,
+    pub user_uuid: String,
+    pub hasn_api_key: String,
 }

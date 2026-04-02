@@ -1,5 +1,4 @@
 use tauri::AppHandle;
-use tauri::Manager;
 use crate::sidecar::constants::HUANXING_PORT;
 use crate::sidecar::manager::SidecarManager;
 use crate::sidecar::models::{OnboardRequest, OnboardResult};
@@ -7,7 +6,7 @@ use crate::sidecar::models::{OnboardRequest, OnboardResult};
 impl SidecarManager {
     /// 执行 onboard 流程：
     /// 1. 创建 ~/.huanxing/ 目录结构
-    /// 2. 从模板生成 config.toml
+    /// 2. 从模板生成 config.toml（全局级，包含渠道/工具/TTS/HASN 等进程级配置）
     /// 3. 创建默认 agent 配置
     /// 4. 创建完整 workspace（从 workspace-scaffold/ 复制 + 占位符替换）
     /// 5. 生成 secret key
@@ -34,7 +33,7 @@ impl SidecarManager {
         // 1. 创建全局配置目录结构
         std::fs::create_dir_all(&self.config_dir).map_err(|e| format!("创建配置目录失败: {e}"))?;
 
-        // 2. 生成 config.toml
+        // 2. 生成 config.toml（使用 agent-factory 嵌入的完整模板）
         let api_base = req
             .api_base_url
             .as_deref()
@@ -51,17 +50,25 @@ impl SidecarManager {
         };
 
         let hasn_api_key = req.hasn_api_key.as_deref().unwrap_or("");
-        let config_content = generate_config_toml(
-            &app,
-            &req.llm_token,
-            &llm_gateway,
-            api_base,
-            star_name,
-            agent_key,
-            user_uuid,
-            hasn_api_key,
-            HUANXING_PORT,
+        let llm_gateway_base = llm_gateway.trim_end_matches("/v1");
+        
+        let factory = huanxing_agent_factory::AgentFactory::new(
+            self.config_dir.clone(),
+            None,
         );
+        let vars = huanxing_agent_factory::GlobalConfigVars {
+            display_name: star_name.to_string(),
+            default_provider: format!("custom:{llm_gateway_base}/v1"),
+            default_model: "MiniMax-M2.7".to_string(),
+            title_model: "MiniMax-M2.5".to_string(),
+            gateway_port: HUANXING_PORT,
+            llm_gateway: llm_gateway.clone(),
+            api_base_url: api_base.to_string(),
+            agent_key: agent_key.to_string(),
+            user_uuid: user_uuid.to_string(),
+            hasn_api_key: hasn_api_key.to_string(),
+        };
+        let config_content = factory.generate_global_config(&vars);
 
         let config_path = self.config_dir.join("config.toml");
         std::fs::write(&config_path, &config_content)
@@ -141,83 +148,4 @@ impl SidecarManager {
         result.success = true;
         Ok(result)
     }
-}
-
-// ── 内部辅助方法 ──
-
-
-fn generate_config_toml(
-    _app: &tauri::AppHandle,
-    _llm_token: &str,
-    llm_gateway: &str,
-    api_base: &str,
-    agent_name: &str,
-    agent_key: &str,
-    user_uuid: &str,
-    hasn_api_key: &str,
-    port: u16,
-) -> String {
-    tracing::info!("Generating inline fallback config.toml for desktop");
-    let llm_gateway_base = llm_gateway.trim_end_matches("/v1");
-    format!(
-            r#"# 唤星桌面端配置 — 自动生成（回退模板）
-display_name = "{agent_name}"
-default_provider = "custom:{llm_gateway_base}/v1"
-default_model = "MiniMax-M2.7"
-title_model = "MiniMax-M2.5"
-default_temperature = 0.7
-
-[memory]
-backend = "sqlite"
-auto_save = true
-
-[gateway]
-port = {port}
-host = "127.0.0.1"
-require_pairing = false
-
-[huanxing]
-enabled = true
-api_base_url = "{api_base}"
-agent_key = "{agent_key}"
-server_id = "desktop-{user_uuid}"
-
-[huanxing.hasn]
-enabled = true
-auto_connect = true
-api_key = "{hasn_api_key}"
-
-[runtime]
-kind = "native"
-"#,
-        )
-}
-
-#[allow(dead_code)]
-fn extract_models_from_template(_app: &AppHandle) -> (String, String) {
-    let default_model = "MiniMax-M2.7".to_string();
-    let title_model = "MiniMax-M2.5".to_string();
-
-    (default_model, title_model)
-}
-
-#[allow(dead_code)]
-fn extract_toml_string_value(line: &str) -> Option<String> {
-    if let Some((_, val_str)) = line.split_once('=') {
-        let val_str = val_str.trim();
-        if val_str.starts_with('"') && val_str.ends_with('"') && val_str.len() >= 2 {
-            let inner = &val_str[1..val_str.len() - 1];
-            return Some(inner.to_string());
-        }
-    }
-    None
-}
-
-fn chrono_now() -> String {
-    chrono::Utc::now().to_rfc3339()
-}
-
-#[allow(dead_code)]
-fn chrono_now_pretty() -> String {
-    chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
 }

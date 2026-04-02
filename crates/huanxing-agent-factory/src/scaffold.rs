@@ -3,6 +3,12 @@ pub struct EmbeddedScaffold {
     pub content: &'static str,
 }
 
+pub fn global_scaffold() -> Vec<EmbeddedScaffold> {
+    vec![
+        EmbeddedScaffold { name: "config.toml.template", content: include_str!("scaffold/global/config.toml.template") },
+    ]
+}
+
 pub fn owner_scaffold() -> Vec<EmbeddedScaffold> {
     vec![
         EmbeddedScaffold { name: "USER.md", content: include_str!("scaffold/owner/USER.md") },

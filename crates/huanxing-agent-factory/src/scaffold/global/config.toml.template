@@ -1,0 +1,248 @@
+# ═══════════════════════════════════════════════════════════════
+# 唤星桌面端 - 全局配置模板 (Global Level)
+# ═══════════════════════════════════════════════════════════════
+#
+# 此配置位于 ~/.huanxing/config.toml，是进程级配置
+# 与用户/租户无关，所有租户共享此配置
+#
+# 三级配置优先级:
+#   Global (~/.huanxing/config.toml)          ← 本文件
+#   └─ Owner (~/.huanxing/users/<tenant>/config.toml)
+#      └─ Agent (~/.huanxing/users/<tenant>/agents/<name>/workspace/config.toml)
+#
+# ═══════════════════════════════════════════════════════════════
+
+# ── LLM 全局默认（租户层可覆盖）──────────────────────────────
+display_name = "{{star_name}}"
+default_provider = "{{default_provider}}"
+default_model = "{{default_model}}"
+title_model = "{{title_model}}"
+default_temperature = 0.7
+
+# ── 记忆系统（全局默认）───────────────────────────────────────
+[memory]
+backend = "sqlite"
+auto_save = true
+
+# ── 向量嵌入（语义搜索）──────────────────────────────────────
+embedding_provider = "{{default_provider}}"
+embedding_model = "text-embedding-v4"
+embedding_dimensions = 1024
+vector_weight = 0.7
+keyword_weight = 0.3
+min_relevance_score = 0.4
+embedding_cache_size = 2000
+chunk_max_tokens = 512
+
+# ┌─────────────────────────────────────────────────────────────┐
+# │                    网关配置                                   │
+# └─────────────────────────────────────────────────────────────┘
+[gateway]
+port = {{gateway_port}}
+host = "127.0.0.1"
+require_pairing = false
+
+# ┌─────────────────────────────────────────────────────────────┐
+# │                    可靠性（LLM 重试/降级）                    │
+# └─────────────────────────────────────────────────────────────┘
+[reliability]
+provider_retries = 3
+provider_backoff_ms = 500
+fallback_providers = []
+api_keys = []
+channel_initial_backoff_secs = 2
+channel_max_backoff_secs = 60
+scheduler_poll_secs = 15
+scheduler_retries = 2
+
+# ┌─────────────────────────────────────────────────────────────┐
+# │                    Agent 核心默认                              │
+# └─────────────────────────────────────────────────────────────┘
+[agent]
+compact_context = true
+max_tool_iterations = 50
+max_history_messages = 100
+max_context_tokens = 200000
+
+# ┌─────────────────────────────────────────────────────────────┐
+# │                    渠道配置                                   │
+# └─────────────────────────────────────────────────────────────┘
+[channels_config]
+cli = false
+message_timeout_secs = 300
+session_persistence = true
+session_backend = "sqlite"
+
+# ┌─────────────────────────────────────────────────────────────┐
+# │                    安全配置                                   │
+# └─────────────────────────────────────────────────────────────┘
+[security]
+canary_tokens = true
+semantic_guard = false
+
+[security.otp]
+enabled = false
+
+[security.outbound_leak_guard]
+enabled = true
+action = "redact"
+sensitivity = 0.5
+
+# ┌─────────────────────────────────────────────────────────────┐
+# │                    网络工具开关                                │
+# └─────────────────────────────────────────────────────────────┘
+[web_search]
+enabled = true
+
+[web_fetch]
+enabled = true
+
+[browser]
+enabled = true
+
+[http_request]
+enabled = true
+
+[proxy]
+enabled = false
+
+[composio]
+enabled = false
+
+[mcp]
+enabled = false
+
+[wasm]
+enabled = false
+
+[plugins]
+enabled = false
+
+# ┌─────────────────────────────────────────────────────────────┐
+# │                    多模态                                     │
+# └─────────────────────────────────────────────────────────────┘
+[multimodal]
+max_images = 4
+max_image_size_mb = 10
+allow_remote_fetch = true
+
+# ┌─────────────────────────────────────────────────────────────┐
+# │                    语音合成 (TTS)                              │
+# └─────────────────────────────────────────────────────────────┘
+[tts]
+enabled = true
+default_provider = "generic_openai"
+default_voice = "Cherry"
+default_format = "wav"
+
+[tts.generic_openai]
+api_url = "{{llm_gateway}}/audio/speech"
+model = "qwen3-tts-instruct-flash"
+
+# ┌─────────────────────────────────────────────────────────────┐
+# │                    语音识别 (STT)                              │
+# └─────────────────────────────────────────────────────────────┘
+[transcription]
+enabled = true
+default_provider = "groq"
+api_url = "{{llm_gateway}}/audio/transcriptions"
+model = "qwen3-asr-flash-2026-02-10"
+
+# ┌─────────────────────────────────────────────────────────────┐
+# │                    委托 & Hooks                               │
+# └─────────────────────────────────────────────────────────────┘
+[delegate]
+timeout_secs = 120
+agentic_timeout_secs = 300
+
+[hooks]
+enabled = true
+
+[hooks.builtin]
+command_logger = false
+
+# ┌─────────────────────────────────────────────────────────────┐
+# │                    技能系统                                   │
+# └─────────────────────────────────────────────────────────────┘
+[skills]
+open_skills_enabled = false
+allow_scripts = true
+prompt_injection_mode = "compact"
+
+[skills.skill_creation]
+enabled = true
+max_skills = 100
+
+# ┌─────────────────────────────────────────────────────────────┐
+# │                    心跳 & 定时任务                             │
+# └─────────────────────────────────────────────────────────────┘
+[heartbeat]
+enabled = true
+interval_minutes = 60
+max_tasks_per_tick = 2
+
+[cron]
+enabled = true
+max_run_history = 20
+
+# ┌─────────────────────────────────────────────────────────────┐
+# │                    备份                                       │
+# └─────────────────────────────────────────────────────────────┘
+[backup]
+enabled = true
+max_keep = 5
+include_dirs = ["config", "memory", "audit"]
+destination_dir = "state/backups"
+compress = true
+
+# ┌─────────────────────────────────────────────────────────────┐
+# │                    加密密钥管理                                │
+# └─────────────────────────────────────────────────────────────┘
+[secrets]
+encrypt = false
+
+# ┌─────────────────────────────────────────────────────────────┐
+# │                    唤星多租户配置                               │
+# └─────────────────────────────────────────────────────────────┘
+[huanxing]
+enabled = true
+api_base_url = "{{api_base_url}}"
+hasn_base_url = "{{api_base_url}}"
+agent_key = "{{agent_key}}"
+server_id = "desktop-{{user_uuid}}"
+
+[huanxing.hasn]
+enabled = true
+auto_connect = true
+api_key = "{{hasn_api_key}}"
+node_type = "desktop"
+
+# ┌─────────────────────────────────────────────────────────────┐
+# │                    运行时                                     │
+# └─────────────────────────────────────────────────────────────┘
+[runtime]
+kind = "native"
+
+[observability]
+backend = "none"
+runtime_trace_mode = "none"
+
+[identity]
+format = "openclaw"
+
+[node_transport]
+enabled = true
+
+[verifiable_intent]
+enabled = false
+
+[cost]
+enabled = false
+
+[knowledge]
+enabled = false
+
+[scheduler]
+enabled = true
+max_tasks = 64
+max_concurrent = 4
