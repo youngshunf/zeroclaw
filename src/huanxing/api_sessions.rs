@@ -1,7 +1,7 @@
 //! 桌面端 Session REST API。
 //!
 //! 为桌面端前端提供完整的 Session CRUD，每个 Agent 的会话独立存储在
-//! `~/.huanxing/agents/{agent_name}/sessions/sessions.db`。
+//! `{config_dir}/users/{tenant}/agents/{agent_name}/workspace/sessions/sessions.db`。
 //!
 //! # 端点
 //!

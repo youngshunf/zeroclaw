@@ -82,12 +82,14 @@ export async function installMarketAgent(
 export async function installMarketSkill(
   agentName: string, 
   skillId: string, 
-  packageUrl: string
+  packageUrl: string,
+  installScope?: 'agent' | 'user',
 ): Promise<void> {
   await invoke('download_and_install_skill', {
     agentName,
     skillId,
     packageUrl,
+    installScope: installScope ?? 'agent',
   });
 }
 

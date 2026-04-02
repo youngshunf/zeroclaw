@@ -58,6 +58,8 @@ impl MessageContextResolver for MultiTenantResolver {
             message_timeout_secs: Some(tenant.message_timeout_secs),
             multimodal: Some(tenant.multimodal.clone()),
             reliability: Some(tenant.reliability.clone()),
+            global_skills_dir: tenant.global_skills_dir.clone(),
+            user_skills_dir: tenant.user_skills_dir.clone(),
         }
     }
 

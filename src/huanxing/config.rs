@@ -338,6 +338,7 @@ impl HuanXingConfig {
     /// Resolve the agents directory.
     ///
     /// **Deprecated**: prefer `resolve_agent_wrapper_dir()` for new code.
+    #[deprecated(note = "use resolve_agent_wrapper_dir() for V3.1 tenant-scoped paths")]
     pub fn resolve_agents_dir(&self, config_dir: &std::path::Path) -> PathBuf {
         self.agents_dir
             .clone()
@@ -432,7 +433,13 @@ pub fn agent_wrapper_dir_from_workspace(workspace_dir: &std::path::Path) -> Path
 }
 
 pub fn agent_config_path_from_workspace(workspace_dir: &std::path::Path) -> PathBuf {
-    agent_wrapper_dir_from_workspace(workspace_dir).join("config.toml")
+    let wrapper = agent_wrapper_dir_from_workspace(workspace_dir);
+    debug_assert!(
+        wrapper.file_name().is_some(),
+        "workspace_dir parent should be an agent wrapper directory, got: {}",
+        workspace_dir.display()
+    );
+    wrapper.join("config.toml")
 }
 
 pub fn promote_legacy_agent_config(

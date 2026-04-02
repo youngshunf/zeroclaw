@@ -557,11 +557,15 @@ pub async fn download_and_install_skill(
     agent_name: String,
     skill_id: String,
     package_url: String,
+    install_scope: Option<String>,
 ) -> Result<(), String> {
-    emit_progress(&app, &format!("准备获取技能 '{}' ...", skill_id));
+    let scope = install_scope.as_deref().unwrap_or("agent");
+    let scope_label = if scope == "user" { "用户公共" } else { "Agent" };
+
+    emit_progress(&app, &format!("准备获取技能 '{}' ({}级)...", skill_id, scope_label));
     eprintln!(
-        "[huanxing-desktop] Downloading Skill {} for Agent {}",
-        skill_id, agent_name
+        "[huanxing-desktop] Downloading Skill {} for Agent {} (scope={})",
+        skill_id, agent_name, scope
     );
 
     let api_base = read_marketplace_api_base();
@@ -595,60 +599,76 @@ pub async fn download_and_install_skill(
     let tenant_dir = resolve_first_tenant_dir()?;
     let huanxing_dir = dirs::home_dir().unwrap_or_default().join(".huanxing");
 
-    // Skill 安装路径: users/{tenant}/agents/{agent}/workspace/skills/{skill_id}/
-    let target_dir = huanxing_dir
-        .join("users")
-        .join(&tenant_dir)
-        .join("agents")
-        .join(&agent_name)
-        .join("workspace")
-        .join("skills")
-        .join(&skill_id);
+    // 3. Determine target directory based on install scope
+    let target_dir = match scope {
+        "user" => {
+            // 用户级: users/{tenant}/workspace/skills/{skill_id}/
+            huanxing_dir
+                .join("users")
+                .join(&tenant_dir)
+                .join("workspace")
+                .join("skills")
+                .join(&skill_id)
+        }
+        _ => {
+            // Agent 级 (默认): users/{tenant}/agents/{agent}/workspace/skills/{skill_id}/
+            huanxing_dir
+                .join("users")
+                .join(&tenant_dir)
+                .join("agents")
+                .join(&agent_name)
+                .join("workspace")
+                .join("skills")
+                .join(&skill_id)
+        }
+    };
 
     if target_dir.exists() {
         let _ = fs::remove_dir_all(&target_dir); // clean old
     }
     fs::create_dir_all(&target_dir).map_err(|e| e.to_string())?;
 
-    // 3. Extract
+    // 4. Extract
     emit_progress(&app, "正在安装和解压...");
     unzip_buffer(&bytes, &target_dir)?;
 
-    // 4. Update the agent's config.toml skills list (canonical: wrapper/config.toml)
-    emit_progress(&app, "更新 Agent 配置依赖...");
-    let config_path = huanxing_dir
-        .join("users")
-        .join(&tenant_dir)
-        .join("agents")
-        .join(&agent_name)
-        .join("config.toml");
+    // 5. Update the agent's config.toml skills list (only for agent-scope installs)
+    if scope != "user" {
+        emit_progress(&app, "更新 Agent 配置依赖...");
+        let config_path = huanxing_dir
+            .join("users")
+            .join(&tenant_dir)
+            .join("agents")
+            .join(&agent_name)
+            .join("config.toml");
 
-    if config_path.exists() {
-        if let Ok(content) = fs::read_to_string(&config_path) {
-            if let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() {
-                let plugins = doc
-                    .entry("plugins")
-                    .or_insert(toml_edit::Item::Table(toml_edit::Table::new()));
-                if let Some(plugins_table) = plugins.as_table_mut() {
-                    let skills = plugins_table
-                        .entry("skills")
-                        .or_insert(toml_edit::Item::Value(toml_edit::Value::Array(
-                            toml_edit::Array::new(),
-                        )));
+        if config_path.exists() {
+            if let Ok(content) = fs::read_to_string(&config_path) {
+                if let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() {
+                    let plugins = doc
+                        .entry("plugins")
+                        .or_insert(toml_edit::Item::Table(toml_edit::Table::new()));
+                    if let Some(plugins_table) = plugins.as_table_mut() {
+                        let skills = plugins_table
+                            .entry("skills")
+                            .or_insert(toml_edit::Item::Value(toml_edit::Value::Array(
+                                toml_edit::Array::new(),
+                            )));
 
-                    if let Some(arr) = skills.as_array_mut() {
-                        let mut exists = false;
-                        for v in arr.iter() {
-                            if let Some(s) = v.as_str() {
-                                if s == skill_id {
-                                    exists = true;
-                                    break;
+                        if let Some(arr) = skills.as_array_mut() {
+                            let mut exists = false;
+                            for v in arr.iter() {
+                                if let Some(s) = v.as_str() {
+                                    if s == skill_id {
+                                        exists = true;
+                                        break;
+                                    }
                                 }
                             }
-                        }
-                        if !exists {
-                            arr.push(skill_id.clone());
-                            fs::write(&config_path, doc.to_string()).ok();
+                            if !exists {
+                                arr.push(skill_id.clone());
+                                fs::write(&config_path, doc.to_string()).ok();
+                            }
                         }
                     }
                 }
@@ -656,7 +676,7 @@ pub async fn download_and_install_skill(
         }
     }
 
-    emit_progress(&app, "✅ 技能安装成功！");
+    emit_progress(&app, &format!("✅ 技能安装成功！（{}级别）", scope_label));
     Ok(())
 }
 

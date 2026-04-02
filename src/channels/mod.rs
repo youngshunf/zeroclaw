@@ -1230,7 +1230,7 @@ fn replace_available_skills_section(base_prompt: &str, refreshed_skills: &str) -
 
 fn refreshed_new_session_system_prompt(ctx: &ChannelRuntimeContext) -> String {
     let refreshed_skills = crate::skills::skills_to_prompt_with_mode(
-        &crate::skills::load_skills_with_config(
+        &crate::skills::load_skills_cascaded_auto(
             ctx.workspace_dir.as_ref(),
             ctx.prompt_config.as_ref(),
         ),
@@ -3315,26 +3315,56 @@ async fn process_channel_message(
 
         let f1 = crate::tools::with_active_knowledge_config(kg_cfg, run_llm_future);
 
+        // Macro to layer skills-directory task-locals (three-level skill cascade).
+        // Must be a macro (not a closure) because each call site produces a distinct
+        // opaque future type that Rust cannot unify in a generic closure.
+        macro_rules! scope_skills {
+            ($fut:expr) => {{
+                let fut = $fut;
+                match (&msg_ctx.global_skills_dir, &msg_ctx.user_skills_dir) {
+                    (Some(gsd), Some(usd)) => {
+                        crate::skills::ACTIVE_USER_SKILLS_DIR.scope(
+                            usd.clone(),
+                            crate::skills::ACTIVE_GLOBAL_SKILLS_DIR.scope(gsd.clone(), fut),
+                        ).await
+                    }
+                    (Some(gsd), None) => {
+                        crate::skills::ACTIVE_GLOBAL_SKILLS_DIR.scope(gsd.clone(), fut).await
+                    }
+                    (None, Some(usd)) => {
+                        crate::skills::ACTIVE_USER_SKILLS_DIR.scope(usd.clone(), fut).await
+                    }
+                    (None, None) => fut.await,
+                }
+            }};
+        }
+
         if let Some(sec) = msg_ctx.security.clone() {
             let f2 = crate::tools::with_active_security(sec, f1);
             if let Some(kg) = msg_ctx.knowledge_graph.clone() {
-                crate::tools::with_active_workspace(
-                    ws,
-                    crate::tools::with_active_knowledge_graph(kg, f2),
+                scope_skills!(
+                    crate::tools::with_active_workspace(
+                        ws,
+                        crate::tools::with_active_knowledge_graph(kg, f2),
+                    )
                 )
-                .await
             } else {
-                crate::tools::with_active_workspace(ws, f2).await
+                scope_skills!(
+                    crate::tools::with_active_workspace(ws, f2)
+                )
             }
         } else {
             if let Some(kg) = msg_ctx.knowledge_graph.clone() {
-                crate::tools::with_active_workspace(
-                    ws,
-                    crate::tools::with_active_knowledge_graph(kg, f1),
+                scope_skills!(
+                    crate::tools::with_active_workspace(
+                        ws,
+                        crate::tools::with_active_knowledge_graph(kg, f1),
+                    )
                 )
-                .await
             } else {
-                crate::tools::with_active_workspace(ws, f1).await
+                scope_skills!(
+                    crate::tools::with_active_workspace(ws, f1)
+                )
             }
         }
     } else {
@@ -5589,7 +5619,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
 
     let tools_registry = Arc::new(built_tools);
 
-    let skills = crate::skills::load_skills_with_config(&workspace, &config);
+    let skills = crate::skills::load_skills_cascaded_auto(&workspace, &config);
 
     // ── Load locale-aware tool descriptions ────────────────────────
     let i18n_locale = config
@@ -5883,6 +5913,8 @@ pub async fn start_channels(config: Config) -> Result<()> {
                 message_timeout_secs: None,
                 multimodal: None,
                 reliability: None,
+                global_skills_dir: None,
+                user_skills_dir: None,
                 knowledge_graph: None,
                 cross_knowledge_index: None,
                 knowledge_config: Default::default(),
@@ -6434,6 +6466,8 @@ mod tests {
                         message_timeout_secs: None,
                         multimodal: None,
                         reliability: None,
+                        global_skills_dir: None,
+                        user_skills_dir: None,
                         knowledge_graph: None,
                         cross_knowledge_index: None,
                         knowledge_config: Default::default(),
@@ -6597,6 +6631,8 @@ mod tests {
                         message_timeout_secs: None,
                         multimodal: None,
                         reliability: None,
+                        global_skills_dir: None,
+                        user_skills_dir: None,
                         knowledge_graph: None,
                         cross_knowledge_index: None,
                         knowledge_config: Default::default(),
@@ -6717,6 +6753,8 @@ mod tests {
                         message_timeout_secs: None,
                         multimodal: None,
                         reliability: None,
+                        global_skills_dir: None,
+                        user_skills_dir: None,
                         knowledge_graph: None,
                         cross_knowledge_index: None,
                         knowledge_config: Default::default(),
@@ -6854,6 +6892,8 @@ mod tests {
                         message_timeout_secs: None,
                         multimodal: None,
                         reliability: None,
+                        global_skills_dir: None,
+                        user_skills_dir: None,
                         knowledge_graph: None,
                         cross_knowledge_index: None,
                         knowledge_config: Default::default(),
@@ -7492,6 +7532,8 @@ BTC is currently around $65,000 based on latest tool output."#
                         message_timeout_secs: None,
                         multimodal: None,
                         reliability: None,
+                        global_skills_dir: None,
+                        user_skills_dir: None,
                         knowledge_graph: None,
                         cross_knowledge_index: None,
                         knowledge_config: Default::default(),
@@ -7621,6 +7663,8 @@ BTC is currently around $65,000 based on latest tool output."#
                         message_timeout_secs: None,
                         multimodal: None,
                         reliability: None,
+                        global_skills_dir: None,
+                        user_skills_dir: None,
                         knowledge_graph: None,
                         cross_knowledge_index: None,
                         knowledge_config: Default::default(),
@@ -7764,6 +7808,8 @@ BTC is currently around $65,000 based on latest tool output."#
                         message_timeout_secs: None,
                         multimodal: None,
                         reliability: None,
+                        global_skills_dir: None,
+                        user_skills_dir: None,
                         knowledge_graph: None,
                         cross_knowledge_index: None,
                         knowledge_config: Default::default(),
@@ -7892,6 +7938,8 @@ BTC is currently around $65,000 based on latest tool output."#
                         message_timeout_secs: None,
                         multimodal: None,
                         reliability: None,
+                        global_skills_dir: None,
+                        user_skills_dir: None,
                         knowledge_graph: None,
                         cross_knowledge_index: None,
                         knowledge_config: Default::default(),
@@ -8030,6 +8078,8 @@ BTC is currently around $65,000 based on latest tool output."#
                         message_timeout_secs: None,
                         multimodal: None,
                         reliability: None,
+                        global_skills_dir: None,
+                        user_skills_dir: None,
                         knowledge_graph: None,
                         cross_knowledge_index: None,
                         knowledge_config: Default::default(),
@@ -8189,6 +8239,8 @@ BTC is currently around $65,000 based on latest tool output."#
                         message_timeout_secs: None,
                         multimodal: None,
                         reliability: None,
+                        global_skills_dir: None,
+                        user_skills_dir: None,
                         knowledge_graph: None,
                         cross_knowledge_index: None,
                         knowledge_config: Default::default(),
@@ -8329,6 +8381,8 @@ BTC is currently around $65,000 based on latest tool output."#
                         message_timeout_secs: None,
                         multimodal: None,
                         reliability: None,
+                        global_skills_dir: None,
+                        user_skills_dir: None,
                         knowledge_graph: None,
                         cross_knowledge_index: None,
                         knowledge_config: Default::default(),
@@ -8484,6 +8538,8 @@ BTC is currently around $65,000 based on latest tool output."#
                         message_timeout_secs: None,
                         multimodal: None,
                         reliability: None,
+                        global_skills_dir: None,
+                        user_skills_dir: None,
                         knowledge_graph: None,
                         cross_knowledge_index: None,
                         knowledge_config: Default::default(),
@@ -8623,6 +8679,8 @@ BTC is currently around $65,000 based on latest tool output."#
                         message_timeout_secs: None,
                         multimodal: None,
                         reliability: None,
+                        global_skills_dir: None,
+                        user_skills_dir: None,
                         knowledge_graph: None,
                         cross_knowledge_index: None,
                         knowledge_config: Default::default(),
@@ -8756,6 +8814,8 @@ BTC is currently around $65,000 based on latest tool output."#
                         message_timeout_secs: None,
                         multimodal: None,
                         reliability: None,
+                        global_skills_dir: None,
+                        user_skills_dir: None,
                         knowledge_graph: None,
                         cross_knowledge_index: None,
                         knowledge_config: Default::default(),
@@ -9016,6 +9076,8 @@ BTC is currently around $65,000 based on latest tool output."#
                         message_timeout_secs: None,
                         multimodal: None,
                         reliability: None,
+                        global_skills_dir: None,
+                        user_skills_dir: None,
                         knowledge_graph: None,
                         cross_knowledge_index: None,
                         knowledge_config: Default::default(),
@@ -9167,6 +9229,8 @@ BTC is currently around $65,000 based on latest tool output."#
                         message_timeout_secs: None,
                         multimodal: None,
                         reliability: None,
+                        global_skills_dir: None,
+                        user_skills_dir: None,
                         knowledge_graph: None,
                         cross_knowledge_index: None,
                         knowledge_config: Default::default(),
@@ -9337,6 +9401,8 @@ BTC is currently around $65,000 based on latest tool output."#
                         message_timeout_secs: None,
                         multimodal: None,
                         reliability: None,
+                        global_skills_dir: None,
+                        user_skills_dir: None,
                         knowledge_graph: None,
                         cross_knowledge_index: None,
                         knowledge_config: Default::default(),
@@ -9504,6 +9570,8 @@ BTC is currently around $65,000 based on latest tool output."#
                         message_timeout_secs: None,
                         multimodal: None,
                         reliability: None,
+                        global_skills_dir: None,
+                        user_skills_dir: None,
                         knowledge_graph: None,
                         cross_knowledge_index: None,
                         knowledge_config: Default::default(),
@@ -9649,6 +9717,8 @@ BTC is currently around $65,000 based on latest tool output."#
                         message_timeout_secs: None,
                         multimodal: None,
                         reliability: None,
+                        global_skills_dir: None,
+                        user_skills_dir: None,
                         knowledge_graph: None,
                         cross_knowledge_index: None,
                         knowledge_config: Default::default(),
@@ -9725,6 +9795,8 @@ BTC is currently around $65,000 based on latest tool output."#
                         message_timeout_secs: None,
                         multimodal: None,
                         reliability: None,
+                        global_skills_dir: None,
+                        user_skills_dir: None,
                         knowledge_graph: None,
                         cross_knowledge_index: None,
                         knowledge_config: Default::default(),
@@ -9901,6 +9973,8 @@ BTC is currently around $65,000 based on latest tool output."#
                         message_timeout_secs: None,
                         multimodal: None,
                         reliability: None,
+                        global_skills_dir: None,
+                        user_skills_dir: None,
                         knowledge_graph: None,
                         cross_knowledge_index: None,
                         knowledge_config: Default::default(),
@@ -10746,6 +10820,8 @@ BTC is currently around $65,000 based on latest tool output."#
                         message_timeout_secs: None,
                         multimodal: None,
                         reliability: None,
+                        global_skills_dir: None,
+                        user_skills_dir: None,
                         knowledge_graph: None,
                         cross_knowledge_index: None,
                         knowledge_config: Default::default(),
@@ -10927,6 +11003,8 @@ BTC is currently around $65,000 based on latest tool output."#
                         message_timeout_secs: None,
                         multimodal: None,
                         reliability: None,
+                        global_skills_dir: None,
+                        user_skills_dir: None,
                         knowledge_graph: None,
                         cross_knowledge_index: None,
                         knowledge_config: Default::default(),
@@ -11150,6 +11228,8 @@ BTC is currently around $65,000 based on latest tool output."#
                         message_timeout_secs: None,
                         multimodal: None,
                         reliability: None,
+                        global_skills_dir: None,
+                        user_skills_dir: None,
                         knowledge_graph: None,
                         cross_knowledge_index: None,
                         knowledge_config: Default::default(),
@@ -11305,6 +11385,8 @@ BTC is currently around $65,000 based on latest tool output."#
                         message_timeout_secs: None,
                         multimodal: None,
                         reliability: None,
+                        global_skills_dir: None,
+                        user_skills_dir: None,
                         knowledge_graph: None,
                         cross_knowledge_index: None,
                         knowledge_config: Default::default(),
@@ -11943,6 +12025,8 @@ This is an example JSON object for profile settings."#;
                         message_timeout_secs: None,
                         multimodal: None,
                         reliability: None,
+                        global_skills_dir: None,
+                        user_skills_dir: None,
                         knowledge_graph: None,
                         cross_knowledge_index: None,
                         knowledge_config: Default::default(),
@@ -12078,6 +12162,8 @@ This is an example JSON object for profile settings."#;
                         message_timeout_secs: None,
                         multimodal: None,
                         reliability: None,
+                        global_skills_dir: None,
+                        user_skills_dir: None,
                         knowledge_graph: None,
                         cross_knowledge_index: None,
                         knowledge_config: Default::default(),
@@ -12197,6 +12283,8 @@ This is an example JSON object for profile settings."#;
                         message_timeout_secs: None,
                         multimodal: None,
                         reliability: None,
+                        global_skills_dir: None,
+                        user_skills_dir: None,
                         knowledge_graph: None,
                         cross_knowledge_index: None,
                         knowledge_config: Default::default(),
@@ -12460,6 +12548,8 @@ This is an example JSON object for profile settings."#;
                         message_timeout_secs: None,
                         multimodal: None,
                         reliability: None,
+                        global_skills_dir: None,
+                        user_skills_dir: None,
                         knowledge_graph: None,
                         cross_knowledge_index: None,
                         knowledge_config: Default::default(),
@@ -12619,6 +12709,8 @@ This is an example JSON object for profile settings."#;
                         message_timeout_secs: None,
                         multimodal: None,
                         reliability: None,
+                        global_skills_dir: None,
+                        user_skills_dir: None,
                         knowledge_graph: None,
                         cross_knowledge_index: None,
                         knowledge_config: Default::default(),
@@ -12770,6 +12862,8 @@ This is an example JSON object for profile settings."#;
                         message_timeout_secs: None,
                         multimodal: None,
                         reliability: None,
+                        global_skills_dir: None,
+                        user_skills_dir: None,
                         knowledge_graph: None,
                         cross_knowledge_index: None,
                         knowledge_config: Default::default(),
@@ -12941,6 +13035,8 @@ This is an example JSON object for profile settings."#;
                         message_timeout_secs: None,
                         multimodal: None,
                         reliability: None,
+                        global_skills_dir: None,
+                        user_skills_dir: None,
                         knowledge_graph: None,
                         cross_knowledge_index: None,
                         knowledge_config: Default::default(),
@@ -13253,6 +13349,8 @@ This is an example JSON object for profile settings."#;
                         message_timeout_secs: None,
                         multimodal: None,
                         reliability: None,
+                        global_skills_dir: None,
+                        user_skills_dir: None,
                         knowledge_graph: None,
                         cross_knowledge_index: None,
                         knowledge_config: Default::default(),

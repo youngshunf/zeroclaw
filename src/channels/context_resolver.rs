@@ -105,9 +105,16 @@ pub struct MessageContext {
     /// Multimodal config override for this tenant.
     pub multimodal: Option<crate::config::MultimodalConfig>,
 
-    /// Per-tenant reliability config (from workspace [reliability] or global).
-    /// Used to create the per-request resilient provider with tenant's own keys/fallbacks.
+    /// Per-tenant reliability config (from workspace [reliability] or global).\n    /// Used to create the per-request resilient provider with tenant's own keys/fallbacks.
     pub reliability: Option<crate::config::ReliabilityConfig>,
+
+    /// Global skills directory (Level 1: `{config_dir}/skills/`).
+    /// Injected as task-local `ACTIVE_GLOBAL_SKILLS_DIR` during message processing.
+    pub global_skills_dir: Option<PathBuf>,
+
+    /// User/tenant skills directory (Level 2: `{config_dir}/users/{td}/workspace/skills/`).
+    /// Injected as task-local `ACTIVE_USER_SKILLS_DIR` during message processing.
+    pub user_skills_dir: Option<PathBuf>,
 }
 
 /// Resolves the runtime [`MessageContext`] for an incoming message.

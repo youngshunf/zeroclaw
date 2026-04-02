@@ -371,6 +371,11 @@ impl Tool for HxSkillInstall {
                     "type": "string",
                     "description": "要安装的技能 ID"
                 },
+                "scope": {
+                    "type": "string",
+                    "enum": ["agent", "user"],
+                    "description": "安装范围：agent=仅当前 Agent 可用（默认），user=该用户所有 Agent 均可使用"
+                },
                 "accept_risk": {
                     "type": "boolean",
                     "description": "是否确认接受风险（elevated/dangerous 等级需要）"
@@ -416,17 +421,44 @@ impl Tool for HxSkillInstall {
             }
         };
 
-        // 2. Check if already installed (by checking directory + manifest version)
+        // 2. Determine install scope and destination directory
+        let scope = args.get("scope")
+            .and_then(|v| v.as_str())
+            .unwrap_or("agent");
+
         let ws = tenant_workspace(&self.workspace_dir);
-        let dest_dir = ws.join("skills").join(skill_id);
+        let dest_dir = match scope {
+            "user" => {
+                // User-level: derive tenant root from agent workspace
+                // ws = .../agents/{id}/workspace → up 3 levels to users/{td}
+                let user_skills_base = ws
+                    .parent() // agents/{id}
+                    .and_then(|p| p.parent()) // agents/
+                    .and_then(|p| p.parent()) // users/{td}
+                    .map(|tenant_root| tenant_root.join("workspace").join("skills").join(skill_id));
+                match user_skills_base {
+                    Some(d) => d,
+                    None => {
+                        return Ok(ToolResult {
+                            success: false,
+                            output: String::new(),
+                            error: Some("无法推导用户级技能目录，请尝试安装到 agent 级别".to_string()),
+                        });
+                    }
+                }
+            }
+            _ => ws.join("skills").join(skill_id), // Agent-level (default)
+        };
+
         if dest_dir.exists() {
             let current_ver = read_manifest_version(&dest_dir).await.unwrap_or_default();
             if current_ver == entry.version {
                 return Ok(ToolResult {
                     success: true,
                     output: format!(
-                        "技能 '{}' v{} 已安装，无需重复安装。",
-                        entry.name, entry.version
+                        "技能 '{}' v{} 已安装（{}级），无需重复安装。",
+                        entry.name, entry.version,
+                        if scope == "user" { "用户" } else { "Agent" }
                     ),
                     error: None,
                 });
@@ -553,10 +585,12 @@ impl Tool for HxSkillInstall {
             }
         }
 
+        let scope_label = if scope == "user" { "用户公共" } else { "Agent" };
         let mut msg = format!(
-            "✅ {} v{} 安装成功！\n📋 风险等级: {} | 审核: {}",
+            "✅ {} v{} 安装成功（{}:级别）！\n📋 风险等级: {} | 审核: {}",
             entry.name,
             entry.version,
+            scope_label,
             risk_emoji(&entry.risk_level),
             review_emoji(&entry.review_status),
         );

@@ -337,6 +337,7 @@ function SkillMarket() {
   const [localAgents, setLocalAgents] = useState<AgentInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedAgent, setSelectedAgent] = useState<string>('');
+  const [installScope, setInstallScope] = useState<'agent' | 'user'>('agent');
   
   const { showModal, setShowModal, installStatus, setInstallStatus, installSteps, setInstallSteps, installError, setInstallError, scrollRef } = useInstallManager();
   const [targetSkill, setTargetSkill] = useState<MarketSkill | null>(null);
@@ -363,6 +364,7 @@ function SkillMarket() {
   const openInstallModal = (skill: MarketSkill) => {
     if (!selectedAgent) { alert('请先选择一个本地 Agent'); return; }
     setTargetSkill(skill);
+    setInstallScope('agent');
     setInstallStatus('idle');
     setInstallSteps([]);
     setInstallError('');
@@ -379,11 +381,12 @@ function SkillMarket() {
     if (!targetSkill || !selectedAgent) return;
     const skillId = targetSkill.skill_id || targetSkill.id;
     const pkgUrl = targetSkill.package_url || ""; // Let Rust resolve it via backend
+    const scopeLabel = installScope === 'user' ? '用户公共' : 'Agent';
 
     setInstallStatus('installing');
-    setInstallSteps([`🚀 开始将技能 ${targetSkill.name} 赋能给 Agent...`]);
+    setInstallSteps([`🚀 开始将技能 ${targetSkill.name} 安装到${scopeLabel}目录...`]);
     try {
-      await installMarketSkill(selectedAgent, String(skillId), pkgUrl);
+      await installMarketSkill(selectedAgent, String(skillId), pkgUrl, installScope);
       setInstallStatus('success');
     } catch (err: any) {
       setInstallError(err.message || String(err));
@@ -434,21 +437,154 @@ function SkillMarket() {
       </div>
 
       {/* ── Install Modal ── */}
-      {targetSkill && (
-        <InstallModal
-          isOpen={showModal}
-          onClose={closeModal}
-          type="skill"
-          targetName={targetSkill.name}
-          iconUrl={targetSkill.icon_url}
-          emoji={targetSkill.emoji}
-          iconFallback={<Wrench className="w-8 h-8 text-indigo-500 dark:text-indigo-400 p-1.5 bg-indigo-50 dark:bg-indigo-500/10 rounded-lg" />}
-          installStatus={installStatus}
-          installSteps={installSteps}
-          installError={installError}
-          onConfirm={confirmInstall}
-          scrollRef={scrollRef}
-        />
+      {targetSkill && showModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-hx-bg-panel rounded-2xl w-[460px] max-w-[90vw] shadow-2xl flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200 border border-hx-border">
+            {/* Header */}
+            <div className="border-hx-border px-6 py-4 border-b flex items-center gap-3">
+              <ItemIcon iconUrl={targetSkill.icon_url} emoji={targetSkill.emoji} fallback={<Wrench className="w-8 h-8 text-indigo-500 dark:text-indigo-400 p-1.5 bg-indigo-50 dark:bg-indigo-500/10 rounded-lg" />} />
+              <div>
+                <h2 className="text-hx-text-primary text-base font-bold leading-tight">技能赋能：{targetSkill.name}</h2>
+                <p className="text-hx-text-secondary text-xs">选择安装位置</p>
+              </div>
+            </div>
+
+            {/* Body */}
+            <div className="p-6">
+              {installStatus === 'idle' && (
+                <div className="space-y-4">
+                  {/* ── Install Scope Selector ── */}
+                  <div className="space-y-2.5">
+                    <label className="text-hx-text-primary block text-sm font-medium">安装位置</label>
+                    <div
+                      onClick={() => setInstallScope('agent')}
+                      className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
+                        installScope === 'agent'
+                          ? 'border-emerald-500/50 bg-emerald-500/5 shadow-sm'
+                          : 'border-hx-border hover:border-hx-text-tertiary'
+                      }`}
+                    >
+                      <div className={`mt-0.5 w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${
+                        installScope === 'agent' ? 'border-emerald-500' : 'border-hx-text-tertiary'
+                      }`}>
+                        {installScope === 'agent' && <div className="w-2 h-2 rounded-full bg-emerald-500" />}
+                      </div>
+                      <div>
+                        <span className="text-hx-text-primary text-sm font-medium">安装到当前 Agent</span>
+                        <p className="text-hx-text-tertiary text-[11px] mt-0.5">仅 <strong>{selectedAgent}</strong> 可使用此技能</p>
+                      </div>
+                    </div>
+                    <div
+                      onClick={() => setInstallScope('user')}
+                      className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
+                        installScope === 'user'
+                          ? 'border-indigo-500/50 bg-indigo-500/5 shadow-sm'
+                          : 'border-hx-border hover:border-hx-text-tertiary'
+                      }`}
+                    >
+                      <div className={`mt-0.5 w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${
+                        installScope === 'user' ? 'border-indigo-500' : 'border-hx-text-tertiary'
+                      }`}>
+                        {installScope === 'user' && <div className="w-2 h-2 rounded-full bg-indigo-500" />}
+                      </div>
+                      <div>
+                        <span className="text-hx-text-primary text-sm font-medium">安装为公共技能</span>
+                        <p className="text-hx-text-tertiary text-[11px] mt-0.5">您的<strong>所有 Agent</strong> 均可使用此技能</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {installStatus === 'installing' && (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2 text-indigo-500 dark:text-indigo-400 mb-2">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span className="text-sm font-medium text-hx-text-primary">正在拉取与配置资源...</span>
+                  </div>
+                  <div 
+                    ref={scrollRef}
+                    className="bg-hx-bg-input text-hx-text-secondary border border-hx-border rounded-lg p-3 h-48 overflow-y-auto font-mono text-xs shadow-inner whitespace-pre-wrap"
+                  >
+                    {installSteps.map((step, idx) => {
+                      const isError = step.toLowerCase().includes('error') || step.includes('失败');
+                      const isSuccess = step.includes('完成') || step.includes('成功');
+                      const colorClass = isError ? 'text-red-500' : isSuccess ? 'text-emerald-500' : 'text-hx-text-primary';
+                      return (
+                        <div key={idx} className={`mb-1.5 flex items-start gap-1.5 leading-tight ${colorClass}`}>
+                          <span className="text-hx-text-tertiary select-none shrink-0 font-medium">[{idx + 1 < 10 ? `0${idx+1}` : idx+1}]</span>
+                          <span>{step}</span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {installStatus === 'success' && (
+                <div className="py-6 flex flex-col items-center justify-center text-center">
+                  <div className="w-12 h-12 bg-green-500/10 text-green-500 border border-green-500/20 rounded-full flex items-center justify-center mb-3">
+                    <CheckCircle className="w-7 h-7" />
+                  </div>
+                  <h3 className="text-hx-text-primary text-lg font-bold mb-1">安装完成！</h3>
+                  <p className="text-hx-text-secondary text-sm max-w-[80%]">
+                    {installScope === 'user'
+                      ? '公共技能已就绪，所有 Agent 均可在下次对话中使用。'
+                      : '技能已赋能成功，现在可以前往工作台查看与使用。'}
+                  </p>
+                </div>
+              )}
+
+              {installStatus === 'error' && (
+                <div className="py-4 flex flex-col items-center justify-center text-center">
+                  <div className="w-12 h-12 bg-red-500/10 text-red-500 border border-red-500/20 rounded-full flex items-center justify-center mb-3">
+                    <XCircle className="w-7 h-7" />
+                  </div>
+                  <h3 className="text-hx-text-primary text-lg font-bold mb-2">安装意外中止</h3>
+                  <p className="text-xs text-red-600 bg-red-50/10 p-3 rounded-md border border-red-500/20 max-w-full overflow-hidden text-ellipsis text-left whitespace-pre-wrap">
+                    {installError}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Footer Buttons */}
+            <div className="bg-hx-bg-main border-hx-border px-6 py-4 border-t flex justify-end gap-2">
+              {(installStatus === 'idle' || installStatus === 'error') && (
+                <button 
+                  onClick={closeModal}
+                  className="text-hx-text-secondary px-4 py-2 text-sm font-medium hover:text-hx-text-primary hover:bg-hx-bg-input rounded-lg transition-colors"
+                >
+                  取消
+                </button>
+              )}
+              {installStatus === 'success' && (
+                <button 
+                  onClick={closeModal}
+                  className="px-5 py-2 text-sm font-medium bg-hx-purple hover:bg-hx-purple-hover text-white rounded-lg shadow-sm transition-colors"
+                >
+                  关闭
+                </button>
+              )}
+              {installStatus === 'idle' && (
+                <button 
+                  onClick={confirmInstall}
+                  className="px-5 py-2 text-sm font-medium bg-hx-purple hover:bg-hx-purple-hover text-white rounded-lg shadow-sm transition-colors"
+                >
+                  确认并安装
+                </button>
+              )}
+              {installStatus === 'error' && (
+                <button 
+                  onClick={confirmInstall}
+                  className="px-5 py-2 text-sm font-medium bg-hx-purple hover:bg-hx-purple-hover text-white rounded-lg shadow-sm transition-colors"
+                >
+                  重试安装
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

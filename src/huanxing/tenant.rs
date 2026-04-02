@@ -203,6 +203,12 @@ pub struct TenantContext {
 
     /// Effective runtime config after tenant-level path and config resolution.
     resolved_config: crate::config::Config,
+
+    /// Global skills directory (Level 1: `{config_dir}/skills/`).
+    pub global_skills_dir: Option<PathBuf>,
+
+    /// User/tenant skills directory (Level 2: `{config_dir}/users/{td}/workspace/skills/`).
+    pub user_skills_dir: Option<PathBuf>,
 }
 
 // Manual Debug impl because Arc<dyn Memory> doesn't impl Debug.
@@ -458,55 +464,43 @@ impl TenantContext {
         skills_config_for_load.skills = effective_skills_config.clone();
 
         // Load skills from tenant workspace + common skills directory
+        // using three-level cascade: global → user → agent
         let config_dir = global_config
             .config_path
             .parent()
             .unwrap_or(&global_config.workspace_dir);
         let common_skills_dir = global_config.huanxing.resolve_common_skills_dir(config_dir);
 
-        let mut skills =
-            crate::skills::load_skills_with_config(&workspace_dir, &skills_config_for_load);
-        let ws_skill_names: Vec<String> = skills.iter().map(|s| s.name.clone()).collect();
-        tracing::info!(
-            agent_id,
-            workspace = %workspace_dir.display(),
-            count = skills.len(),
-            names = ?ws_skill_names,
-            "【技能调试】agent 私有技能目录加载结果"
-        );
+        // Derive user/tenant skills directory from workspace path:
+        //   workspace_dir = {config_dir}/users/{td}/agents/{id}/workspace/
+        //   user_skills_dir = {config_dir}/users/{td}/workspace/skills/
+        let user_skills_dir = workspace_dir
+            .parent() // agents/{id}
+            .and_then(|p| p.parent()) // agents/
+            .and_then(|p| p.parent()) // users/{td}
+            .map(|tenant_root| tenant_root.join("workspace").join("skills"));
 
-        tracing::info!(
-            agent_id,
-            common_skills_dir = %common_skills_dir.display(),
-            exists = common_skills_dir.exists(),
-            "【技能调试】公共技能目录状态"
-        );
+        // Global skills dir is the common_skills_dir/skills/ (platform-wide shared)
+        let global_skills_dir = {
+            let d = common_skills_dir.join("skills");
+            if d.exists() { Some(d) } else if common_skills_dir.exists() { Some(common_skills_dir.clone()) } else { None }
+        };
 
-        if common_skills_dir.exists() {
-            let ws_names: std::collections::HashSet<String> =
-                skills.iter().map(|s| s.name.clone()).collect();
-            let common_skills =
-                crate::skills::load_skills_with_config(&common_skills_dir, &skills_config_for_load);
-            let common_names: Vec<String> = common_skills.iter().map(|s| s.name.clone()).collect();
-            tracing::info!(
-                agent_id,
-                count = common_skills.len(),
-                names = ?common_names,
-                "【技能调试】公共技能目录加载结果"
-            );
-            for skill in common_skills {
-                if !ws_names.contains(&skill.name) {
-                    skills.push(skill);
-                }
-            }
-        }
+        let skills = crate::skills::load_skills_cascaded(
+            global_skills_dir.as_deref(),
+            user_skills_dir.as_deref(),
+            &workspace_dir,
+            &skills_config_for_load,
+        );
 
         let all_skill_names: Vec<String> = skills.iter().map(|s| s.name.clone()).collect();
         tracing::info!(
             agent_id,
             total = skills.len(),
             names = ?all_skill_names,
-            "【技能调试】合并后技能总数"
+            global_skills = ?global_skills_dir,
+            user_skills = ?user_skills_dir,
+            "【技能调试】三级级联加载技能完成"
         );
 
         let tool_descs: Vec<(&str, &str)> = Vec::new();
@@ -727,6 +721,8 @@ impl TenantContext {
             cross_knowledge_index,
             knowledge_config: effective_knowledge_config,
             resolved_config,
+            global_skills_dir,
+            user_skills_dir,
         })
     }
 
@@ -803,19 +799,16 @@ impl TenantContext {
             .parent()
             .unwrap_or(&global_config.workspace_dir);
         let common_skills_dir = global_config.huanxing.resolve_common_skills_dir(config_dir);
-        let mut skills =
-            crate::skills::load_skills_with_config(&workspace_dir, &skills_config_for_load);
-        if common_skills_dir.exists() {
-            let ws_names: std::collections::HashSet<String> =
-                skills.iter().map(|s| s.name.clone()).collect();
-            for skill in
-                crate::skills::load_skills_with_config(&common_skills_dir, &skills_config_for_load)
-            {
-                if !ws_names.contains(&skill.name) {
-                    skills.push(skill);
-                }
-            }
-        }
+        let global_skills_dir = {
+            let d = common_skills_dir.join("skills");
+            if d.exists() { Some(d) } else if common_skills_dir.exists() { Some(common_skills_dir.clone()) } else { None }
+        };
+        let skills = crate::skills::load_skills_cascaded(
+            global_skills_dir.as_deref(),
+            None, // Guardian has no user-level skills
+            &workspace_dir,
+            &skills_config_for_load,
+        );
 
         let tool_descs: Vec<(&str, &str)> = Vec::new();
 
@@ -937,6 +930,8 @@ impl TenantContext {
             cross_knowledge_index: None,
             knowledge_config: Default::default(),
             resolved_config,
+            global_skills_dir,
+            user_skills_dir: None,
         })
     }
 

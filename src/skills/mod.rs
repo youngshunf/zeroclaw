@@ -176,6 +176,104 @@ fn load_workspace_skills(workspace_dir: &Path, allow_scripts: bool) -> Vec<Skill
     load_skills_from_directory(&skills_dir, allow_scripts)
 }
 
+// ── Three-level cascaded skill loading ──────────────────────────────────────
+//
+// Supports the HuanXing three-tier skill hierarchy:
+//   Level 1: Global skill pool   ({config_dir}/skills/)
+//   Level 2: User/tenant pool    ({config_dir}/users/{td}/workspace/skills/)
+//   Level 3: Agent-specific      ({config_dir}/users/{td}/agents/{id}/workspace/skills/)
+//
+// Skills are merged cumulatively; when multiple levels define a skill with the
+// same directory name, the child level overrides the parent (Agent > User > Global).
+
+tokio::task_local! {
+    /// Per-request global skills directory, injected by HuanXing dispatcher.
+    pub static ACTIVE_GLOBAL_SKILLS_DIR: std::path::PathBuf;
+    /// Per-request user/tenant skills directory, injected by HuanXing dispatcher.
+    pub static ACTIVE_USER_SKILLS_DIR: std::path::PathBuf;
+}
+
+/// Retrieve the per-request global skills directory, if injected.
+pub fn get_active_global_skills_dir() -> Option<PathBuf> {
+    ACTIVE_GLOBAL_SKILLS_DIR.try_with(|p| p.clone()).ok()
+}
+
+/// Retrieve the per-request user skills directory, if injected.
+pub fn get_active_user_skills_dir() -> Option<PathBuf> {
+    ACTIVE_USER_SKILLS_DIR.try_with(|p| p.clone()).ok()
+}
+
+/// Load skills using three-level cascade: Global → User → Agent.
+///
+/// When `global_skills_dir` or `user_skills_dir` is `None`, that level is
+/// skipped. Skills at a child level override same-named skills from parent
+/// levels. Different-named skills accumulate across all levels.
+///
+/// For non-HuanXing (vanilla ZeroClaw) usage, both extra dirs can be `None`
+/// and behaviour is identical to the original `load_skills_with_config()`.
+pub fn load_skills_cascaded(
+    global_skills_dir: Option<&Path>,
+    user_skills_dir: Option<&Path>,
+    agent_workspace_dir: &Path,
+    config: &crate::config::Config,
+) -> Vec<Skill> {
+    let allow_scripts = config.skills.allow_scripts;
+    // Use HashMap to deduplicate by name. Later insertions override earlier ones.
+    let mut skills_map: HashMap<String, Skill> = HashMap::new();
+
+    // Level 1: Global skill pool
+    if let Some(dir) = global_skills_dir {
+        for skill in load_skills_from_directory(dir, allow_scripts) {
+            skills_map.insert(skill.name.clone(), skill);
+        }
+    }
+
+    // Open Skills community repo (treated as global-level)
+    if let Some(open_skills_dir) = ensure_open_skills_repo(
+        Some(config.skills.open_skills_enabled),
+        config.skills.open_skills_dir.as_deref(),
+    ) {
+        for skill in load_open_skills(&open_skills_dir, allow_scripts) {
+            skills_map.insert(skill.name.clone(), skill);
+        }
+    }
+
+    // Level 2: User/tenant skill pool (overrides same-name globals)
+    if let Some(dir) = user_skills_dir {
+        for skill in load_skills_from_directory(dir, allow_scripts) {
+            skills_map.insert(skill.name.clone(), skill);
+        }
+    }
+
+    // Level 3: Agent-specific skills (overrides same-name user/globals)
+    for skill in load_workspace_skills(agent_workspace_dir, allow_scripts) {
+        skills_map.insert(skill.name.clone(), skill);
+    }
+
+    skills_map.into_values().collect()
+}
+
+/// Load skills using three-level cascade, automatically reading global and
+/// user skill directories from task-local variables injected by HuanXing.
+///
+/// This is the recommended entry point for HuanXing multi-tenant contexts
+/// where the dispatcher has set `ACTIVE_GLOBAL_SKILLS_DIR` and
+/// `ACTIVE_USER_SKILLS_DIR` via task-local scoping.
+pub fn load_skills_cascaded_auto(
+    agent_workspace_dir: &Path,
+    config: &crate::config::Config,
+) -> Vec<Skill> {
+    let global = get_active_global_skills_dir();
+    let user = get_active_user_skills_dir();
+    load_skills_cascaded(
+        global.as_deref(),
+        user.as_deref(),
+        agent_workspace_dir,
+        config,
+    )
+}
+
+
 pub fn load_skills_from_directory(skills_dir: &Path, allow_scripts: bool) -> Vec<Skill> {
     if !skills_dir.exists() {
         return Vec::new();
