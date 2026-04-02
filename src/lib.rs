@@ -297,6 +297,13 @@ pub enum MigrateCommands {
         #[arg(long)]
         dry_run: bool,
     },
+    #[cfg(feature = "huanxing")]
+    /// Repair legacy unified-instance desktop data under `~/.huanxing`
+    Huanxing {
+        /// Apply changes. Without this flag the command only prints a dry-run plan.
+        #[arg(long)]
+        apply: bool,
+    },
 }
 
 /// Cron subcommands

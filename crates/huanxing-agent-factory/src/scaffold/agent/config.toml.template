@@ -7,6 +7,8 @@
 [agent]
 name = "{{agent_id}}"
 template = "{{template}}"
+# Desktop onboard 只创建本地 Agent 壳。
+# hasn_id 会在登录后的 HASN 注册成功后回写，因此首次生成时为空是预期行为。
 hasn_id = "{{hasn_id}}"
 compact_context = true          # 用大模型，不需要压缩模式
 max_tool_iterations = 50

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { saveHuanxingSession, type HuanxingLoginData } from "@/config";
-import { autoOnboard, registerHasnIdentity, registerHasnAgent } from "@/onboard";
+import { autoOnboard, registerHasnIdentity, registerHasnAgent, rememberAgentHasnRetry } from "@/onboard";
 import { sendVerifyCode, phoneLogin } from "@/lib/huanxing-api";
 import { startTokenRefresh } from "@/lib/token-refresh";
 
@@ -128,28 +128,37 @@ export default function Login({ onLoginSuccess }: LoginProps) {
       // ── Step 5: 注册 HASN 身份 ──
       updateStep("hasn", "running");
       let hasnIdentity;
+      let hasnStepError: string | null = null;
       try {
         hasnIdentity = await registerHasnIdentity(session);
         console.log("[huanxing] HASN 身份:", hasnIdentity);
 
         // 同时注册桌面端默认 Agent 的 HASN 身份
+        const defaultAgentDisplayName = session.user.nickname ? `${session.user.nickname}的星灵` : "唤星AI助手";
         try {
           const agentId = await registerHasnAgent(
             session,
             "default",
-            session.user.nickname ? `${session.user.nickname}的星灵` : "唤星AI助手",
+            defaultAgentDisplayName,
             "local",
           );
           console.log("[huanxing] 默认 Agent HASN 身份:", agentId);
         } catch (agentErr) {
-          console.warn("[huanxing] 默认 Agent HASN 注册失败（非致命）:", agentErr);
+          const agentErrMsg = agentErr instanceof Error ? agentErr.message : "默认 Agent HASN 注册失败";
+          console.warn("[huanxing] 默认 Agent HASN 注册失败:", agentErr);
+          rememberAgentHasnRetry("default", defaultAgentDisplayName, "local", agentErrMsg);
+          hasnStepError = `${agentErrMsg}；已记录待重试任务`;
         }
 
-        updateStep("hasn", "done");
+        if (hasnStepError) {
+          updateStep("hasn", "error", hasnStepError);
+        } else {
+          updateStep("hasn", "done");
+        }
       } catch (err) {
-        console.warn("[huanxing] HASN 注册失败（非致命）:", err);
-        updateStep("hasn", "error", err instanceof Error ? err.message : "HASN 注册失败");
-        // HASN 注册失败不阻塞登录
+        const errMsg = err instanceof Error ? err.message : "HASN 注册失败";
+        console.warn("[huanxing] HASN 注册失败:", err);
+        updateStep("hasn", "error", `${errMsg}；请稍后重试 HASN 绑定`);
         hasnIdentity = null;
       }
 

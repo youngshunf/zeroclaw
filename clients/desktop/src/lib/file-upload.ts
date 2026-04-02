@@ -6,7 +6,7 @@
  * 然后在消息中附上文件路径，Agent 可以直接通过 file_read 等工具来处理。
  *
  * 目录结构：
- *   ~/.huanxing/agents/{agent}/files/
+ *   ~/.huanxing/users/{tenant}/agents/{agent}/workspace/files/
  *   └── 2026-03-29_abc123_image.png
  */
 
@@ -89,13 +89,7 @@ export async function getWorkspaceDir(): Promise<string | null> {
   try {
     return await invoke('get_workspace_dir') as string;
   } catch {
-    // 如果 Tauri 命令不存在，用 config_dir 推导
-    try {
-      const configDir = await invoke('get_config_dir') as string;
-      return `${configDir}/agents/default`;
-    } catch {
-      return null;
-    }
+    return null;
   }
 }
 

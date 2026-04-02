@@ -27,6 +27,12 @@ export interface OnboardResult {
   config_created?: boolean;
   agent_created?: boolean;
   sidecar_started?: boolean;
+  tenant_dir?: string;
+  agent_id?: string;
+  config_path?: string;
+  workspace_path?: string;
+  agent_create_stdout?: string;
+  agent_create_stderr?: string;
 }
 
 /** HASN 注册结果 */
@@ -111,6 +117,12 @@ async function tauriOnboard(session: HuanxingSession): Promise<OnboardResult> {
       config_created: result.config_created,
       agent_created: result.agent_created,
       sidecar_started: result.sidecar_started,
+      tenant_dir: result.tenant_dir,
+      agent_id: result.agent_id,
+      config_path: result.config_path,
+      workspace_path: result.workspace_path,
+      agent_create_stdout: result.agent_create_stdout,
+      agent_create_stderr: result.agent_create_stderr,
       error: result.error ?? undefined,
     };
   } catch (err) {
@@ -353,6 +365,74 @@ export interface AgentHasnIdentity {
   already_exists: boolean;
 }
 
+const PENDING_AGENT_HASN_RETRY_KEY = 'hasn:pending_agent_retry';
+
+interface PendingAgentHasnRetry {
+  agentName: string;
+  displayName: string;
+  agentType: string;
+  updatedAt: string;
+  error: string;
+}
+
+function savePendingAgentHasnRetry(
+  agentName: string,
+  displayName: string,
+  agentType: string,
+  error: string,
+): void {
+  const payload: PendingAgentHasnRetry = {
+    agentName,
+    displayName,
+    agentType,
+    updatedAt: new Date().toISOString(),
+    error,
+  };
+  localStorage.setItem(PENDING_AGENT_HASN_RETRY_KEY, JSON.stringify(payload));
+}
+
+function clearPendingAgentHasnRetry(agentName: string): void {
+  const raw = localStorage.getItem(PENDING_AGENT_HASN_RETRY_KEY);
+  if (!raw) return;
+
+  try {
+    const payload = JSON.parse(raw) as PendingAgentHasnRetry;
+    if (payload.agentName === agentName) {
+      localStorage.removeItem(PENDING_AGENT_HASN_RETRY_KEY);
+    }
+  } catch {
+    localStorage.removeItem(PENDING_AGENT_HASN_RETRY_KEY);
+  }
+}
+
+export function getPendingAgentHasnRetry(): PendingAgentHasnRetry | null {
+  const raw = localStorage.getItem(PENDING_AGENT_HASN_RETRY_KEY);
+  if (!raw) return null;
+
+  try {
+    return JSON.parse(raw) as PendingAgentHasnRetry;
+  } catch {
+    localStorage.removeItem(PENDING_AGENT_HASN_RETRY_KEY);
+    return null;
+  }
+}
+
+export async function retryPendingAgentHasnRegistration(
+  session: HuanxingSession,
+): Promise<AgentHasnIdentity | null> {
+  const pending = getPendingAgentHasnRetry();
+  if (!pending) return null;
+
+  const result = await registerHasnAgent(
+    session,
+    pending.agentName,
+    pending.displayName,
+    pending.agentType,
+  );
+  clearPendingAgentHasnRetry(pending.agentName);
+  return result;
+}
+
 /**
  * 注册 Agent 的 HASN 身份（幂等）
  *
@@ -364,31 +444,12 @@ export async function registerHasnAgent(
   agentName: string,
   displayName: string,
   agentType: string = 'local',
-  clientId?: string,
 ): Promise<AgentHasnIdentity> {
-  // 如果是本地 Agent 且未传 clientId，尝试从 Tauri state 获取
-  let resolvedClientId = clientId;
-  if (agentType === 'local' && !resolvedClientId) {
-    try {
-      const internals = (window as any).__TAURI_INTERNALS__;
-      if (internals?.invoke) {
-        const statusJson = await internals.invoke('hasn_status');
-        // hasn_status 返回 "connected" / "disconnected" 等字符串
-        // 从 hasn client.json 读取 client_id
-        const { loadClientId } = await import('./lib/hasn-api');
-        resolvedClientId = await loadClientId();
-      }
-    } catch {
-      // 忽略，clientId 可选
-    }
-  }
-
   const body: Record<string, unknown> = {
     agent_name: agentName,
     display_name: displayName,
     agent_type: agentType,
   };
-  if (resolvedClientId) body.client_id = resolvedClientId;
 
   const resp = await fetch(hasnApiUrl('/api/v1/hasn/app/auth/register-agent'), {
     method: 'POST',
@@ -418,55 +479,41 @@ export async function registerHasnAgent(
 
   // 注册成功后，将 hasn_id 写回 Agent 的 config.toml
   if (result.hasn_id && agentType === 'local') {
-    try {
-      await writeAgentHasnId(agentName, result.hasn_id);
-      console.log(`[onboard] Agent '${agentName}' hasn_id 已写入 config.toml:`, result.hasn_id);
-    } catch (err) {
-      console.warn(`[onboard] Agent '${agentName}' hasn_id 写入 config.toml 失败（非致命）:`, err);
-    }
+    await writeAgentHasnBinding(agentName, result.hasn_id);
+    console.log(`[onboard] Agent '${agentName}' hasn_id 已写入本地配置和 users.db:`, result.hasn_id);
   }
+
+  clearPendingAgentHasnRetry(agentName);
 
   return result;
 }
 
 /**
- * 将 hasn_id 写回 Agent 的 config.toml
+ * 将 hasn_id 写回 Agent 的 config.toml 和 users.db
  *
- * 通过 Sidecar REST API 读取 → 替换/插入 hasn_id → 写回。
- * 不依赖 Tauri IPC，Sidecar 运行在 localhost:42620。
+ * 通过 Sidecar REST API 原子更新本地绑定状态。
  */
-async function writeAgentHasnId(agentName: string, hasnId: string): Promise<void> {
-  const sidecarPort = 42620; // TODO: 从配置读取
-  const baseUrl = `http://127.0.0.1:${sidecarPort}`;
-  const filePath = `/api/agents/${encodeURIComponent(agentName)}/files/config.toml`;
+async function writeAgentHasnBinding(agentName: string, hasnId: string): Promise<void> {
+  const resp = await fetch(
+    `${HUANXING_CONFIG.sidecarBaseUrl}/api/agents/${encodeURIComponent(agentName)}/hasn-id`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hasn_id: hasnId }),
+    },
+  );
 
-  // 1. 读取现有 config
-  const readResp = await fetch(`${baseUrl}${filePath}`);
-  if (!readResp.ok) {
-    throw new Error(`读取 agent config 失败: ${readResp.status}`);
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => '');
+    throw new Error(`回写本地 Agent HASN 绑定失败 (${resp.status}): ${text}`);
   }
-  const json = await readResp.json();
-  let content: string = json.content ?? '';
+}
 
-  // 2. 替换或插入 hasn_id
-  if (content.includes('hasn_id =')) {
-    // 替换已有的 hasn_id 行
-    content = content.replace(/hasn_id\s*=\s*"[^"]*"/, `hasn_id = "${hasnId}"`);
-  } else if (content.includes('[agent]')) {
-    // 在 [agent] 段落下插入
-    content = content.replace('[agent]', `[agent]\nhasn_id = "${hasnId}"`);
-  } else {
-    // 追加
-    content += `\nhasn_id = "${hasnId}"\n`;
-  }
-
-  // 3. 写回
-  const writeResp = await fetch(`${baseUrl}${filePath}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'text/plain' },
-    body: content,
-  });
-  if (!writeResp.ok) {
-    throw new Error(`写回 agent config 失败: ${writeResp.status}`);
-  }
+export function rememberAgentHasnRetry(
+  agentName: string,
+  displayName: string,
+  agentType: string,
+  error: string,
+): void {
+  savePendingAgentHasnRetry(agentName, displayName, agentType, error);
 }

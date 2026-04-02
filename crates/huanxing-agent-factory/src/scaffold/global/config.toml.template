@@ -8,7 +8,7 @@
 # 三级配置优先级:
 #   Global (~/.huanxing/config.toml)          ← 本文件
 #   └─ Owner (~/.huanxing/users/<tenant>/config.toml)
-#      └─ Agent (~/.huanxing/users/<tenant>/agents/<name>/workspace/config.toml)
+#      └─ Agent (~/.huanxing/users/<tenant>/agents/<name>/config.toml)
 #
 # ═══════════════════════════════════════════════════════════════
 

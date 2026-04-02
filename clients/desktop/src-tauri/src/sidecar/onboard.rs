@@ -1,7 +1,7 @@
-use tauri::AppHandle;
 use crate::sidecar::constants::HUANXING_PORT;
 use crate::sidecar::manager::SidecarManager;
 use crate::sidecar::models::{OnboardRequest, OnboardResult};
+use tauri::AppHandle;
 
 impl SidecarManager {
     /// 执行 onboard 流程：
@@ -21,6 +21,12 @@ impl SidecarManager {
             config_created: false,
             agent_created: false,
             sidecar_started: false,
+            tenant_dir: None,
+            agent_id: Some("default".to_string()),
+            config_path: None,
+            workspace_path: None,
+            agent_create_stdout: None,
+            agent_create_stderr: None,
             error: None,
         };
 
@@ -51,11 +57,8 @@ impl SidecarManager {
 
         let hasn_api_key = req.hasn_api_key.as_deref().unwrap_or("");
         let llm_gateway_base = llm_gateway.trim_end_matches("/v1");
-        
-        let factory = huanxing_agent_factory::AgentFactory::new(
-            self.config_dir.clone(),
-            None,
-        );
+
+        let factory = huanxing_agent_factory::AgentFactory::new(self.config_dir.clone(), None);
         let vars = huanxing_agent_factory::GlobalConfigVars {
             display_name: star_name.to_string(),
             default_provider: format!("custom:{llm_gateway_base}/v1"),
@@ -74,11 +77,14 @@ impl SidecarManager {
         std::fs::write(&config_path, &config_content)
             .map_err(|e| format!("写入配置文件失败: {e}"))?;
         result.config_created = true;
+        result.config_path = Some(config_path.to_string_lossy().to_string());
         tracing::info!("Config created: {}", config_path.display());
 
         // 3. 执行 CLI agent-create 建立工作区与初始化 DB
-        let bin = self.find_binary().map_err(|e| format!("找不到 sidecar 二进制: {e}"))?;
-        
+        let bin = self
+            .find_binary()
+            .map_err(|e| format!("找不到 sidecar 二进制: {e}"))?;
+
         let mut create_cmd = tokio::process::Command::new(&bin);
         create_cmd
             .arg("--config-dir")
@@ -92,12 +98,6 @@ impl SidecarManager {
             .arg(star_name)
             .arg("--user-nickname")
             .arg(nickname);
-            
-        if !hasn_api_key.is_empty() {
-            // 在这使用 hasn_api_key 或 user_uuid 派生绑定的 hasn_id
-            let derived_hasn_id = format!("desktop_{user_uuid}");
-            create_cmd.arg("--hasn-id").arg(&derived_hasn_id);
-        }
 
         create_cmd.env("ZEROCLAW_BUILD_VERSION", "huanxing-desktop");
 
@@ -106,6 +106,8 @@ impl SidecarManager {
             Ok(output) => {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 let stderr = String::from_utf8_lossy(&output.stderr);
+                result.agent_create_stdout = summarize_output(&stdout);
+                result.agent_create_stderr = summarize_output(&stderr);
                 if !stdout.is_empty() {
                     tracing::info!("agent-create stdout: {stdout}");
                 }
@@ -120,6 +122,7 @@ impl SidecarManager {
                         tracing::debug!("agent-create stderr (success): {stderr}");
                     }
                     result.agent_created = true;
+                    populate_onboard_paths(&self.config_dir, user_phone, &mut result);
                 }
             }
             Err(e) => {
@@ -128,7 +131,7 @@ impl SidecarManager {
                 result.error = Some(msg);
             }
         }
-        
+
         // 6. 启动 sidecar
         match self.start(app).await {
             Ok(status) => {
@@ -145,7 +148,69 @@ impl SidecarManager {
             }
         }
 
-        result.success = true;
+        result.success = result.error.is_none();
         Ok(result)
+    }
+}
+
+fn summarize_output(output: &str) -> Option<String> {
+    let trimmed = output.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    const LIMIT: usize = 1200;
+    if trimmed.len() <= LIMIT {
+        Some(trimmed.to_string())
+    } else {
+        Some(format!("{}...", &trimmed[..LIMIT]))
+    }
+}
+
+fn populate_onboard_paths(
+    config_dir: &std::path::Path,
+    user_phone: &str,
+    result: &mut OnboardResult,
+) {
+    let db_path = config_dir.join("data").join("users.db");
+    let Ok(conn) = rusqlite::Connection::open(&db_path) else {
+        return;
+    };
+
+    let tenant_dir = conn
+        .query_row(
+            "SELECT tenant_dir
+             FROM users
+             WHERE phone = ?1
+               AND tenant_dir IS NOT NULL
+               AND TRIM(tenant_dir) != ''
+             LIMIT 1",
+            rusqlite::params![user_phone],
+            |row| row.get::<_, String>(0),
+        )
+        .ok()
+        .or_else(|| {
+            conn.query_row(
+                "SELECT tenant_dir
+                 FROM users
+                 WHERE tenant_dir IS NOT NULL
+                   AND TRIM(tenant_dir) != ''
+                 ORDER BY datetime(COALESCE(created_at, '1970-01-01T00:00:00Z')) ASC, rowid ASC
+                 LIMIT 1",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .ok()
+        });
+
+    if let Some(tenant_dir) = tenant_dir {
+        let workspace_path = config_dir
+            .join("users")
+            .join(&tenant_dir)
+            .join("agents")
+            .join("default")
+            .join("workspace");
+        result.tenant_dir = Some(tenant_dir);
+        result.workspace_path = Some(workspace_path.to_string_lossy().to_string());
     }
 }

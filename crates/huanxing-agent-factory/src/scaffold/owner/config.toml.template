@@ -4,6 +4,9 @@
 # ═══════════════════════════════════════════════════════════════
 
 # ── LLM Provider (租户默认) ──────────────────────────────────
+# Desktop 模式下，这里的 api_key 允许为空。
+# 运行时会优先读取租户/Agent 覆盖；若为空，则回退到 ~/.huanxing/config.toml 的全局 api_key。
+# 只有云端部署或租户需要单独覆写时，才在这里写入真实值。
 default_provider = "{{default_provider}}"
 default_model = "{{default_model}}"
 default_temperature = {{default_temperature}}

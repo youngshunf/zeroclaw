@@ -16,14 +16,14 @@
 //! ```
 
 use axum::{
+    Json, Router,
     extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
     routing::{delete, get, post},
-    Json, Router,
 };
 use chrono::Utc;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use std::path::Path as FsPath;
 
@@ -96,10 +96,7 @@ pub struct GetSessionQuery {
 
 pub fn session_routes() -> Router<AppState> {
     Router::new()
-        .route(
-            "/api/sessions",
-            get(list_sessions).post(create_session),
-        )
+        .route("/api/sessions", get(list_sessions).post(create_session))
         .route(
             "/api/sessions/{id}",
             get(get_session).put(rename_session).delete(delete_session),
@@ -141,10 +138,7 @@ fn open_agent_sessions_db(agent_workspace: &FsPath) -> rusqlite::Result<Connecti
 }
 
 /// 从 agent workspace 中读取所有会话（合并 desktop_sessions + session_metadata）
-fn list_agent_sessions(
-    agent_id: &str,
-    agent_workspace: &FsPath,
-) -> Vec<SessionInfo> {
+fn list_agent_sessions(agent_id: &str, agent_workspace: &FsPath) -> Vec<SessionInfo> {
     let conn = match open_agent_sessions_db(agent_workspace) {
         Ok(c) => c,
         Err(e) => {
@@ -200,19 +194,23 @@ async fn list_sessions(
 ) -> impl IntoResponse {
     let config = state.config.lock().clone();
     if !config.huanxing.enabled {
-        return (
-            StatusCode::OK,
-            Json(serde_json::json!({ "sessions": [] })),
-        )
-            .into_response();
+        return (StatusCode::OK, Json(serde_json::json!({ "sessions": [] }))).into_response();
     }
 
-    let tenant_dir = crate::huanxing::api_agents::extract_tenant_dir(&headers, config.config_path.parent().unwrap_or(&config.workspace_dir), &config.huanxing).await;
+    let tenant_dir = crate::huanxing::api_agents::extract_tenant_dir(
+        &headers,
+        config.config_path.parent().unwrap_or(&config.workspace_dir),
+        &config.huanxing,
+    )
+    .await;
     let agents_dir = config
         .huanxing
-        .resolve_tenant_root(config.config_path.parent().unwrap_or(&config.workspace_dir), tenant_dir.as_deref())
+        .resolve_tenant_root(
+            config.config_path.parent().unwrap_or(&config.workspace_dir),
+            tenant_dir.as_deref(),
+        )
         .join("agents");
-    
+
     let mut all_sessions: Vec<SessionInfo> = Vec::new();
 
     if let Some(ref agent_id) = q.agent_id {
@@ -234,9 +232,8 @@ async fn list_sessions(
                     if name.starts_with('.') {
                         continue;
                     }
-                    let sessions = tokio::task::block_in_place(|| {
-                        list_agent_sessions(&name, &path)
-                    });
+                    let sessions =
+                        tokio::task::block_in_place(|| list_agent_sessions(&name, &path));
                     all_sessions.extend(sessions);
                 }
             }
@@ -273,10 +270,18 @@ async fn create_session(
             .into_response();
     }
 
-    let tenant_dir = crate::huanxing::api_agents::extract_tenant_dir(&headers, config.config_path.parent().unwrap_or(&config.workspace_dir), &config.huanxing).await;
+    let tenant_dir = crate::huanxing::api_agents::extract_tenant_dir(
+        &headers,
+        config.config_path.parent().unwrap_or(&config.workspace_dir),
+        &config.huanxing,
+    )
+    .await;
     let agents_dir = config
         .huanxing
-        .resolve_tenant_root(config.config_path.parent().unwrap_or(&config.workspace_dir), tenant_dir.as_deref())
+        .resolve_tenant_root(
+            config.config_path.parent().unwrap_or(&config.workspace_dir),
+            tenant_dir.as_deref(),
+        )
         .join("agents");
 
     // agent_id 默认为 "default"（兼容单 agent 模式）
@@ -318,7 +323,13 @@ async fn create_session(
         conn.execute(
             "INSERT INTO desktop_sessions (session_id, agent_id, title, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![session_id_clone, agent_id_clone, title_clone, now_clone, now_clone],
+            params![
+                session_id_clone,
+                agent_id_clone,
+                title_clone,
+                now_clone,
+                now_clone
+            ],
         )?;
         Ok::<(), rusqlite::Error>(())
     });
@@ -352,13 +363,17 @@ async fn get_session(
 ) -> impl IntoResponse {
     let config = state.config.lock().clone();
     let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
-    let tenant_dir = crate::huanxing::api_agents::extract_tenant_dir(&headers, config_dir, &config.huanxing).await;
+    let tenant_dir =
+        crate::huanxing::api_agents::extract_tenant_dir(&headers, config_dir, &config.huanxing)
+            .await;
 
     let limit = q.limit.unwrap_or(50).min(200).max(1);
 
     // 找到该 session 所属的 agent workspace
     let agent_id_and_workspace = if let Some(ref aid) = q.agent_id {
-        let ws = config.huanxing.resolve_agent_workspace(config_dir, tenant_dir.as_deref(), aid);
+        let ws = config
+            .huanxing
+            .resolve_agent_workspace(config_dir, tenant_dir.as_deref(), aid);
         if ws.exists() {
             Some((aid.clone(), ws))
         } else {
@@ -451,7 +466,8 @@ async fn get_session(
                 params![session_id_clone, before_id - returned],
                 |row| row.get::<_, i64>(0),
             )
-            .unwrap_or(0) > 0
+            .unwrap_or(0)
+                > 0
         } else {
             total_count > limit
         };
@@ -489,7 +505,9 @@ async fn rename_session(
 ) -> impl IntoResponse {
     let config = state.config.lock().clone();
     let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
-    let tenant_dir = crate::huanxing::api_agents::extract_tenant_dir(&headers, config_dir, &config.huanxing).await;
+    let tenant_dir =
+        crate::huanxing::api_agents::extract_tenant_dir(&headers, config_dir, &config.huanxing)
+            .await;
 
     let Some((_agent_id, workspace)) =
         find_session_owner(&config, config_dir, &session_id, tenant_dir.as_deref()).await
@@ -530,7 +548,9 @@ async fn delete_session(
     let config = state.config.lock().clone();
     let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
 
-    let tenant_dir = crate::huanxing::api_agents::extract_tenant_dir(&headers, config_dir, &config.huanxing).await;
+    let tenant_dir =
+        crate::huanxing::api_agents::extract_tenant_dir(&headers, config_dir, &config.huanxing)
+            .await;
     let Some((_agent_id, workspace)) =
         find_session_owner(&config, config_dir, &session_id, tenant_dir.as_deref()).await
     else {
@@ -577,7 +597,9 @@ async fn clear_messages(
     let config = state.config.lock().clone();
     let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
 
-    let tenant_dir = crate::huanxing::api_agents::extract_tenant_dir(&headers, config_dir, &config.huanxing).await;
+    let tenant_dir =
+        crate::huanxing::api_agents::extract_tenant_dir(&headers, config_dir, &config.huanxing)
+            .await;
     let Some((_agent_id, workspace)) =
         find_session_owner(&config, config_dir, &session_id, tenant_dir.as_deref()).await
     else {
@@ -624,7 +646,9 @@ async fn generate_title(
     let config = state.config.lock().clone();
     let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
 
-    let tenant_dir = crate::huanxing::api_agents::extract_tenant_dir(&headers, config_dir, &config.huanxing).await;
+    let tenant_dir =
+        crate::huanxing::api_agents::extract_tenant_dir(&headers, config_dir, &config.huanxing)
+            .await;
     let Some((_agent_id, workspace)) =
         find_session_owner(&config, config_dir, &session_id, tenant_dir.as_deref()).await
     else {
@@ -677,15 +701,13 @@ async fn generate_title(
         .collect::<Vec<_>>()
         .join("\n");
 
-    let prompt = format!(
-        "请为以下对话生成一个简短的标题（不超过20个字，不要加引号）：\n\n{context}"
-    );
+    let prompt =
+        format!("请为以下对话生成一个简短的标题（不超过20个字，不要加引号）：\n\n{context}");
 
     // 调用 LLM
     let provider = state.provider.clone();
     let title_model = config
-        .huanxing
-        .default_model
+        .title_model
         .clone()
         .or_else(|| config.default_model.clone())
         .unwrap_or_else(|| "claude-haiku-4-5".to_string());
@@ -696,7 +718,11 @@ async fn generate_title(
     {
         Ok(response) => {
             let t = response.trim().trim_matches('"').to_string();
-            if t.is_empty() { "新会话".to_string() } else { t }
+            if t.is_empty() {
+                "新会话".to_string()
+            } else {
+                t
+            }
         }
         Err(e) => {
             tracing::warn!("生成标题失败: {e}");
@@ -740,7 +766,7 @@ async fn find_session_owner(
 ) -> Option<(String, std::path::PathBuf)> {
     let tenant_root = config.huanxing.resolve_tenant_root(config_dir, tenant_dir);
     let agents_dir = tenant_root.join("agents");
-    
+
     let mut entries = tokio::fs::read_dir(&agents_dir).await.ok()?;
     let sid = session_id.to_string();
 
@@ -755,13 +781,15 @@ async fn find_session_owner(
         }
 
         let sid_clone = sid.clone();
-        
+
         // Find the inner workspace directly
-        let workspace = config.huanxing.resolve_agent_workspace(config_dir, tenant_dir, &name);
+        let workspace = config
+            .huanxing
+            .resolve_agent_workspace(config_dir, tenant_dir, &name);
         if !workspace.exists() {
             continue;
         }
-        
+
         let path_clone = workspace.clone();
         let found = tokio::task::block_in_place(move || {
             let conn = match open_agent_sessions_db(&path_clone) {
@@ -773,7 +801,8 @@ async fn find_session_owner(
                 params![sid_clone],
                 |row| row.get::<_, i64>(0),
             )
-            .unwrap_or(0) > 0
+            .unwrap_or(0)
+                > 0
         });
 
         if found {

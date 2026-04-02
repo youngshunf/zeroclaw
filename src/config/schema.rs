@@ -85,6 +85,12 @@ pub struct Config {
     /// Default model routed through the selected provider (e.g. `"anthropic/claude-sonnet-4-6"`).
     #[serde(alias = "model")]
     pub default_model: Option<String>,
+    /// Human-friendly display name for the current instance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    /// Dedicated model for generating session titles. Falls back to `default_model` when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title_model: Option<String>,
     /// Optional named provider profiles keyed by id (Codex app-server compatible layout).
     #[serde(default)]
     pub model_providers: HashMap<String, ModelProviderConfig>,
@@ -390,6 +396,10 @@ pub struct Config {
     #[serde(default)]
     pub plugins: PluginsConfig,
 
+    /// Reserved upstream WASM runtime configuration (`[wasm]`).
+    #[serde(default)]
+    pub wasm: WasmConfig,
+
     /// Locale for tool descriptions (e.g. `"en"`, `"zh-CN"`).
     ///
     /// When set, tool descriptions shown in system prompts are loaded from
@@ -437,6 +447,19 @@ pub struct Config {
     /// Shell tool configuration (`[shell_tool]`).
     #[serde(default)]
     pub shell_tool: ShellToolConfig,
+}
+
+/// Reserved WASM runtime configuration.
+///
+/// This is currently parsed and preserved for upstream compatibility only.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(default)]
+pub struct WasmConfig {
+    /// Feature toggle placeholder.
+    pub enabled: bool,
+    /// Preserve unknown upstream keys until the runtime wires them up.
+    #[serde(flatten)]
+    pub extra: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 /// Multi-client workspace isolation configuration.
@@ -8923,6 +8946,8 @@ impl Default for Config {
             api_path: None,
             default_provider: Some("openrouter".to_string()),
             default_model: Some("anthropic/claude-sonnet-4.6".to_string()),
+            display_name: None,
+            title_model: None,
             model_providers: HashMap::new(),
             default_temperature: default_temperature(),
             provider_timeout_secs: default_provider_timeout_secs(),
@@ -8989,6 +9014,7 @@ impl Default for Config {
             linkedin: LinkedInConfig::default(),
             image_gen: ImageGenConfig::default(),
             plugins: PluginsConfig::default(),
+            wasm: WasmConfig::default(),
             locale: None,
             #[cfg(feature = "huanxing")]
             huanxing: crate::huanxing::HuanXingConfig::default(),
@@ -9019,7 +9045,10 @@ fn default_workspace_subdir() -> &'static str {
 
 fn default_config_and_workspace_dirs() -> Result<(PathBuf, PathBuf)> {
     let config_dir = default_config_dir()?;
-    Ok((config_dir.clone(), config_dir.join(default_workspace_subdir())))
+    Ok((
+        config_dir.clone(),
+        config_dir.join(default_workspace_subdir()),
+    ))
 }
 
 const ACTIVE_WORKSPACE_STATE_FILE: &str = "active_workspace.toml";
@@ -9100,7 +9129,10 @@ async fn load_persisted_workspace_dirs(
     } else {
         default_config_dir.join(parsed_dir)
     };
-    Ok(Some((config_dir.clone(), config_dir.join(default_workspace_subdir()))))
+    Ok(Some((
+        config_dir.clone(),
+        config_dir.join(default_workspace_subdir()),
+    )))
 }
 
 pub(crate) async fn persist_active_workspace_config_dir(config_dir: &Path) -> Result<()> {
@@ -9579,11 +9611,17 @@ impl Config {
                 // serialization round-trip.  This is computed once and cached.
                 static KNOWN_KEYS: OnceLock<Vec<String>> = OnceLock::new();
                 let known = KNOWN_KEYS.get_or_init(|| {
-                    toml::to_string(&Config::default())
+                    let mut keys: Vec<String> = toml::to_string(&Config::default())
                         .ok()
                         .and_then(|s| s.parse::<toml::Table>().ok())
                         .map(|t| t.keys().cloned().collect())
-                        .unwrap_or_default()
+                        .unwrap_or_default();
+                    for extra in ["display_name", "title_model"] {
+                        if !keys.iter().any(|key| key == extra) {
+                            keys.push(extra.to_string());
+                        }
+                    }
+                    keys
                 });
                 for key in raw.keys() {
                     if !known.contains(key) {
@@ -12076,6 +12114,8 @@ auto_save = true
             api_path: None,
             default_provider: Some("openrouter".into()),
             default_model: Some("gpt-4o".into()),
+            display_name: Some("小星".into()),
+            title_model: Some("gpt-4o-mini".into()),
             model_providers: HashMap::new(),
             default_temperature: 0.5,
             provider_timeout_secs: 120,
@@ -12227,6 +12267,7 @@ auto_save = true
             linkedin: LinkedInConfig::default(),
             image_gen: ImageGenConfig::default(),
             plugins: PluginsConfig::default(),
+            wasm: WasmConfig::default(),
             locale: None,
             #[cfg(feature = "huanxing")]
             huanxing: crate::huanxing::HuanXingConfig::default(),
@@ -12246,6 +12287,8 @@ auto_save = true
         assert_eq!(parsed.api_key, config.api_key);
         assert_eq!(parsed.default_provider, config.default_provider);
         assert_eq!(parsed.default_model, config.default_model);
+        assert_eq!(parsed.display_name, config.display_name);
+        assert_eq!(parsed.title_model, config.title_model);
         assert!((parsed.default_temperature - config.default_temperature).abs() < f64::EPSILON);
         assert_eq!(parsed.observability.backend, "log");
         assert_eq!(parsed.observability.runtime_trace_mode, "none");
@@ -12277,6 +12320,8 @@ default_temperature = 0.7
         let parsed = parse_test_config(minimal);
         assert!(parsed.api_key.is_none());
         assert!(parsed.default_provider.is_none());
+        assert!(parsed.display_name.is_none());
+        assert!(parsed.title_model.is_none());
         assert_eq!(parsed.observability.backend, "none");
         assert_eq!(parsed.observability.runtime_trace_mode, "none");
         assert_eq!(parsed.autonomy.level, AutonomyLevel::Supervised);
@@ -12289,6 +12334,31 @@ default_temperature = 0.7
         assert_eq!(parsed.memory.conversation_retention_days, 30);
         // provider_timeout_secs defaults to 120 when not specified
         assert_eq!(parsed.provider_timeout_secs, 120);
+    }
+
+    #[test]
+    async fn config_parses_display_name_title_model_and_wasm() {
+        let raw = r#"
+default_temperature = 0.7
+display_name = "桌面小星"
+title_model = "MiniMax-M2.5"
+
+[wasm]
+enabled = false
+fuel = 100000
+"#;
+        let parsed = parse_test_config(raw);
+        assert_eq!(parsed.display_name.as_deref(), Some("桌面小星"));
+        assert_eq!(parsed.title_model.as_deref(), Some("MiniMax-M2.5"));
+        assert!(!parsed.wasm.enabled);
+        assert_eq!(
+            parsed
+                .wasm
+                .extra
+                .get("fuel")
+                .and_then(|value| value.as_u64()),
+            Some(100000)
+        );
     }
 
     /// Regression test for #4171: the `[autonomy]` section must not be
@@ -12693,6 +12763,8 @@ default_temperature = 0.7
             api_path: None,
             default_provider: Some("openrouter".into()),
             default_model: Some("test-model".into()),
+            display_name: Some("本地小星".into()),
+            title_model: Some("title-model".into()),
             model_providers: HashMap::new(),
             default_temperature: 0.9,
             provider_timeout_secs: 120,
@@ -12759,6 +12831,7 @@ default_temperature = 0.7
             linkedin: LinkedInConfig::default(),
             image_gen: ImageGenConfig::default(),
             plugins: PluginsConfig::default(),
+            wasm: WasmConfig::default(),
             locale: None,
             #[cfg(feature = "huanxing")]
             huanxing: crate::huanxing::HuanXingConfig::default(),
@@ -12787,6 +12860,8 @@ default_temperature = 0.7
         let decrypted = store.decrypt(loaded.api_key.as_deref().unwrap()).unwrap();
         assert_eq!(decrypted, "sk-roundtrip");
         assert_eq!(loaded.default_model.as_deref(), Some("test-model"));
+        assert_eq!(loaded.display_name.as_deref(), Some("本地小星"));
+        assert_eq!(loaded.title_model.as_deref(), Some("title-model"));
         assert!((loaded.default_temperature - 0.9).abs() < f64::EPSILON);
 
         let _ = fs::remove_dir_all(&dir).await;
@@ -14453,7 +14528,10 @@ requires_openai_auth = true
 
         assert_eq!(source, ConfigResolutionSource::EnvWorkspace);
         assert_eq!(config_dir, workspace_dir);
-        assert_eq!(resolved_workspace_dir, workspace_dir.join("agents").join("default"));
+        assert_eq!(
+            resolved_workspace_dir,
+            workspace_dir.join("agents").join("default")
+        );
 
         // SAFETY: test-only, single-threaded test runner.
         unsafe { std::env::remove_var("ZEROCLAW_WORKSPACE") };
@@ -14524,7 +14602,10 @@ requires_openai_auth = true
 
         assert_eq!(source, ConfigResolutionSource::ActiveWorkspaceMarker);
         assert_eq!(config_dir, marker_config_dir);
-        assert_eq!(resolved_workspace_dir, marker_config_dir.join("agents").join("default"));
+        assert_eq!(
+            resolved_workspace_dir,
+            marker_config_dir.join("agents").join("default")
+        );
 
         let _ = fs::remove_dir_all(default_config_dir).await;
     }
@@ -14564,7 +14645,10 @@ requires_openai_auth = true
 
         let config = Box::pin(Config::load_or_init()).await.unwrap();
 
-        assert_eq!(config.workspace_dir, workspace_dir.join("agents").join("default"));
+        assert_eq!(
+            config.workspace_dir,
+            workspace_dir.join("agents").join("default")
+        );
         assert_eq!(config.config_path, workspace_dir.join("config.toml"));
         assert!(workspace_dir.join("config.toml").exists());
 
@@ -14741,7 +14825,10 @@ default_model = "legacy-model"
         let config = Box::pin(Config::load_or_init()).await.unwrap();
 
         assert_eq!(config.config_path, custom_config_dir.join("config.toml"));
-        assert_eq!(config.workspace_dir, custom_config_dir.join("agents").join("default"));
+        assert_eq!(
+            config.workspace_dir,
+            custom_config_dir.join("agents").join("default")
+        );
         assert_eq!(config.default_model.as_deref(), Some("persisted-profile"));
 
         if let Some(home) = original_home {
@@ -14784,7 +14871,10 @@ default_model = "legacy-model"
 
         let config = Box::pin(Config::load_or_init()).await.unwrap();
 
-        assert_eq!(config.workspace_dir, env_workspace_dir.join("agents").join("default"));
+        assert_eq!(
+            config.workspace_dir,
+            env_workspace_dir.join("agents").join("default")
+        );
         assert_eq!(config.config_path, env_workspace_dir.join("config.toml"));
 
         // SAFETY: test-only, single-threaded test runner.
@@ -14862,7 +14952,10 @@ default_model = "persisted-profile"
         drop(guard);
         let logs = capture.captured();
 
-        assert_eq!(config.workspace_dir, workspace_dir.join("agents").join("default"));
+        assert_eq!(
+            config.workspace_dir,
+            workspace_dir.join("agents").join("default")
+        );
         assert_eq!(config.config_path, config_path);
         assert_eq!(config.default_model.as_deref(), Some("persisted-profile"));
         assert!(logs.contains("Config loaded"), "{logs}");

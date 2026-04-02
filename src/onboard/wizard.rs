@@ -138,6 +138,8 @@ pub async fn run_wizard(force: bool) -> Result<Config> {
         api_path: None,
         default_provider: Some(provider),
         default_model: Some(model),
+        display_name: None,
+        title_model: None,
         model_providers: std::collections::HashMap::new(),
         default_temperature: 0.7,
         provider_timeout_secs: 120,
@@ -204,6 +206,7 @@ pub async fn run_wizard(force: bool) -> Result<Config> {
         linkedin: crate::config::LinkedInConfig::default(),
         image_gen: crate::config::ImageGenConfig::default(),
         plugins: crate::config::PluginsConfig::default(),
+        wasm: crate::config::WasmConfig::default(),
         locale: None,
         #[cfg(feature = "huanxing")]
         huanxing: Default::default(),
@@ -598,6 +601,8 @@ async fn run_quick_setup_with_home(
         api_path: None,
         default_provider: Some(provider_name.clone()),
         default_model: Some(model.clone()),
+        display_name: None,
+        title_model: None,
         model_providers: std::collections::HashMap::new(),
         default_temperature: 0.7,
         provider_timeout_secs: 120,
@@ -664,6 +669,7 @@ async fn run_quick_setup_with_home(
         linkedin: crate::config::LinkedInConfig::default(),
         image_gen: crate::config::ImageGenConfig::default(),
         plugins: crate::config::PluginsConfig::default(),
+        wasm: crate::config::WasmConfig::default(),
         locale: None,
         #[cfg(feature = "huanxing")]
         huanxing: Default::default(),

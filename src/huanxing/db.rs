@@ -26,7 +26,7 @@ pub struct TenantRecord {
     pub status: String,
     /// Custom AI name.
     pub star_name: Option<String>,
-        /// Tenant directory name in `{seq}-{phone}` format (e.g. "001-13888888888").
+    /// Tenant directory name in `{seq}-{phone}` format (e.g. "001-13888888888").
     /// Used to resolve the tenant root: `{config_dir}/users/{tenant_dir}/`.
     pub tenant_dir: Option<String>,
     /// Plan expiry date.
@@ -289,7 +289,6 @@ impl TenantDb {
         }
     }
 
-
     /// Save a full user record including tokens (used by register flow).
     pub async fn save_user_full(
         &self,
@@ -430,9 +429,7 @@ impl TenantDb {
              LEFT JOIN agents a ON u.user_id = a.user_id
              WHERE u.phone = ?1 LIMIT 1",
         )?;
-        match stmt.query_row(rusqlite::params![phone], |row| {
-            Ok(Self::row_to_record(row))
-        }) {
+        match stmt.query_row(rusqlite::params![phone], |row| Ok(Self::row_to_record(row))) {
             Ok(record) => Ok(Some(record)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(e.into()),
@@ -529,7 +526,7 @@ impl TenantDb {
         peer_id: &str,
     ) -> Result<()> {
         let conn = self.conn.lock().await;
-        
+
         // Find first agent for this user
         let agent_id: String = match conn.query_row(
             "SELECT agent_id FROM agents WHERE user_id = ?1 LIMIT 1",
@@ -545,7 +542,12 @@ impl TenantDb {
              VALUES (?1, ?2, ?3, ?4)",
             rusqlite::params![channel_type, peer_id, agent_id, user_id],
         )?;
-        tracing::info!(user_id, channel_type, peer_id, "Channel bound into routing (default)");
+        tracing::info!(
+            user_id,
+            channel_type,
+            peer_id,
+            "Channel bound into routing (default)"
+        );
         Ok(())
     }
 
@@ -564,7 +566,13 @@ impl TenantDb {
              VALUES (?1, ?2, ?3, ?4)",
             rusqlite::params![channel_type, peer_id, agent_id, user_id],
         )?;
-        tracing::info!(user_id, agent_id, channel_type, peer_id, "Channel bound to specific agent");
+        tracing::info!(
+            user_id,
+            agent_id,
+            channel_type,
+            peer_id,
+            "Channel bound to specific agent"
+        );
         Ok(())
     }
 
@@ -586,6 +594,17 @@ impl TenantDb {
         Ok(rows)
     }
 
+    pub async fn update_agent_hasn_id(&self, agent_id: &str, hasn_id: &str) -> Result<bool> {
+        let conn = self.conn.lock().await;
+        let rows = conn.execute(
+            "UPDATE agents
+             SET hasn_id = ?1, updated_at = datetime('now')
+             WHERE agent_id = ?2",
+            rusqlite::params![hasn_id, agent_id],
+        )?;
+        Ok(rows > 0)
+    }
+
     pub async fn update_user(
         &self,
         user_id: &str,
@@ -596,7 +615,7 @@ impl TenantDb {
         status: Option<&str>,
     ) -> Result<bool> {
         let conn = self.conn.lock().await;
-        
+
         // Update user table
         let mut user_sets = Vec::new();
         let mut user_params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
@@ -648,7 +667,7 @@ impl TenantDb {
         if did_update {
             tracing::info!(user_id, "User updated via update_user");
         }
-        
+
         Ok(did_update)
     }
 
@@ -722,7 +741,7 @@ impl TenantDb {
         match conn.query_row(
             "SELECT tenant_dir FROM users ORDER BY created_at ASC LIMIT 1",
             [],
-            |row| row.get(0)
+            |row| row.get(0),
         ) {
             Ok(dir) => Ok(Some(dir)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
@@ -733,16 +752,30 @@ impl TenantDb {
     /// Get aggregate statistics.
     pub async fn get_stats(&self) -> Result<DbStats> {
         let conn = self.conn.lock().await;
-        let total_users: u64 = conn.query_row("SELECT COUNT(*) FROM users", [], |row| row.get(0))?;
-        let active_users: u64 = conn.query_row("SELECT COUNT(*) FROM users WHERE status = 'active'", [], |row| row.get(0))?;
-        let disabled_users: u64 = conn.query_row("SELECT COUNT(*) FROM users WHERE status != 'active'", [], |row| row.get(0))?;
-        let total_channels: u64 = conn.query_row("SELECT COUNT(*) FROM routing", [], |row| row.get(0))?;
+        let total_users: u64 =
+            conn.query_row("SELECT COUNT(*) FROM users", [], |row| row.get(0))?;
+        let active_users: u64 = conn.query_row(
+            "SELECT COUNT(*) FROM users WHERE status = 'active'",
+            [],
+            |row| row.get(0),
+        )?;
+        let disabled_users: u64 = conn.query_row(
+            "SELECT COUNT(*) FROM users WHERE status != 'active'",
+            [],
+            |row| row.get(0),
+        )?;
+        let total_channels: u64 =
+            conn.query_row("SELECT COUNT(*) FROM routing", [], |row| row.get(0))?;
 
         let mut stmt = conn.prepare("SELECT template, COUNT(*) FROM agents GROUP BY template")?;
-        let templates = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?.collect::<Result<Vec<_>, _>>()?;
+        let templates = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<Result<Vec<_>, _>>()?;
 
         let mut stmt = conn.prepare("SELECT plan, COUNT(*) FROM users GROUP BY plan")?;
-        let plans = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?.collect::<Result<Vec<_>, _>>()?;
+        let plans = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<Result<Vec<_>, _>>()?;
 
         Ok(DbStats {
             total_users,

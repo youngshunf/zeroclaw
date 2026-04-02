@@ -94,6 +94,12 @@ pub struct OnboardResult {
     pub config_created: bool,
     pub agent_created: bool,
     pub sidecar_started: bool,
+    pub tenant_dir: Option<String>,
+    pub agent_id: Option<String>,
+    pub config_path: Option<String>,
+    pub workspace_path: Option<String>,
+    pub agent_create_stdout: Option<String>,
+    pub agent_create_stderr: Option<String>,
     pub error: Option<String>,
 }
 

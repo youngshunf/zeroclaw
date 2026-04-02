@@ -256,12 +256,4 @@ export async function getMyAgents(): Promise<AgentInfo[]> {
   return cloudGet<AgentInfo[]>("/agents");
 }
 
-// ---------- Client ID 读取 ----------
-
-/**
- * 读取当前 HASN 客户端 ID
- * 统一 Node 架构下不需要前端绑定 client_id。这仅用于兼容老逻辑。
- */
-export async function loadClientId(): Promise<string | undefined> {
-  return undefined;
-}
+// 本地 Agent HASN 注册已统一为无需前端传递 client_id。

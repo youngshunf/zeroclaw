@@ -15,12 +15,12 @@
 //! ```
 
 use axum::{
+    Json, Router,
     body::Bytes,
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
     routing::{delete, get, post},
-    Json, Router,
 };
 use serde::{Deserialize, Serialize};
 
@@ -37,7 +37,7 @@ pub async fn extract_tenant_dir(
     if let Some(tenant) = headers.get("x-tenant-id").and_then(|v| v.to_str().ok()) {
         return Some(tenant.to_string());
     }
-    
+
     let db_path = config.resolve_db_path(config_dir);
     if let Ok(db) = crate::huanxing::db::TenantDb::open(&db_path) {
         if let Ok(Some(tenant)) = db.get_first_tenant_dir().await {
@@ -45,6 +45,37 @@ pub async fn extract_tenant_dir(
         }
     }
     None
+}
+
+async fn require_tenant_dir(
+    headers: &axum::http::HeaderMap,
+    config_dir: &std::path::Path,
+    config: &crate::huanxing::config::HuanXingConfig,
+) -> Result<String, String> {
+    extract_tenant_dir(headers, config_dir, config)
+        .await
+        .filter(|tenant| !tenant.trim().is_empty())
+        .ok_or_else(|| "未解析到 tenant_dir，拒绝创建 Agent 以避免写入 users/default".to_string())
+}
+
+fn build_create_agent_params(
+    req: &CreateAgentRequest,
+    tenant_dir: &str,
+) -> huanxing_agent_factory::CreateAgentParams {
+    let template_id = req.template.as_deref().unwrap_or("_base");
+    let display_name = req.display_name.as_deref().unwrap_or(&req.name);
+
+    huanxing_agent_factory::CreateAgentParams {
+        tenant_id: tenant_dir.to_string(),
+        template_id: template_id.to_string(),
+        agent_name: req.name.clone(),
+        display_name: display_name.to_string(),
+        is_desktop: req.is_desktop.unwrap_or(false),
+        user_nickname: display_name.to_string(),
+        provider: None,
+        api_key: req.api_key.clone(),
+        hasn_id: None,
+    }
 }
 
 // ── 数据结构 ──────────────────────────────────────────────
@@ -103,6 +134,11 @@ pub struct CreateAgentResponse {
     pub config_dir: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct UpdateAgentHasnIdRequest {
+    hasn_id: String,
+}
+
 /// 工作区 config.toml 的部分字段（用于读取 display_name / model）
 
 // ── 路由 ──────────────────────────────────────────────────
@@ -112,6 +148,7 @@ pub fn agent_routes() -> Router<AppState> {
     Router::new()
         .route("/api/agents", get(list_agents).post(create_agent))
         .route("/api/agents/{name}", delete(delete_agent))
+        .route("/api/agents/{name}/hasn-id", post(update_agent_hasn_id))
         .route("/api/agents/{name}/files", get(list_files))
         .route(
             "/api/agents/{name}/files/{filename}",
@@ -124,19 +161,33 @@ pub fn agent_routes() -> Router<AppState> {
 // ── 处理函数 ──────────────────────────────────────────────
 
 /// GET /api/agents — 扫描 agents_dir，列出所有 Agent
-async fn list_agents(State(state): State<AppState>,
-    headers: axum::http::HeaderMap,) -> impl IntoResponse {
+async fn list_agents(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
     let config = state.config.lock().clone();
     if !config.huanxing.enabled {
-        return (StatusCode::OK, Json(AgentListResponse { agents: vec![], current: String::new() })).into_response();
+        return (
+            StatusCode::OK,
+            Json(AgentListResponse {
+                agents: vec![],
+                current: String::new(),
+            }),
+        )
+            .into_response();
     }
 
     let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
-    let tenant_dir = crate::huanxing::api_agents::extract_tenant_dir(&headers, config_dir, &config.huanxing).await;
+    let tenant_dir =
+        crate::huanxing::api_agents::extract_tenant_dir(&headers, config_dir, &config.huanxing)
+            .await;
     // Desktop list: we list all agents in the desktop tenant_root.
     // However, the physical structure for Desktop is `users/{tenant_dir}/agents/{agent_id}/`.
     // We can just read `agents/` to find them.
-    let agents_dir = config.huanxing.resolve_tenant_root(config_dir, tenant_dir.as_deref()).join("agents");
+    let agents_dir = config
+        .huanxing
+        .resolve_tenant_root(config_dir, tenant_dir.as_deref())
+        .join("agents");
 
     let mut agents: Vec<AgentInfo> = Vec::new();
 
@@ -155,9 +206,15 @@ async fn list_agents(State(state): State<AppState>,
 
                 let ws_cfg = load_workspace_config(&path).await;
                 let icon_url = if path.join("icon.svg").exists() {
-                    Some(format!("/api/agents/{}/files/icon.svg?raw=true", urlencoding::encode(&name)))
+                    Some(format!(
+                        "/api/agents/{}/files/icon.svg?raw=true",
+                        urlencoding::encode(&name)
+                    ))
                 } else if path.join("icon.png").exists() {
-                    Some(format!("/api/agents/{}/files/icon.png?raw=true", urlencoding::encode(&name)))
+                    Some(format!(
+                        "/api/agents/{}/files/icon.png?raw=true",
+                        urlencoding::encode(&name)
+                    ))
                 } else {
                     None
                 };
@@ -165,7 +222,8 @@ async fn list_agents(State(state): State<AppState>,
                 let display_name = ws_cfg
                     .display_name
                     .or_else(|| ws_cfg.name.clone())
-                    .or_else(|| ws_cfg.identity.as_ref().and_then(|id| id.name.clone()));
+                    .or_else(|| ws_cfg.identity.as_ref().and_then(|id| id.name.clone()))
+                    .or_else(|| config.display_name.clone());
 
                 agents.push(AgentInfo {
                     config_dir: path.join("workspace").to_string_lossy().to_string(), // point to the inner workspace
@@ -212,9 +270,20 @@ async fn create_agent(
     }
 
     let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
-    let tenant_dir = crate::huanxing::api_agents::extract_tenant_dir(&headers, config_dir, &config.huanxing).await;
-    let agent_wrapper = config.huanxing.resolve_agent_wrapper_dir(config_dir, tenant_dir.as_deref(), &req.name);
-    let _workspace = config.huanxing.resolve_agent_workspace(config_dir, None, &req.name);
+    let tenant_dir = match require_tenant_dir(&headers, config_dir, &config.huanxing).await {
+        Ok(tenant_dir) => tenant_dir,
+        Err(err) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": err })),
+            )
+                .into_response();
+        }
+    };
+    let agent_wrapper =
+        config
+            .huanxing
+            .resolve_agent_wrapper_dir(config_dir, Some(&tenant_dir), &req.name);
 
     // 检查是否已存在
     if agent_wrapper.exists() {
@@ -226,25 +295,16 @@ async fn create_agent(
     }
 
     // 确定 hub 模板目录
-    let hub_dir = config.huanxing.resolve_hub_dir()
+    let hub_dir = config
+        .huanxing
+        .resolve_hub_dir()
         .unwrap_or_else(|| config.workspace_dir.join("hub"));
     let templates_dir = hub_dir.join("templates");
 
     let template_id = req.template.as_deref().unwrap_or("_base");
-    let display_name = req.display_name.as_deref().unwrap_or(&req.name);
 
     let factory = huanxing_agent_factory::AgentFactory::new(config_dir.to_path_buf(), None);
-    let params = huanxing_agent_factory::CreateAgentParams {
-        tenant_id: "".to_string(), // In api_agents historically it wasn't multi-tenant yet
-        template_id: template_id.to_string(),
-        agent_name: req.name.clone(),
-        display_name: display_name.to_string(),
-        is_desktop: req.is_desktop.unwrap_or(false),
-        user_nickname: display_name.to_string(),
-        provider: None,
-        api_key: req.api_key.clone(),
-        hasn_id: None,
-    };
+    let params = build_create_agent_params(&req, &tenant_dir);
 
     struct ApiProgress;
     impl huanxing_agent_factory::ProgressSink for ApiProgress {
@@ -256,7 +316,10 @@ async fn create_agent(
         }
     }
 
-    match factory.create_local_agent(&templates_dir, &params, &ApiProgress).await {
+    match factory
+        .create_local_agent(&templates_dir, &params, &ApiProgress)
+        .await
+    {
         Ok(res) => {
             tracing::info!(
                 name = req.name,
@@ -303,8 +366,13 @@ async fn delete_agent(
     }
 
     let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
-    let tenant_dir = crate::huanxing::api_agents::extract_tenant_dir(&headers, config_dir, &config.huanxing).await;
-    let agent_wrapper = config.huanxing.resolve_agent_wrapper_dir(config_dir, tenant_dir.as_deref(), &name);
+    let tenant_dir =
+        crate::huanxing::api_agents::extract_tenant_dir(&headers, config_dir, &config.huanxing)
+            .await;
+    let agent_wrapper =
+        config
+            .huanxing
+            .resolve_agent_wrapper_dir(config_dir, tenant_dir.as_deref(), &name);
 
     if !agent_wrapper.exists() {
         return (
@@ -324,7 +392,112 @@ async fn delete_agent(
 
     tracing::info!(name, "Agent 工作区已删除");
 
-    (StatusCode::OK, Json(serde_json::json!({"status": "ok", "name": name}))).into_response()
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({"status": "ok", "name": name})),
+    )
+        .into_response()
+}
+
+async fn update_agent_hasn_id(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Path(name): Path<String>,
+    Json(req): Json<UpdateAgentHasnIdRequest>,
+) -> impl IntoResponse {
+    if !is_valid_agent_name(&name) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "非法 agent name"})),
+        )
+            .into_response();
+    }
+
+    if req.hasn_id.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "hasn_id 不能为空"})),
+        )
+            .into_response();
+    }
+
+    let config = state.config.lock().clone();
+    let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
+    let tenant_dir = match require_tenant_dir(&headers, config_dir, &config.huanxing).await {
+        Ok(tenant_dir) => tenant_dir,
+        Err(err) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": err })),
+            )
+                .into_response();
+        }
+    };
+    let workspace = config
+        .huanxing
+        .resolve_agent_workspace(config_dir, Some(&tenant_dir), &name);
+    let _ = crate::huanxing::config::promote_legacy_agent_config_from_workspace(&workspace);
+    let config_path =
+        config
+            .huanxing
+            .resolve_agent_config_path(config_dir, Some(&tenant_dir), &name);
+
+    let content = match tokio::fs::read_to_string(&config_path).await {
+        Ok(content) => content,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "agent config.toml 不存在"})),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": format!("读取 agent config 失败: {e}")})),
+            )
+                .into_response();
+        }
+    };
+
+    let updated = upsert_hasn_id_in_config(&content, &req.hasn_id);
+    if let Err(e) = tokio::fs::write(&config_path, updated).await {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": format!("写回 agent config 失败: {e}")})),
+        )
+            .into_response();
+    }
+
+    let db_path = config.huanxing.resolve_db_path(config_dir);
+    let db = match crate::huanxing::db::TenantDb::open(&db_path) {
+        Ok(db) => db,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": format!("打开 users.db 失败: {e}")})),
+            )
+                .into_response();
+        }
+    };
+
+    match db.update_agent_hasn_id(&name, &req.hasn_id).await {
+        Ok(true) => (
+            StatusCode::OK,
+            Json(serde_json::json!({"status": "ok", "name": name, "hasn_id": req.hasn_id})),
+        )
+            .into_response(),
+        Ok(false) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": format!("agent '{}' 不存在于 users.db", name)})),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": format!("更新 users.db 失败: {e}")})),
+        )
+            .into_response(),
+    }
 }
 
 /// GET /api/agents/:name/files — 列出工作区文件
@@ -335,8 +508,13 @@ async fn list_files(
 ) -> impl IntoResponse {
     let config = state.config.lock().clone();
     let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
-    let tenant_dir = crate::huanxing::api_agents::extract_tenant_dir(&headers, config_dir, &config.huanxing).await;
-    let workspace = config.huanxing.resolve_agent_workspace(config_dir, tenant_dir.as_deref(), &name);
+    let tenant_dir =
+        crate::huanxing::api_agents::extract_tenant_dir(&headers, config_dir, &config.huanxing)
+            .await;
+    let workspace =
+        config
+            .huanxing
+            .resolve_agent_workspace(config_dir, tenant_dir.as_deref(), &name);
 
     if !workspace.exists() {
         return (
@@ -373,8 +551,13 @@ async fn read_file(
 ) -> impl IntoResponse {
     let config = state.config.lock().clone();
     let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
-    let tenant_dir = crate::huanxing::api_agents::extract_tenant_dir(&headers, config_dir, &config.huanxing).await;
-    let workspace = config.huanxing.resolve_agent_workspace(config_dir, tenant_dir.as_deref(), &name);
+    let tenant_dir =
+        crate::huanxing::api_agents::extract_tenant_dir(&headers, config_dir, &config.huanxing)
+            .await;
+    let workspace =
+        config
+            .huanxing
+            .resolve_agent_workspace(config_dir, tenant_dir.as_deref(), &name);
     let file_path = workspace.join(&filename);
 
     // 防止路径遍历
@@ -442,8 +625,13 @@ async fn write_file(
 ) -> impl IntoResponse {
     let config = state.config.lock().clone();
     let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
-    let tenant_dir = crate::huanxing::api_agents::extract_tenant_dir(&headers, config_dir, &config.huanxing).await;
-    let workspace = config.huanxing.resolve_agent_workspace(config_dir, tenant_dir.as_deref(), &name);
+    let tenant_dir =
+        crate::huanxing::api_agents::extract_tenant_dir(&headers, config_dir, &config.huanxing)
+            .await;
+    let workspace =
+        config
+            .huanxing
+            .resolve_agent_workspace(config_dir, tenant_dir.as_deref(), &name);
 
     // 防止路径遍历
     if filename.contains("..") || filename.contains('/') {
@@ -457,11 +645,7 @@ async fn write_file(
     let file_path = workspace.join(&filename);
     match tokio::fs::write(&file_path, &body).await {
         Ok(_) => (StatusCode::OK, "ok").into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("写入失败: {e}"),
-        )
-            .into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("写入失败: {e}")).into_response(),
     }
 }
 
@@ -537,10 +721,7 @@ async fn handle_audio_transcribe(
         .await
     {
         Ok(text) => {
-            tracing::info!(
-                text_len = text.len(),
-                "Audio transcribe: success"
-            );
+            tracing::info!(text_len = text.len(), "Audio transcribe: success");
             (StatusCode::OK, Json(TranscribeResponse { text })).into_response()
         }
         Err(e) => {
@@ -608,9 +789,21 @@ async fn handle_file_upload(
     // 确定保存目录
     let config = state.config.lock().clone();
     let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
-    let tenant_dir = crate::huanxing::api_agents::extract_tenant_dir(&headers, config_dir, &config.huanxing).await;
-    let default_workspace = config.huanxing.resolve_agent_workspace(config_dir, tenant_dir.as_deref(), "default");
-    
+    let tenant_dir = match require_tenant_dir(&headers, config_dir, &config.huanxing).await {
+        Ok(tenant_dir) => tenant_dir,
+        Err(err) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": err })),
+            )
+                .into_response();
+        }
+    };
+    let default_workspace =
+        config
+            .huanxing
+            .resolve_agent_workspace(config_dir, Some(&tenant_dir), "default");
+
     // 桌面端默认使用 default agent
     let files_dir = default_workspace.join("files");
 
@@ -676,10 +869,175 @@ struct WorkspaceConfig {
 
 /// 从工作区目录加载 config.toml 的部分字段
 async fn load_workspace_config(workspace: &std::path::Path) -> WorkspaceConfig {
-    let path = workspace.join("config.toml");
+    let _ = crate::huanxing::config::promote_legacy_agent_config_from_workspace(workspace);
+    let path = crate::huanxing::config::agent_config_path_from_workspace(workspace);
     let Ok(content) = tokio::fs::read_to_string(&path).await else {
         return WorkspaceConfig::default();
     };
     toml::from_str(&content).unwrap_or_default()
 }
 
+fn upsert_hasn_id_in_config(content: &str, hasn_id: &str) -> String {
+    if content.contains("hasn_id =") {
+        return regex::Regex::new(r#"hasn_id\s*=\s*"[^"]*""#)
+            .expect("valid hasn_id regex")
+            .replace(content, format!(r#"hasn_id = "{hasn_id}""#))
+            .into_owned();
+    }
+
+    if content.contains("[agent]") {
+        return content.replacen("[agent]", &format!("[agent]\nhasn_id = \"{hasn_id}\""), 1);
+    }
+
+    format!("{content}\nhasn_id = \"{hasn_id}\"\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        CreateAgentRequest, build_create_agent_params, load_workspace_config, require_tenant_dir,
+        upsert_hasn_id_in_config,
+    };
+    use crate::huanxing::config::HuanXingConfig;
+    use crate::huanxing::db::TenantDb;
+    use axum::http::HeaderMap;
+    use tempfile::tempdir;
+
+    async fn seed_users_db(config_dir: &std::path::Path, tenant_dir: &str) {
+        let data_dir = config_dir.join("data");
+        std::fs::create_dir_all(&data_dir).unwrap();
+        let db_path = data_dir.join("users.db");
+        let db = TenantDb::open(&db_path).unwrap();
+        db.save_user_full(
+            "user-001",
+            "13800138000",
+            "default",
+            Some("Tester"),
+            "assistant",
+            Some("Tester"),
+            None,
+            Some(tenant_dir),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn require_tenant_dir_uses_db_fallback() {
+        let temp = tempdir().unwrap();
+        let config_dir = temp.path().join(".huanxing");
+        seed_users_db(&config_dir, "001-tenant-a").await;
+
+        let tenant_dir =
+            require_tenant_dir(&HeaderMap::new(), &config_dir, &HuanXingConfig::default())
+                .await
+                .unwrap();
+
+        assert_eq!(tenant_dir, "001-tenant-a");
+    }
+
+    #[tokio::test]
+    async fn require_tenant_dir_errors_when_missing() {
+        let temp = tempdir().unwrap();
+        let config_dir = temp.path().join(".huanxing");
+        std::fs::create_dir_all(config_dir.join("data")).unwrap();
+
+        let err = require_tenant_dir(&HeaderMap::new(), &config_dir, &HuanXingConfig::default())
+            .await
+            .unwrap_err();
+
+        assert!(err.contains("tenant"));
+    }
+
+    #[test]
+    fn build_create_agent_params_uses_resolved_tenant_dir() {
+        let request = CreateAgentRequest {
+            name: "assistant-130".to_string(),
+            display_name: Some("Assistant 130".to_string()),
+            template: Some("_base".to_string()),
+            api_key: Some("session-token".to_string()),
+            base_url: None,
+            is_desktop: Some(true),
+        };
+
+        let params = build_create_agent_params(&request, "001-tenant-a");
+
+        assert_eq!(params.tenant_id, "001-tenant-a");
+        assert_eq!(params.agent_name, "assistant-130");
+        assert_eq!(params.display_name, "Assistant 130");
+        assert_eq!(params.template_id, "_base");
+        assert!(params.is_desktop);
+        assert_eq!(params.api_key.as_deref(), Some("session-token"));
+    }
+
+    #[test]
+    fn upsert_hasn_id_in_config_replaces_existing_value() {
+        let content = "[agent]\nhasn_id = \"old_id\"\nname = \"default\"\n";
+
+        let updated = upsert_hasn_id_in_config(content, "new_id");
+
+        assert!(updated.contains("hasn_id = \"new_id\""));
+        assert!(!updated.contains("hasn_id = \"old_id\""));
+    }
+
+    #[test]
+    fn upsert_hasn_id_in_config_inserts_into_agent_section() {
+        let content = "[agent]\nname = \"default\"\n";
+
+        let updated = upsert_hasn_id_in_config(content, "new_id");
+
+        assert!(updated.contains("[agent]\nhasn_id = \"new_id\""));
+    }
+
+    #[tokio::test]
+    async fn load_workspace_config_prefers_wrapper_config() {
+        let temp = tempdir().unwrap();
+        let wrapper = temp.path().join("agents").join("default");
+        let workspace = wrapper.join("workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+
+        tokio::fs::write(
+            wrapper.join("config.toml"),
+            "display_name = \"wrapper-name\"\ndefault_model = \"wrapper-model\"\n",
+        )
+        .await
+        .unwrap();
+        tokio::fs::write(
+            workspace.join("config.toml"),
+            "display_name = \"workspace-name\"\ndefault_model = \"workspace-model\"\n",
+        )
+        .await
+        .unwrap();
+
+        let config = load_workspace_config(&workspace).await;
+
+        assert_eq!(config.display_name.as_deref(), Some("wrapper-name"));
+        assert_eq!(config.default_model.as_deref(), Some("wrapper-model"));
+    }
+
+    #[tokio::test]
+    async fn load_workspace_config_promotes_legacy_workspace_config() {
+        let temp = tempdir().unwrap();
+        let wrapper = temp.path().join("agents").join("default");
+        let workspace = wrapper.join("workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+
+        tokio::fs::write(
+            workspace.join("config.toml"),
+            "display_name = \"legacy-name\"\ndefault_model = \"legacy-model\"\n",
+        )
+        .await
+        .unwrap();
+
+        let config = load_workspace_config(&workspace).await;
+
+        assert_eq!(config.display_name.as_deref(), Some("legacy-name"));
+        assert_eq!(config.default_model.as_deref(), Some("legacy-model"));
+        assert!(wrapper.join("config.toml").exists());
+        assert!(!workspace.join("config.toml").exists());
+    }
+}
