@@ -34,7 +34,7 @@ snapshot_enabled = true          # 启用记忆快照备份
 snapshot_on_hygiene = true       # 清理时自动快照
 
 # ── 向量记忆（语义搜索） ──────────────────────────────────────
-embedding_provider = "custom:https://llm.dcfuture.cn/v1"
+embedding_provider = "{{embedding_provider}}"
 embedding_model = "text-embedding-v4"
 embedding_dimensions = 1024      # 通义 text-embedding-v4 输出维度
 vector_weight = 0.7              # 向量相似度权重

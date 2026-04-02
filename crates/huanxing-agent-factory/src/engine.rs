@@ -26,27 +26,75 @@ fn substitute_placeholders(
     def: &TemplateDefinition,
     now: &str,
 ) -> String {
-    let _final_model = params.provider.as_deref().unwrap_or("anthropic"); // Just a default fallback if missing
-                                                                          // In actual implementation params.provider comes from CLI or API.
-                                                                          // The main logic is that standard template defaults are used if not provided.
+    let final_model = params.model.as_deref().unwrap_or(&def.model);
+    let final_provider = params.provider.as_deref().unwrap_or("");
+    let final_fallback = params.fallback_provider.as_deref().unwrap_or("");
+    let final_embedding = params
+        .embedding_provider
+        .as_deref()
+        .unwrap_or(final_provider);
+    let final_llm_gw = params.llm_gateway.as_deref().unwrap_or("");
 
     content
         .replace("{{star_name}}", &params.display_name)
         .replace("{{nickname}}", &params.user_nickname)
-        // Note: For backend cloud, the CLI can pass api_key and provider.
-        // In desktop mode, owner/agent placeholders may intentionally stay empty.
-        // Runtime falls back to `.huanxing/config.toml` for shared LLM credentials,
-        // and `hasn_id` is backfilled later by the post-login HASN registration flow.
-        .replace("{{default_model}}", params.provider.as_deref().unwrap_or(&def.model))
-        .replace("{{default_provider}}", params.provider.as_deref().unwrap_or("anthropic"))
+        .replace("{{default_model}}", final_model)
+        .replace("{{default_provider}}", final_provider)
+        .replace("{{fallback_provider}}", final_fallback)
+        .replace("{{embedding_provider}}", final_embedding)
+        .replace("{{llm_gateway}}", final_llm_gw)
         .replace("{{api_key}}", params.api_key.as_deref().unwrap_or(""))
-        .replace("{{default_temperature}}", &format!("{}", def.temperature.unwrap_or(0.7)))
+        .replace(
+            "{{default_temperature}}",
+            &format!("{}", def.temperature.unwrap_or(0.7)),
+        )
         .replace("{{user_id}}", &params.tenant_id)
         .replace("{{agent_id}}", &params.agent_name)
         .replace("{{hasn_id}}", params.hasn_id.as_deref().unwrap_or(""))
         .replace("{{template}}", &params.template_id)
         .replace("{{created_at}}", now)
         .replace("{{createdAt}}", now)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{fallback_template, substitute_placeholders};
+    use crate::CreateAgentParams;
+
+    #[test]
+    fn substitute_placeholders_keeps_model_and_provider_independent() {
+        let def = fallback_template("assistant");
+        let params = CreateAgentParams {
+            tenant_id: "001-tenant-a".to_string(),
+            template_id: "assistant".to_string(),
+            agent_name: "default".to_string(),
+            display_name: "Star".to_string(),
+            is_desktop: true,
+            user_nickname: "Nick".to_string(),
+            provider: Some("custom:https://llm.example.com/v1".to_string()),
+            model: Some("qwen3-32b".to_string()),
+            api_key: None,
+            hasn_id: None,
+            fallback_provider: Some("custom:https://fallback.example.com/v1".to_string()),
+            embedding_provider: Some("custom:https://embed.example.com/v1".to_string()),
+            llm_gateway: Some("http://127.0.0.1:3180/v1".to_string()),
+        };
+
+        let rendered = substitute_placeholders(
+            "provider={{default_provider}}\nmodel={{default_model}}\napi_key={{api_key}}\nhasn_id={{hasn_id}}\nfallback={{fallback_provider}}\nembedding={{embedding_provider}}\ngw={{llm_gateway}}\n",
+            &params,
+            &def,
+            "2026-04-02 12:00",
+        );
+
+        assert!(rendered.contains("provider=custom:https://llm.example.com/v1"));
+        assert!(rendered.contains("model=qwen3-32b"));
+        assert!(rendered.contains("api_key="));
+        assert!(rendered.contains("hasn_id="));
+        assert!(rendered.contains("fallback=custom:https://fallback.example.com/v1"));
+        assert!(rendered.contains("embedding=custom:https://embed.example.com/v1"));
+        assert!(rendered.contains("gw=http://127.0.0.1:3180/v1"));
+    }
 }
 
 impl AgentFactory {
@@ -148,6 +196,11 @@ impl AgentFactory {
                     if name.starts_with('.') || name.starts_with('_') {
                         continue;
                     }
+                    // .template 文件已由 Layer 1/2 的 process_file 处理（渲染+去后缀），
+                    // Layer 3 不应再将原始 .template 文件复制进 workspace
+                    if name.ends_with(".template") {
+                        continue;
+                    }
                     if path.is_file() {
                         let content = std::fs::read_to_string(&path)?;
                         std::fs::write(
@@ -166,68 +219,72 @@ impl AgentFactory {
         }
 
         // 4. 初始化 Tenant 的一些全局基础（比如租户的 BOOTSTRAP.md 和用户级 config.toml）
+        //    重要：如果 owner 配置已存在（桌面端 onboard 登录时已创建），则跳过覆写。
+        //    市场安装额外 Agent 时不应修改已有的租户级配置。
         let tenant_root = self.resolve_tenant_root(&params.tenant_id);
-        let owner_ws = tenant_root.join("workspace");
-        std::fs::create_dir_all(&owner_ws)?;
+        let owner_config_exists = tenant_root.join("config.toml").exists();
 
-        let mut owner_dirs_to_process = vec![base_dir.join("owner")];
-        if params.is_desktop {
-            owner_dirs_to_process.push(base_desktop_dir.join("owner"));
-        }
+        if !owner_config_exists {
+            let owner_ws = tenant_root.join("workspace");
+            std::fs::create_dir_all(&owner_ws)?;
 
-        let mut owner_processed = false;
-        for owner_dir in owner_dirs_to_process {
-            if owner_dir.is_dir() {
-                owner_processed = true;
-                for entry in std::fs::read_dir(&owner_dir)? {
-                    let entry = entry?;
-                    let file_name = entry.file_name().to_string_lossy().to_string();
-                    if file_name.starts_with('.') {
-                        continue;
-                    }
-                    if entry.path().is_file() {
-                        let mut dest_name = file_name.clone();
-                        if file_name.ends_with(".template") {
-                            dest_name = file_name.trim_end_matches(".template").to_string();
+            let mut owner_dirs_to_process = vec![base_dir.join("owner")];
+            if params.is_desktop {
+                owner_dirs_to_process.push(base_desktop_dir.join("owner"));
+            }
+
+            let mut owner_processed_flag = false;
+            for owner_dir in owner_dirs_to_process {
+                if owner_dir.is_dir() {
+                    owner_processed_flag = true;
+                    for entry in std::fs::read_dir(&owner_dir)? {
+                        let entry = entry?;
+                        let file_name = entry.file_name().to_string_lossy().to_string();
+                        if file_name.starts_with('.') {
+                            continue;
                         }
+                        if entry.path().is_file() {
+                            let mut dest_name = file_name.clone();
+                            if file_name.ends_with(".template") {
+                                dest_name = file_name.trim_end_matches(".template").to_string();
+                            }
 
-                        // config.toml 放根目录 (users/<tenant_id>/config.toml)
-                        // 其他的基础文件放 workspace/
-                        let target_path = if dest_name == "config.toml" {
-                            tenant_root.join(&dest_name)
-                        } else {
-                            owner_ws.join(&dest_name)
-                        };
+                            // config.toml 放根目录 (users/<tenant_id>/config.toml)
+                            // 其他的基础文件放 workspace/
+                            let target_path = if dest_name == "config.toml" {
+                                tenant_root.join(&dest_name)
+                            } else {
+                                owner_ws.join(&dest_name)
+                            };
 
-                        // 由于从 base -> base_desktop 顺序推进，这会产生真实的“覆盖”(override)
-                        // 桌面端专属的 owner/config.toml 会直接盖掉云端的配置
-                        let content = std::fs::read_to_string(&entry.path())?;
+                            let content = std::fs::read_to_string(&entry.path())?;
+                            std::fs::write(
+                                target_path,
+                                substitute_placeholders(&content, params, def, &now),
+                            )?;
+                        }
+                    }
+                }
+            }
+
+            if !owner_processed_flag && used_embedded {
+                // Fallback to embedded owner scaffold
+                for scaffold in crate::scaffold::owner_scaffold() {
+                    let dest_name = scaffold.name.trim_end_matches(".template");
+                    let target_path = if dest_name == "config.toml" {
+                        tenant_root.join(dest_name)
+                    } else {
+                        owner_ws.join(dest_name)
+                    };
+                    if !target_path.exists() {
                         std::fs::write(
-                            target_path,
-                            substitute_placeholders(&content, params, def, &now),
+                            &target_path,
+                            substitute_placeholders(scaffold.content, params, def, &now),
                         )?;
                     }
                 }
             }
-        }
-
-        if !owner_processed && used_embedded {
-            // Fallback to embedded owner scaffold
-            for scaffold in crate::scaffold::owner_scaffold() {
-                let dest_name = scaffold.name.trim_end_matches(".template");
-                let target_path = if dest_name == "config.toml" {
-                    tenant_root.join(dest_name)
-                } else {
-                    owner_ws.join(dest_name)
-                };
-                if !target_path.exists() {
-                    std::fs::write(
-                        &target_path,
-                        substitute_placeholders(scaffold.content, params, def, &now),
-                    )?;
-                }
-            }
-        }
+        } // end if !owner_config_exists
 
         Ok(())
     }
@@ -325,6 +382,24 @@ impl AgentFactory {
         )
         .await?;
 
+        // Promote config.toml from workspace/ to wrapper layer (canonical position)
+        // ZeroClaw 运行时期望 config 在 agents/{name}/config.toml，而非 workspace/ 内
+        let ws_config = workspace.join("config.toml");
+        let wrapper_config = target_dir.join("config.toml");
+        if ws_config.exists() && !wrapper_config.exists() {
+            tokio::fs::rename(&ws_config, &wrapper_config).await?;
+        }
+
+        // Promote icon.svg/icon.png to wrapper layer
+        // 前端 list_agents 在 agents/{name}/ 层级检查图标文件
+        for icon_name in &["icon.svg", "icon.png"] {
+            let ws_icon = workspace.join(icon_name);
+            let wrapper_icon = target_dir.join(icon_name);
+            if ws_icon.exists() && !wrapper_icon.exists() {
+                let _ = tokio::fs::rename(&ws_icon, &wrapper_icon).await;
+            }
+        }
+
         // Download skills & sops
         if let Some(api) = &self.market_api_base {
             self.install_dependencies(api, "skill", &def.skills.exclusive, &target_dir, progress)
@@ -383,6 +458,23 @@ impl AgentFactory {
             progress,
         )
         .await?;
+
+        // Promote config.toml from workspace/ to wrapper layer (canonical position)
+        // ZeroClaw 运行时期望 config 在 agents/{name}/config.toml，而非 workspace/ 内
+        let ws_config = workspace.join("config.toml");
+        let wrapper_config = target_dir.join("config.toml");
+        if ws_config.exists() && !wrapper_config.exists() {
+            tokio::fs::rename(&ws_config, &wrapper_config).await?;
+        }
+
+        // Promote icon.svg/icon.png to wrapper layer
+        for icon_name in &["icon.svg", "icon.png"] {
+            let ws_icon = workspace.join(icon_name);
+            let wrapper_icon = target_dir.join(icon_name);
+            if ws_icon.exists() && !wrapper_icon.exists() {
+                let _ = tokio::fs::rename(&ws_icon, &wrapper_icon).await;
+            }
+        }
 
         // 默认尝试把本地的 skills 复制过去 (本地 hub 理论上包含所有基础技能)
         let local_hub_skills = templates_base_path.parent().unwrap().join("skills");

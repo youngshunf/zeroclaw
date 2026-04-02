@@ -22,7 +22,13 @@ export const HUANXING_CONFIG = {
   defaultModel: 'claude-sonnet-4-6',
 
   /** 默认 LLM provider 名称 */
-  defaultProvider: 'custom:http://127.0.0.1:3180',
+  defaultProvider: 'custom:http://127.0.0.1:3180/v1',
+
+  /** 降级 fallback provider (云端直连) */
+  fallbackProvider: 'custom:https://llm.dcfuture.cn/v1',
+
+  /** 嵌入向量 provider (云端直连) */
+  embeddingProvider: 'custom:https://llm.dcfuture.cn/v1',
 
   /** 默认温度 */
   defaultTemperature: 0.7,

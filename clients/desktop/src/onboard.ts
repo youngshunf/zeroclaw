@@ -106,6 +106,9 @@ async function tauriOnboard(session: HuanxingSession): Promise<OnboardResult> {
         api_base_url: HUANXING_CONFIG.backendBaseUrl,
         llm_gateway_url: HUANXING_CONFIG.llmGatewayV1,
         hasn_api_key: session.hasnApiKey || null,
+        default_provider: HUANXING_CONFIG.defaultProvider,
+        fallback_provider: HUANXING_CONFIG.fallbackProvider,
+        embedding_provider: HUANXING_CONFIG.embeddingProvider,
       },
     });
 

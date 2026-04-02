@@ -9,12 +9,13 @@
 # 只有云端部署或租户需要单独覆写时，才在这里写入真实值。
 default_provider = "{{default_provider}}"
 default_model = "{{default_model}}"
+title_model = "{{title_model}}"
 default_temperature = {{default_temperature}}
 api_key = "{{api_key}}"
 
 # ── 向量记忆池 (租户共享配置) ────────────────────────────────
 [memory]
-embedding_provider = "custom:https://llm.dcfuture.cn/v1"
+embedding_provider = "{{embedding_provider}}"
 embedding_model = "text-embedding-v4"
 embedding_dimensions = 1024      # 通义 text-embedding-v4 输出维度
 vector_weight = 0.7              # 向量相似度权重
@@ -29,7 +30,7 @@ chunk_max_tokens = 512           # 每块最大 token 数
 [reliability]
 provider_retries = 5                         # 单个 provider 最多重试次数
 provider_backoff_ms = 500                     # 重试退避时间
-fallback_providers = ["custom:https://llm.dcfuture.cn/v1"]  # 降级到 openai compat 格式
+fallback_providers = ["{{fallback_provider}}"]  # 降级到 openai compat 格式
 # api_keys 留空 —— 代码会自动将 api_key 注入（租户级自动透传）
 api_keys = []
 channel_initial_backoff_secs = 2              # 渠道连接初始退避
@@ -168,16 +169,14 @@ default_voice = "Cherry"
 default_format = "wav"
 
 [tts.generic_openai]
-api_url = "https://llm.dcfuture.cn/v1/audio/speech"
-api_key = "{{api_key}}"
+api_url = "{{llm_gateway}}/audio/speech"
 model = "qwen3-tts-instruct-flash"
 
 # ── 语音识别 (STT) ────────────────────────────────────────────
 [transcription]
 enabled = true
 default_provider = "groq"
-api_url = "https://llm.dcfuture.cn/v1/audio/transcriptions"
-api_key = "{{api_key}}"
+api_url = "{{llm_gateway}}/audio/transcriptions"
 model = "qwen3-asr-flash-2026-02-10"
 
 # ══════════════════════════════════════════════════════════════

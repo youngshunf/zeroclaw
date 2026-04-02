@@ -10,7 +10,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{RwLock, broadcast};
 use tracing::{error, info, warn};
 
 use hasn_client_core::model::{AgentReport, WsCommand, WsEvent};
@@ -26,18 +26,13 @@ use crate::huanxing::db::TenantDb;
 pub enum HasnEvent {
     /// 连接状态变化
     #[serde(rename = "connected")]
-    Connected {
-        node_id: String,
-        node_type: String,
-    },
+    Connected { node_id: String, node_type: String },
     /// 连接断开
     #[serde(rename = "disconnected")]
     Disconnected,
     /// HASN 消息（推送给前端展示）
     #[serde(rename = "message")]
-    Message {
-        payload: serde_json::Value,
-    },
+    Message { payload: serde_json::Value },
     /// Agent 上报结果
     #[serde(rename = "report_ack")]
     ReportAck {
@@ -59,16 +54,15 @@ pub enum HasnEvent {
     },
     /// 离线消息
     #[serde(rename = "offline_messages")]
-    OfflineMessages {
-        messages: Vec<serde_json::Value>,
-    },
+    OfflineMessages { messages: Vec<serde_json::Value> },
 }
 
 /// HASN Agent 专属多路复用会话状态
 pub struct HasnAgentSession {
     pub agent: tokio::sync::Mutex<crate::agent::Agent>,
     pub session_key: String,
-    pub session_backend: Option<std::sync::Arc<dyn crate::channels::session_backend::SessionBackend>>,
+    pub session_backend:
+        Option<std::sync::Arc<dyn crate::channels::session_backend::SessionBackend>>,
 }
 
 /// HASN 连接管理器
@@ -101,12 +95,11 @@ impl HasnConnector {
     }
 
     /// 连接 HASN 中央节点
-    pub async fn connect(
-        &self,
-        central_url: &str,
-        state: Arc<AppState>,
-    ) -> anyhow::Result<()> {
-        info!("[HASN] 连接中央节点: {}", &central_url[..central_url.find('?').unwrap_or(central_url.len())]);
+    pub async fn connect(&self, central_url: &str, state: Arc<AppState>) -> anyhow::Result<()> {
+        info!(
+            "[HASN] 连接中央节点: {}",
+            &central_url[..central_url.find('?').unwrap_or(central_url.len())]
+        );
 
         let event_tx = self.event_tx.clone();
         let node_id = self.node_id.clone();
@@ -128,9 +121,16 @@ impl HasnConnector {
                 // 在 tokio runtime 中异步处理事件
                 tokio::spawn(async move {
                     handle_ws_event(
-                        event, &event_tx, &node_id, &local_agents,
-                        &connected, &sessions, &state, ws_ref,
-                    ).await;
+                        event,
+                        &event_tx,
+                        &node_id,
+                        &local_agents,
+                        &connected,
+                        &sessions,
+                        &state,
+                        ws_ref,
+                    )
+                    .await;
                 });
             })
             .await
@@ -167,9 +167,16 @@ impl HasnConnector {
 
                     tokio::spawn(async move {
                         handle_ws_event(
-                            event, &event_tx, &node_id, &local_agents,
-                            &connected, &sessions, &state, ws_ref,
-                        ).await;
+                            event,
+                            &event_tx,
+                            &node_id,
+                            &local_agents,
+                            &connected,
+                            &sessions,
+                            &state,
+                            ws_ref,
+                        )
+                        .await;
                     });
                 },
                 max_retries,
@@ -206,7 +213,9 @@ impl HasnConnector {
             local_id,
             reply_to_id: None,
         };
-        self.ws.send_command(&cmd).await
+        self.ws
+            .send_command(&cmd)
+            .await
             .map_err(|e| anyhow::anyhow!("HASN 发送失败: {}", e))
     }
 
@@ -222,7 +231,9 @@ impl HasnConnector {
         }
 
         let cmd = WsCommand::ReportAgents { agents };
-        self.ws.send_command(&cmd).await
+        self.ws
+            .send_command(&cmd)
+            .await
             .map_err(|e| anyhow::anyhow!("HASN 上报 Agent 失败: {}", e))
     }
 
@@ -269,7 +280,11 @@ async fn handle_ws_event(
         }
 
         WsEvent::ReportAgentsAck { accepted, failed } => {
-            info!("[HASN] Agent 上报: accepted={}, failed={}", accepted.len(), failed.len());
+            info!(
+                "[HASN] Agent 上报: accepted={}, failed={}",
+                accepted.len(),
+                failed.len()
+            );
             let failed_json: Vec<serde_json::Value> = failed
                 .iter()
                 .map(|f| serde_json::json!({"hasn_id": f.hasn_id, "reason": f.reason}))
@@ -292,7 +307,7 @@ async fn handle_ws_event(
 
             if is_local_agent {
                 info!("[HASN] 收到路由到本地 Agent {} 的消息", target);
-                
+
                 let session_id = message.conversation_id.clone();
                 let content_text = message.text_content();
                 let from_id = message.from_id.clone();
@@ -305,17 +320,17 @@ async fn handle_ws_event(
                     } else {
                         // 初始化新的 Session
                         let bridge = agent_bridge::global_bridge();
-                        if let Some(workspace) = bridge.resolve_workspace_by_hasn_id(state, target).await {
-                            let config = state.config.lock().clone();
-                            let mut agent_config = config.clone();
-                            agent_config.workspace_dir = workspace.clone();
-                            match crate::agent::Agent::from_config(&agent_config).await {
+                        if let Some(tenant) = bridge.resolve_tenant_by_hasn_id(state, target).await
+                        {
+                            match tenant.create_agent().await {
                                 Ok(mut agent) => {
                                     agent.set_memory_session_id(Some(session_id.clone()));
                                     let session_key = format!("hasn_{session_id}");
-                                    let per_user_backend = crate::huanxing::tenant::create_session_backend_for_workspace(&workspace, &config)
+                                    let per_user_backend = tenant
+                                        .session_manager
+                                        .clone()
                                         .or_else(|| state.session_backend.clone());
-                                    
+
                                     // 恢复历史
                                     if let Some(ref backend) = per_user_backend {
                                         let history = backend.load(&session_key);
@@ -338,7 +353,7 @@ async fn handle_ws_event(
                                 }
                             }
                         } else {
-                            warn!("[HASN] 未找到 Agent 工作区: {}", target);
+                            warn!("[HASN] 未找到 Agent TenantContext: {}", target);
                             return;
                         }
                     }
@@ -357,7 +372,8 @@ async fn handle_ws_event(
 
                 tokio::spawn(async move {
                     let mut agent_lock = session.agent.lock().await;
-                    let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<crate::agent::TurnEvent>(100);
+                    let (event_tx, mut event_rx) =
+                        tokio::sync::mpsc::channel::<crate::agent::TurnEvent>(100);
 
                     // 启动一个子任务来处理反推 WS
                     let rep_ws = ws_clone.clone();
@@ -377,7 +393,9 @@ async fn handle_ws_event(
                                             "args": args
                                         }),
                                         content_type: Some(6), // 假设 6 为 tool_call
-                                        msg_type: None, local_id: None, reply_to_id: None,
+                                        msg_type: None,
+                                        local_id: None,
+                                        reply_to_id: None,
                                     };
                                     let _ = rep_ws.send_command(&cmd).await;
                                 }
@@ -392,7 +410,9 @@ async fn handle_ws_event(
                                             "result": output
                                         }),
                                         content_type: Some(6),
-                                        msg_type: None, local_id: None, reply_to_id: None,
+                                        msg_type: None,
+                                        local_id: None,
+                                        reply_to_id: None,
                                     };
                                     let _ = rep_ws.send_command(&cmd).await;
                                 }
@@ -414,7 +434,9 @@ async fn handle_ws_event(
                                 to: to_target,
                                 content: serde_json::json!({"text": full_reply}),
                                 content_type: Some(1),
-                                msg_type: None, local_id: None, reply_to_id: None,
+                                msg_type: None,
+                                local_id: None,
+                                reply_to_id: None,
                             };
                             let _ = ws_clone.send_command(&cmd).await;
 
@@ -434,7 +456,6 @@ async fn handle_ws_event(
                 // 把收到这个包的事件推送到前端 UI
                 let payload = serde_json::to_value(&message).unwrap_or_default();
                 let _ = event_tx.send(HasnEvent::Message { payload });
-
             } else {
                 // to_id 不是本地 Agent (说明是发给当前人的)，直接转给 UI
                 let payload = serde_json::to_value(&message).unwrap_or_default();
@@ -469,11 +490,24 @@ async fn handle_ws_event(
             let _ = event_tx.send(HasnEvent::OfflineMessages { messages });
         }
 
-        WsEvent::ProvisionAgent { agent_hasn_id, owner_id, config: _config } => {
-            info!("[HASN] 收到 PROVISION_AGENT: {} (owner={})", agent_hasn_id, owner_id);
+        WsEvent::ProvisionAgent {
+            agent_hasn_id,
+            owner_id,
+            config: _config,
+        } => {
+            info!(
+                "[HASN] 收到 PROVISION_AGENT: {} (owner={})",
+                agent_hasn_id, owner_id
+            );
             // Phase 5: 创建 Agent 工作区 + ADD_AGENT
             let hx_config = state.config.lock().huanxing.clone();
-            let config_dir = state.config.lock().config_path.parent().unwrap().to_path_buf();
+            let config_dir = state
+                .config
+                .lock()
+                .config_path
+                .parent()
+                .unwrap()
+                .to_path_buf();
             let _templates_dir = hx_config.resolve_templates_dir(&config_dir);
             let hx_db_path = hx_config.resolve_db_path(&config_dir);
 
@@ -487,21 +521,44 @@ async fn handle_ws_event(
                     let seq = db.get_next_user_seq().await.unwrap_or(1);
                     let local_agent_id = format!("{seq:03}-{uname}-cloud");
                     let tenant_dir = format!("{seq:03}-{uname}");
-                    
-                    let _owner_workspace = st.config.lock().huanxing.resolve_owner_dir(&st.config.lock().config_path.parent().unwrap(), Some(&tenant_dir));
-                    let agent_workspace = st.config.lock().huanxing.resolve_agent_workspace(&st.config.lock().config_path.parent().unwrap(), Some(&tenant_dir), &local_agent_id);
 
-                    if let Err(e) = db.save_user_full(
-                        &uname, &uname, &local_agent_id, Some("User"), "assistant", Some("Assistant"),
-                        Some(&agent_workspace.to_string_lossy()), Some(&tenant_dir),
-                        None, None, None, None
-                    ).await {
+                    let _owner_workspace = st.config.lock().huanxing.resolve_owner_dir(
+                        &st.config.lock().config_path.parent().unwrap(),
+                        Some(&tenant_dir),
+                    );
+                    let agent_workspace = st.config.lock().huanxing.resolve_agent_workspace(
+                        &st.config.lock().config_path.parent().unwrap(),
+                        Some(&tenant_dir),
+                        &local_agent_id,
+                    );
+
+                    if let Err(e) = db
+                        .save_user_full(
+                            &uname,
+                            &uname,
+                            &local_agent_id,
+                            Some("User"),
+                            "assistant",
+                            Some("Assistant"),
+                            Some(&agent_workspace.to_string_lossy()),
+                            Some(&tenant_dir),
+                            None,
+                            None,
+                            None,
+                            None,
+                        )
+                        .await
+                    {
                         error!("[HASN] PROVISION 保存 DB 失败: {}", e);
                     } else {
                         let _ = db.add_routing(&local_agent_id, "hasn", &uname).await;
-                        info!("[HASN] 本地 DB 保存成功，开始创建工作区: {}", local_agent_id);
+                        info!(
+                            "[HASN] 本地 DB 保存成功，开始创建工作区: {}",
+                            local_agent_id
+                        );
                         let template_base = config_dir.join("hub").join("templates");
-                        let factory = huanxing_agent_factory::AgentFactory::new(config_dir.clone(), None);
+                        let factory =
+                            huanxing_agent_factory::AgentFactory::new(config_dir.clone(), None);
                         let params = huanxing_agent_factory::CreateAgentParams {
                             tenant_id: tenant_dir.clone(),
                             template_id: "assistant".to_string(),
@@ -510,8 +567,12 @@ async fn handle_ws_event(
                             is_desktop: false,
                             user_nickname: "User".to_string(),
                             provider: None,
+                            model: None,
                             api_key: None,
                             hasn_id: Some(aid.clone()),
+                            fallback_provider: None,
+                            embedding_provider: None,
+                            llm_gateway: None,
                         };
 
                         struct ConnProgress;
@@ -521,10 +582,20 @@ async fn handle_ws_event(
                             }
                         }
 
-                        match factory.create_local_agent(&template_base, &params, &ConnProgress).await {
+                        match factory
+                            .create_local_agent(&template_base, &params, &ConnProgress)
+                            .await
+                        {
                             Ok(_) => {
                                 info!("[HASN] 工作区创建成功。绑定 hasn_id: {}", aid);
-                                let config_path = agent_workspace.join("config.toml");
+                                let _ =
+                                    crate::huanxing::config::promote_legacy_agent_config_from_workspace(
+                                        &agent_workspace,
+                                    );
+                                let config_path =
+                                    crate::huanxing::config::agent_config_path_from_workspace(
+                                        &agent_workspace,
+                                    );
                                 if let Ok(content) = tokio::fs::read_to_string(&config_path).await {
                                     let mut updated = content.clone();
                                     if !updated.contains("hasn_id") {
@@ -533,9 +604,8 @@ async fn handle_ws_event(
                                     }
                                 }
                                 // 上报新加入的 Agent
-                                let cmd = hasn_client_core::model::WsCommand::AddAgent {
-                                    hasn_id: aid,
-                                };
+                                let cmd =
+                                    hasn_client_core::model::WsCommand::AddAgent { hasn_id: aid };
                                 let _ = ws_client.send_command(&cmd).await;
                             }
                             Err(e) => error!("[HASN] PROVISION 工作区创建失败: {}", e),

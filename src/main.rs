@@ -265,6 +265,18 @@ Examples:
         /// HASN public identity ID
         #[arg(long)]
         hasn_id: Option<String>,
+        /// Default LLM provider (e.g. "custom:http://127.0.0.1:3180/v1")
+        #[arg(long)]
+        provider: Option<String>,
+        /// Fallback LLM provider for reliability
+        #[arg(long)]
+        fallback_provider: Option<String>,
+        /// Embedding vector provider
+        #[arg(long)]
+        embedding_provider: Option<String>,
+        /// LLM gateway V1 URL for TTS/STT api_url
+        #[arg(long)]
+        llm_gateway: Option<String>,
     },
 
     /// Start/manage the gateway server (webhooks, websockets)
@@ -1081,18 +1093,32 @@ async fn main() -> Result<()> {
             display_name,
             user_nickname,
             hasn_id,
+            provider,
+            fallback_provider,
+            embedding_provider,
+            llm_gateway,
         } => {
-            let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir).to_path_buf();
+            let config_dir = config
+                .config_path
+                .parent()
+                .unwrap_or(&config.workspace_dir)
+                .to_path_buf();
             let mut expected_tenant_dir = format!("001-{}", phone);
-            
+
             // ── Step 1: Initialize SQLite DB (MUST succeed) ──────────
             let db_path = config.huanxing.resolve_db_path(&config_dir);
             let db = crate::huanxing::db::TenantDb::open(&db_path)
                 .context("Failed to open tenant database — cannot proceed with agent creation")?;
-            
+
             // Determine tenant_dir: reuse existing or allocate new sequence number
-            if let Ok((users, _)) = db.list_users(&crate::huanxing::db::UserFilter::default()).await {
-                if let Some(user) = users.iter().find(|u| u.phone.as_deref() == Some(phone.as_str())) {
+            if let Ok((users, _)) = db
+                .list_users(&crate::huanxing::db::UserFilter::default())
+                .await
+            {
+                if let Some(user) = users
+                    .iter()
+                    .find(|u| u.phone.as_deref() == Some(phone.as_str()))
+                {
                     if let Some(td) = &user.tenant_dir {
                         expected_tenant_dir = td.clone();
                     }
@@ -1100,21 +1126,31 @@ async fn main() -> Result<()> {
                     expected_tenant_dir = format!("{:03}-{}", users.len() + 1, phone);
                 }
             }
-            
+
             // ── Step 2: Write user + agent records (MUST succeed) ────
             let d_name = display_name.clone().unwrap_or_else(|| agent_name.clone());
             let n_name = user_nickname.clone().unwrap_or_default();
             db.save_user_full(
-                &phone, &phone, &agent_name,
-                Some(n_name.as_str()), &template, Some(d_name.as_str()),
-                None, Some(&expected_tenant_dir), None, None, None, None,
-            ).await
+                &phone,
+                &phone,
+                &agent_name,
+                Some(n_name.as_str()),
+                &template,
+                Some(d_name.as_str()),
+                None,
+                Some(&expected_tenant_dir),
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
             .context("Failed to write user/agent records to DB")?;
-            
+
             if let Err(e) = db.add_routing(&agent_name, "cli", &phone).await {
                 tracing::warn!("Failed to add default CLI routing (non-fatal): {e}");
             }
-            
+
             tracing::info!(
                 tenant_dir = %expected_tenant_dir,
                 agent = %agent_name,
@@ -1130,7 +1166,7 @@ async fn main() -> Result<()> {
                 .join(&expected_tenant_dir)
                 .join("agents")
                 .join(&agent_name);
-            
+
             if old_flat_agent.exists() && !new_agent_dir.exists() {
                 let has_content = std::fs::read_dir(&old_flat_agent)
                     .map(|mut i| i.next().is_some())
@@ -1151,7 +1187,11 @@ async fn main() -> Result<()> {
                             // Leave a marker so we know this was migrated
                             let _ = std::fs::write(
                                 old_flat_agent.parent().unwrap().join(".migrated"),
-                                format!("Migrated to users/{}/agents/ on {}\n", expected_tenant_dir, chrono::Utc::now().to_rfc3339()),
+                                format!(
+                                    "Migrated to users/{}/agents/ on {}\n",
+                                    expected_tenant_dir,
+                                    chrono::Utc::now().to_rfc3339()
+                                ),
                             );
                         }
                         Err(e) => {
@@ -1163,7 +1203,9 @@ async fn main() -> Result<()> {
                                 .arg(new_agent_dir.parent().unwrap())
                                 .status();
                             match status {
-                                Ok(s) if s.success() => tracing::info!("Migration via copy successful"),
+                                Ok(s) if s.success() => {
+                                    tracing::info!("Migration via copy successful")
+                                }
                                 _ => tracing::warn!("Migration copy also failed: {:?}", status),
                             }
                         }
@@ -1178,7 +1220,11 @@ async fn main() -> Result<()> {
             }
 
             // ── Step 4: Create agent workspace via factory ───────────
-            let template_base = config.huanxing.resolve_hub_dir().unwrap_or_else(|| config.workspace_dir.join("hub")).join("templates");
+            let template_base = config
+                .huanxing
+                .resolve_hub_dir()
+                .unwrap_or_else(|| config.workspace_dir.join("hub"))
+                .join("templates");
             let factory = huanxing_agent_factory::AgentFactory::new(config_dir.clone(), None);
             let params = huanxing_agent_factory::CreateAgentParams {
                 tenant_id: expected_tenant_dir.clone(),
@@ -1187,11 +1233,15 @@ async fn main() -> Result<()> {
                 display_name: display_name.unwrap_or_else(|| agent_name.clone()),
                 is_desktop,
                 user_nickname: user_nickname.unwrap_or_default(),
-                provider: None,
+                provider,
+                model: None,
                 api_key: None,
                 hasn_id,
+                fallback_provider,
+                embedding_provider,
+                llm_gateway,
             };
-            
+
             struct CLIProgress;
             impl huanxing_agent_factory::ProgressSink for CLIProgress {
                 fn on_progress(&self, step: &str, detail: &str) {
@@ -1201,25 +1251,31 @@ async fn main() -> Result<()> {
                     tracing::error!("Error [{}]: {}", step, error);
                 }
             }
-            
+
             // If the target agent directory already exists (re-run or post-migration),
             // skip factory creation but ensure Owner Workspace exists.
-            let target_agent_dir = factory.resolve_tenant_root(&expected_tenant_dir)
+            let target_agent_dir = factory
+                .resolve_tenant_root(&expected_tenant_dir)
                 .join("agents")
                 .join(&agent_name);
-            
+
             if target_agent_dir.exists() {
                 tracing::info!(
                     path = %target_agent_dir.display(),
                     "Agent directory already exists, ensuring Owner Workspace"
                 );
                 // Ensure Owner Workspace exists even if agent was migrated or pre-existing
-                let owner_ws = factory.resolve_tenant_root(&expected_tenant_dir).join("workspace");
+                let owner_ws = factory
+                    .resolve_tenant_root(&expected_tenant_dir)
+                    .join("workspace");
                 std::fs::create_dir_all(owner_ws.join("memory"))?;
                 tracing::info!("Owner workspace ensured at {}", owner_ws.display());
                 Ok(())
             } else {
-                match factory.create_local_agent(&template_base, &params, &CLIProgress).await {
+                match factory
+                    .create_local_agent(&template_base, &params, &CLIProgress)
+                    .await
+                {
                     Ok(res) => {
                         tracing::info!("Agent created at {}", res.workspace_dir.display());
                         Ok(())

@@ -297,8 +297,12 @@ impl Tool for HxRegisterUser {
         let tenant_dir_name = format!("{seq:03}-{phone}");
         // Calculate isolated tenant paths
         let tenant_dir = format!("{:03}-{}", seq, phone);
-        let _owner_workspace = self.hx_config.resolve_owner_dir(&self.config_dir, Some(&tenant_dir));
-        let agent_workspace = self.hx_config.resolve_agent_workspace(&self.config_dir, Some(&tenant_dir), &agent_id);
+        let _owner_workspace = self
+            .hx_config
+            .resolve_owner_dir(&self.config_dir, Some(&tenant_dir));
+        let agent_workspace =
+            self.hx_config
+                .resolve_agent_workspace(&self.config_dir, Some(&tenant_dir), &agent_id);
 
         // Step 2: Save user to local DB with tokens + channel binding + routing
         match self
@@ -367,7 +371,11 @@ impl Tool for HxRegisterUser {
 
         // Step 3: Create workspace using AgentFactory
         let provider = self.default_provider.as_deref();
-        let api_key = if llm_token.is_empty() { None } else { Some(llm_token.to_string()) };
+        let api_key = if llm_token.is_empty() {
+            None
+        } else {
+            Some(llm_token.to_string())
+        };
 
         let factory = huanxing_agent_factory::AgentFactory::new(self.config_dir.clone(), None);
         let params = huanxing_agent_factory::CreateAgentParams {
@@ -378,10 +386,14 @@ impl Tool for HxRegisterUser {
             is_desktop: false,
             user_nickname: nickname.to_string(),
             provider: provider.map(|s| s.to_string()),
+            model: None,
             api_key,
             hasn_id: None,
+            fallback_provider: None,
+            embedding_provider: None,
+            llm_gateway: None,
         };
-        
+
         struct ToolProgress;
         impl huanxing_agent_factory::ProgressSink for ToolProgress {
             fn on_progress(&self, step: &str, detail: &str) {
@@ -389,7 +401,10 @@ impl Tool for HxRegisterUser {
             }
         }
 
-        match factory.create_local_agent(&self.templates_dir, &params, &ToolProgress).await {
+        match factory
+            .create_local_agent(&self.templates_dir, &params, &ToolProgress)
+            .await
+        {
             Ok(_) => {
                 steps.push(format!("✅ Step3: 工作区生成完成 ({agent_id})"));
             }
@@ -479,15 +494,19 @@ impl Tool for HxRegisterUser {
 
                                 // 将 hasn_id 写回 Agent 的 config.toml
                                 if !agent_hasn_id.is_empty() {
-                                    let config_path = agent_workspace.join("config.toml");
+                                    let _ = crate::huanxing::config::promote_legacy_agent_config_from_workspace(
+                                        &agent_workspace,
+                                    );
+                                    let config_path =
+                                        crate::huanxing::config::agent_config_path_from_workspace(
+                                            &agent_workspace,
+                                        );
                                     if let Ok(content) =
                                         tokio::fs::read_to_string(&config_path).await
                                     {
                                         let updated = if content.contains("hasn_id =") {
-                                            let re = regex::Regex::new(
-                                                r#"hasn_id\s*=\s*"[^"]*""#,
-                                            )
-                                            .unwrap();
+                                            let re = regex::Regex::new(r#"hasn_id\s*=\s*"[^"]*""#)
+                                                .unwrap();
                                             re.replace(
                                                 &content,
                                                 &format!(r#"hasn_id = "{agent_hasn_id}""#),
@@ -496,14 +515,10 @@ impl Tool for HxRegisterUser {
                                         } else if content.contains("[agent]") {
                                             content.replace(
                                                 "[agent]",
-                                                &format!(
-                                                    "[agent]\nhasn_id = \"{agent_hasn_id}\""
-                                                ),
+                                                &format!("[agent]\nhasn_id = \"{agent_hasn_id}\""),
                                             )
                                         } else {
-                                            format!(
-                                                "{content}\nhasn_id = \"{agent_hasn_id}\"\n"
-                                            )
+                                            format!("{content}\nhasn_id = \"{agent_hasn_id}\"\n")
                                         };
                                         if let Err(e) =
                                             tokio::fs::write(&config_path, &updated).await
@@ -516,9 +531,8 @@ impl Tool for HxRegisterUser {
                                 }
                             }
                             Err(e) => {
-                                steps.push(format!(
-                                    "⚠️ Step4b: HASN Agent 注册失败（非致命）: {e}"
-                                ));
+                                steps
+                                    .push(format!("⚠️ Step4b: HASN Agent 注册失败（非致命）: {e}"));
                             }
                         }
                     }
@@ -559,7 +573,8 @@ async fn configure_agent_llm(
     llm_token: &str,
     default_provider: &str,
 ) -> anyhow::Result<()> {
-    let config_path = workspace.join("config.toml");
+    let _ = crate::huanxing::config::promote_legacy_agent_config_from_workspace(workspace);
+    let config_path = crate::huanxing::config::agent_config_path_from_workspace(workspace);
     if config_path.exists() {
         // Read existing config and update api_key
         let content = tokio::fs::read_to_string(&config_path).await?;
@@ -1646,11 +1661,11 @@ pub struct HxTts {
 }
 
 impl HxTts {
-    pub fn new(
-        tts_config: crate::config::TtsConfig,
-        workspace_dir: std::path::PathBuf,
-    ) -> Self {
-        Self { tts_config, workspace_dir }
+    pub fn new(tts_config: crate::config::TtsConfig, workspace_dir: std::path::PathBuf) -> Self {
+        Self {
+            tts_config,
+            workspace_dir,
+        }
     }
 }
 
@@ -1731,10 +1746,13 @@ impl Tool for HxTts {
             .build()
         {
             Ok(c) => c,
-            Err(e) => return Ok(ToolResult {
-                success: false, output: String::new(),
-                error: Some(format!("Failed to build HTTP client: {e}"))
-            }),
+            Err(e) => {
+                return Ok(ToolResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some(format!("Failed to build HTTP client: {e}")),
+                });
+            }
         };
 
         let body = serde_json::json!({
@@ -1744,34 +1762,48 @@ impl Tool for HxTts {
         });
 
         // 1. Fetch TTS binary stream securely with reqwest (HuanXing exclusive logic, no dependency on upstream)
-        let resp = match client.post(&api_url).bearer_auth(&api_key).json(&body).send().await {
+        let resp = match client
+            .post(&api_url)
+            .bearer_auth(&api_key)
+            .json(&body)
+            .send()
+            .await
+        {
             Ok(r) => r,
-            Err(e) => return Ok(ToolResult {
-                success: false, output: String::new(),
-                error: Some(format!("TTS request failed: {e}")),
-            }),
+            Err(e) => {
+                return Ok(ToolResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some(format!("TTS request failed: {e}")),
+                });
+            }
         };
 
         let status = resp.status();
         if !status.is_success() {
             let err_body = resp.text().await.unwrap_or_default();
             return Ok(ToolResult {
-                success: false, output: String::new(),
+                success: false,
+                output: String::new(),
                 error: Some(format!("TTS API error ({status}): {err_body}")),
             });
         }
 
         let audio_bytes = match resp.bytes().await {
             Ok(b) => b,
-            Err(e) => return Ok(ToolResult {
-                success: false, output: String::new(),
-                error: Some(format!("Failed to read audio bytes: {e}")),
-            }),
+            Err(e) => {
+                return Ok(ToolResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some(format!("Failed to read audio bytes: {e}")),
+                });
+            }
         };
 
         if audio_bytes.is_empty() {
             return Ok(ToolResult {
-                success: false, output: String::new(),
+                success: false,
+                output: String::new(),
                 error: Some("TTS returned empty audio".to_string()),
             });
         }
@@ -1814,7 +1846,7 @@ impl Tool for HxTts {
 }
 
 // ═══════════════════════════════════════════════════════
-// hx_file_upload — Agent File Upload 
+// hx_file_upload — Agent File Upload
 // ═══════════════════════════════════════════════════════
 
 /// File upload to OSS via backend agent API.
@@ -1826,7 +1858,11 @@ pub struct HxFileUpload {
 
 impl HxFileUpload {
     pub fn new(api: ApiClient, db: super::db::TenantDb, workspace_dir: std::path::PathBuf) -> Self {
-        Self { api, db, workspace_dir }
+        Self {
+            api,
+            db,
+            workspace_dir,
+        }
     }
 }
 
@@ -1865,7 +1901,8 @@ impl Tool for HxFileUpload {
             });
         }
 
-        let agent_id = self.workspace_dir
+        let agent_id = self
+            .workspace_dir
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or_default()
@@ -1888,26 +1925,32 @@ impl Tool for HxFileUpload {
 
         let contents = match tokio::fs::read(path).await {
             Ok(bytes) => bytes,
-            Err(e) => return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!("读取本地文件失败: {}", e)),
-            }),
+            Err(e) => {
+                return Ok(ToolResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some(format!("读取本地文件失败: {}", e)),
+                });
+            }
         };
 
-        let filename = path.file_name()
+        let filename = path
+            .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("upload_temp_file")
             .to_string();
 
-        let part = reqwest::multipart::Part::bytes(contents)
-            .file_name(filename);
-        
+        let part = reqwest::multipart::Part::bytes(contents).file_name(filename);
+
         let form = reqwest::multipart::Form::new().part("file", part);
 
         match self
             .api
-            .agent_post_multipart("/api/v1/huanxing/agent/files/upload", form, &[("user_id", &user_id)])
+            .agent_post_multipart(
+                "/api/v1/huanxing/agent/files/upload",
+                form,
+                &[("user_id", &user_id)],
+            )
             .await
         {
             Ok(resp) => {
@@ -1945,7 +1988,11 @@ pub struct HxDeployWebsite {
 
 impl HxDeployWebsite {
     pub fn new(api: ApiClient, workspace_dir: std::path::PathBuf, db: TenantDb) -> Self {
-        Self { api, workspace_dir, db }
+        Self {
+            api,
+            workspace_dir,
+            db,
+        }
     }
 }
 
@@ -1989,7 +2036,8 @@ impl Tool for HxDeployWebsite {
             });
         }
 
-        let agent_id = self.workspace_dir
+        let agent_id = self
+            .workspace_dir
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or_default()
@@ -2038,7 +2086,10 @@ impl Tool for HxDeployWebsite {
                 return Ok(ToolResult {
                     success: false,
                     output: String::new(),
-                    error: Some(format!("压缩网站文件失败: {}", String::from_utf8_lossy(&out.stderr))),
+                    error: Some(format!(
+                        "压缩网站文件失败: {}",
+                        String::from_utf8_lossy(&out.stderr)
+                    )),
                 });
             }
             Err(e) => {
@@ -2066,16 +2117,19 @@ impl Tool for HxDeployWebsite {
         // 清理临时文件
         let _ = tokio::fs::remove_file(&zip_path).await;
 
-        let part = reqwest::multipart::Part::bytes(contents)
-            .file_name(zip_filename);
-        
+        let part = reqwest::multipart::Part::bytes(contents).file_name(zip_filename);
+
         let form = reqwest::multipart::Form::new()
             .part("file", part)
             .text("site_name", site_name.to_string());
 
         match self
             .api
-            .agent_post_multipart("/api/v1/huanxing/agent/website/deploy", form, &[("user_id", &user_id)])
+            .agent_post_multipart(
+                "/api/v1/huanxing/agent/website/deploy",
+                form,
+                &[("user_id", &user_id)],
+            )
             .await
         {
             Ok(resp) => {
@@ -2112,7 +2166,81 @@ pub fn huanxing_api_tools(
         Arc::new(HxCheckQuota::new(api.clone())),
         Arc::new(HxGetSubscription::new(api.clone())),
         Arc::new(HxUsageStats::new(api.clone())),
-        Arc::new(HxFileUpload::new(api.clone(), db.clone(), workspace_dir.clone())),
-        Arc::new(HxDeployWebsite::new(api.clone(), workspace_dir.clone(), db.clone())),
+        Arc::new(HxFileUpload::new(
+            api.clone(),
+            db.clone(),
+            workspace_dir.clone(),
+        )),
+        Arc::new(HxDeployWebsite::new(
+            api.clone(),
+            workspace_dir.clone(),
+            db.clone(),
+        )),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::configure_agent_llm;
+
+    #[tokio::test]
+    async fn configure_agent_llm_writes_wrapper_config() {
+        let temp = tempfile::tempdir().unwrap();
+        let wrapper = temp.path().join("agents").join("default");
+        let workspace = wrapper.join("workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+
+        tokio::fs::write(wrapper.join("config.toml"), "default_provider = \"old\"\n")
+            .await
+            .unwrap();
+        tokio::fs::write(
+            workspace.join("config.toml"),
+            "api_key = \"legacy-workspace\"\n",
+        )
+        .await
+        .unwrap();
+
+        configure_agent_llm(&workspace, "tenant-token", "tenant-provider")
+            .await
+            .unwrap();
+
+        let wrapper_content = tokio::fs::read_to_string(wrapper.join("config.toml"))
+            .await
+            .unwrap();
+        let workspace_content = tokio::fs::read_to_string(workspace.join("config.toml"))
+            .await
+            .unwrap();
+
+        assert!(wrapper_content.contains("api_key = \"tenant-token\""));
+        assert!(wrapper_content.contains("default_provider = \"tenant-provider\""));
+        assert!(workspace_content.contains("legacy-workspace"));
+        assert!(!workspace_content.contains("tenant-token"));
+    }
+
+    #[tokio::test]
+    async fn configure_agent_llm_promotes_legacy_workspace_config() {
+        let temp = tempfile::tempdir().unwrap();
+        let wrapper = temp.path().join("agents").join("default");
+        let workspace = wrapper.join("workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+
+        tokio::fs::write(
+            workspace.join("config.toml"),
+            "default_provider = \"legacy-provider\"\n",
+        )
+        .await
+        .unwrap();
+
+        configure_agent_llm(&workspace, "tenant-token", "tenant-provider")
+            .await
+            .unwrap();
+
+        let wrapper_content = tokio::fs::read_to_string(wrapper.join("config.toml"))
+            .await
+            .unwrap();
+
+        assert!(wrapper_content.contains("api_key = \"tenant-token\""));
+        assert!(wrapper_content.contains("default_provider = \"tenant-provider\""));
+        assert!(!workspace.join("config.toml").exists());
+    }
 }

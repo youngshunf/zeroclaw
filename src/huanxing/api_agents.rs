@@ -73,8 +73,12 @@ fn build_create_agent_params(
         is_desktop: req.is_desktop.unwrap_or(false),
         user_nickname: display_name.to_string(),
         provider: None,
+        model: None,
         api_key: req.api_key.clone(),
         hasn_id: None,
+        fallback_provider: None,
+        embedding_provider: None,
+        llm_gateway: None,
     }
 }
 

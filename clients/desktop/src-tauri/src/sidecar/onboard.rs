@@ -99,6 +99,19 @@ impl SidecarManager {
             .arg("--user-nickname")
             .arg(nickname);
 
+        // 传递 provider 配置给 agent-create，用于模板占位符替换
+        if let Some(p) = &req.default_provider {
+            create_cmd.arg("--provider").arg(p);
+        }
+        if let Some(fp) = &req.fallback_provider {
+            create_cmd.arg("--fallback-provider").arg(fp);
+        }
+        if let Some(ep) = &req.embedding_provider {
+            create_cmd.arg("--embedding-provider").arg(ep);
+        }
+        // llm_gateway 用于 TTS/STT api_url 占位符
+        create_cmd.arg("--llm-gateway").arg(&llm_gateway);
+
         create_cmd.env("ZEROCLAW_BUILD_VERSION", "huanxing-desktop");
 
         tracing::info!("Running zeroClaw agent-create: {:?}", create_cmd);

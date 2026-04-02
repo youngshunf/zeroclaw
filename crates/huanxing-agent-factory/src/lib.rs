@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 
 pub mod engine;
-pub mod types;
 pub mod market_api;
 pub mod scaffold;
+pub mod types;
 
 /// 进度回调 trait
 pub trait ProgressSink: Send + Sync {
@@ -34,13 +34,21 @@ pub struct CreateAgentParams {
     pub is_desktop: bool,
     /// 用户姓名/昵称 (用于 {{nickname}} 替换)
     pub user_nickname: String,
-    
+
     // 以下为给大模型的覆写选项
     pub provider: Option<String>,
+    pub model: Option<String>,
     pub api_key: Option<String>,
-    
+
     /// Agent 绑定的 HASN Identity ID
     pub hasn_id: Option<String>,
+
+    /// 降级 fallback provider (e.g. "custom:https://llm.dcfuture.cn/v1")
+    pub fallback_provider: Option<String>,
+    /// 嵌入向量 provider (e.g. "custom:https://llm.dcfuture.cn/v1")
+    pub embedding_provider: Option<String>,
+    /// LLM 网关 V1 URL (e.g. "http://127.0.0.1:3180/v1")，用于 TTS/STT api_url
+    pub llm_gateway: Option<String>,
 }
 
 #[derive(Debug, Clone)]
