@@ -1,11 +1,11 @@
 use crate::gateway::AppState;
 use crate::sop::engine::SopEngine;
 use axum::{
+    Extension, Json, Router,
     extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
-    Extension, Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -72,15 +72,17 @@ pub fn sop_routes() -> Router<AppState> {
 // ── Handlers ──────────────────────────────────────────────────────
 
 /// GET /api/sop/list?agent={name}
-/// 
+///
 /// Lists all available SOPs for the specified agent.
 async fn list_sops(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Query(query): Query<AgentQuery>,
     Extension(engine): Extension<Arc<Mutex<SopEngine>>>,
 ) -> impl IntoResponse {
-    let workspace = resolve_agent_workspace(&state, &query.agent);
-    
+    let config = state.config.lock().clone();
+    let workspace = resolve_agent_workspace(&config, &headers, &query.agent).await;
+
     if !workspace.exists() {
         return (
             StatusCode::NOT_FOUND,
@@ -93,13 +95,13 @@ async fn list_sops(
     engine_guard.ensure_loaded(&workspace);
 
     let active_runs_per_sop = count_active_runs(&*engine_guard);
-    
+
     let mut sops: Vec<SopInfo> = engine_guard
         .sops()
         .iter()
         .map(|sop| {
             let active_runs = active_runs_per_sop.get(&sop.name).copied().unwrap_or(0);
-            
+
             let reqs = sop.requirements.as_ref().map(|r| SopRequirementsDto {
                 skills: r.skills.clone(),
                 optional_skills: r.optional_skills.clone(),
@@ -125,16 +127,18 @@ async fn list_sops(
 }
 
 /// GET /api/sop/{name}/detail?agent={agent_name}
-/// 
+///
 /// Gets the full details including steps for a specific SOP.
 async fn sop_detail(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Path(name): Path<String>,
     Query(query): Query<AgentQuery>,
     Extension(engine): Extension<Arc<Mutex<SopEngine>>>,
 ) -> impl IntoResponse {
-    let workspace = resolve_agent_workspace(&state, &query.agent);
-    
+    let config = state.config.lock().clone();
+    let workspace = resolve_agent_workspace(&config, &headers, &query.agent).await;
+
     if !workspace.exists() {
         return (
             StatusCode::NOT_FOUND,
@@ -172,13 +176,17 @@ async fn sop_detail(
                 requirements: reqs,
             };
 
-            let steps = sop.steps.into_iter().map(|step| SopStepInfo {
-                number: step.number,
-                title: step.title,
-                requires_confirmation: step.requires_confirmation,
-                suggested_tools: step.suggested_tools,
-            }).collect();
-            
+            let steps = sop
+                .steps
+                .into_iter()
+                .map(|step| SopStepInfo {
+                    number: step.number,
+                    title: step.title,
+                    requires_confirmation: step.requires_confirmation,
+                    suggested_tools: step.suggested_tools,
+                })
+                .collect();
+
             let triggers = sop.triggers.into_iter().map(|t| t.to_string()).collect();
 
             let response = SopDetailResponse {
@@ -210,17 +218,19 @@ pub struct ExecuteSopResponse {
 }
 
 /// POST /api/sop/{name}/execute?agent={agent_name}
-/// 
+///
 /// Starts a new SOP execution and provisions a dedicated session.
 async fn execute_sop(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Path(name): Path<String>,
     Query(query): Query<AgentQuery>,
     Extension(engine): Extension<Arc<Mutex<SopEngine>>>,
     Json(req): Json<ExecuteSopRequest>,
 ) -> impl IntoResponse {
-    let workspace = resolve_agent_workspace(&state, &query.agent);
-    
+    let config = state.config.lock().clone();
+    let workspace = resolve_agent_workspace(&config, &headers, &query.agent).await;
+
     if !workspace.exists() {
         return (
             StatusCode::NOT_FOUND,
@@ -249,16 +259,14 @@ async fn execute_sop(
         };
 
         match engine_guard.start_run(&name, event) {
-            Ok(action) => {
-                match action {
-                    crate::sop::SopRunAction::ExecuteStep { run_id, .. } => run_id,
-                    crate::sop::SopRunAction::WaitApproval { run_id, .. } => run_id,
-                    crate::sop::SopRunAction::DeterministicStep { run_id, .. } => run_id,
-                    crate::sop::SopRunAction::CheckpointWait { run_id, .. } => run_id,
-                    crate::sop::SopRunAction::Completed { run_id, .. } => run_id,
-                    crate::sop::SopRunAction::Failed { run_id, .. } => run_id,
-                }
-            }
+            Ok(action) => match action {
+                crate::sop::SopRunAction::ExecuteStep { run_id, .. } => run_id,
+                crate::sop::SopRunAction::WaitApproval { run_id, .. } => run_id,
+                crate::sop::SopRunAction::DeterministicStep { run_id, .. } => run_id,
+                crate::sop::SopRunAction::CheckpointWait { run_id, .. } => run_id,
+                crate::sop::SopRunAction::Completed { run_id, .. } => run_id,
+                crate::sop::SopRunAction::Failed { run_id, .. } => run_id,
+            },
             Err(e) => {
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -292,7 +300,7 @@ async fn execute_sop(
              );
              CREATE INDEX IF NOT EXISTS idx_desktop_sessions_agent ON desktop_sessions(agent_id);",
         )?;
-        
+
         conn.execute(
             "INSERT INTO desktop_sessions (session_id, agent_id, title, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5)
@@ -336,11 +344,13 @@ pub struct RunsListResponse {
 /// GET /api/sop/runs?agent={name}&status=completed
 async fn list_runs(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Query(query): Query<RunsQuery>,
     Extension(engine): Extension<Arc<Mutex<SopEngine>>>,
 ) -> impl IntoResponse {
-    let workspace = resolve_agent_workspace(&state, &query.agent);
-    
+    let config = state.config.lock().clone();
+    let workspace = resolve_agent_workspace(&config, &headers, &query.agent).await;
+
     if !workspace.exists() {
         return (
             StatusCode::NOT_FOUND,
@@ -362,7 +372,11 @@ async fn list_runs(
         }
     }
 
-    if status_filter.is_none() || status_filter == Some("completed") || status_filter == Some("failed") || status_filter == Some("cancelled") {
+    if status_filter.is_none()
+        || status_filter == Some("completed")
+        || status_filter == Some("failed")
+        || status_filter == Some("cancelled")
+    {
         for run in engine_guard.finished_runs(None) {
             let status_str = match run.status {
                 crate::sop::SopRunStatus::Completed => "completed",
@@ -371,7 +385,9 @@ async fn list_runs(
                 _ => "active", // shouldn't be here
             };
             if let Some(f) = status_filter {
-                if status_str != f { continue; }
+                if status_str != f {
+                    continue;
+                }
             }
             result_runs.push(run.clone());
         }
@@ -392,10 +408,49 @@ fn count_active_runs(engine: &SopEngine) -> HashMap<String, usize> {
     counts
 }
 
-fn resolve_agent_workspace(state: &AppState, agent_name: &str) -> std::path::PathBuf {
-    let config = state.config.lock().clone();
-    let agents_dir = config
+async fn resolve_agent_workspace(
+    config: &crate::config::Config,
+    headers: &axum::http::HeaderMap,
+    agent_name: &str,
+) -> std::path::PathBuf {
+    let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
+    let tenant_dir =
+        crate::huanxing::api_agents::extract_tenant_dir(headers, config_dir, &config.huanxing)
+            .await;
+    config
         .huanxing
-        .resolve_agents_dir(config.config_path.parent().unwrap_or(&config.workspace_dir));
-    agents_dir.join(agent_name)
+        .resolve_agent_workspace(config_dir, tenant_dir.as_deref(), agent_name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_agent_workspace;
+    use crate::config::Config;
+    use axum::http::{HeaderMap, HeaderValue};
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn resolve_agent_workspace_uses_tenant_header() {
+        let temp = tempdir().unwrap();
+        let config_dir = temp.path();
+        let mut config = Config::default();
+        config.huanxing.enabled = true;
+        config.config_path = config_dir.join("config.toml");
+        config.workspace_dir = config_dir.join("workspace");
+
+        let mut headers = HeaderMap::new();
+        headers.insert("x-tenant-dir", HeaderValue::from_static("001-tenant-a"));
+
+        let workspace = resolve_agent_workspace(&config, &headers, "default").await;
+
+        assert_eq!(
+            workspace,
+            config_dir
+                .join("users")
+                .join("001-tenant-a")
+                .join("agents")
+                .join("default")
+                .join("workspace")
+        );
+    }
 }

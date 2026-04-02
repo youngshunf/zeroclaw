@@ -76,7 +76,8 @@ pub struct MessageContext {
     pub knowledge_graph: Option<Arc<crate::memory::knowledge_graph::KnowledgeGraph>>,
 
     /// Multi-agent cross-workspace knowledge index.
-    pub cross_knowledge_index: Option<Arc<crate::memory::knowledge_cross::CrossWorkspaceKnowledgeIndex>>,
+    pub cross_knowledge_index:
+        Option<Arc<crate::memory::knowledge_cross::CrossWorkspaceKnowledgeIndex>>,
 
     /// Knowledge graph configuration (for auto_capture, suggest_on_query, etc.).
     pub knowledge_config: crate::config::KnowledgeConfig,

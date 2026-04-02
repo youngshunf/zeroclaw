@@ -12,10 +12,10 @@
 //! registered user their own AI assistant while sharing channel connections
 //! and the LLM provider pool.
 
+use super::ApiClient;
 use super::config::HuanXingConfig;
 use super::db::TenantDb;
 use super::tenant::TenantContext;
-use super::ApiClient;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
@@ -49,7 +49,10 @@ impl TenantRouter {
         workspace_dir: PathBuf,
         global_config: Arc<Config>,
     ) -> anyhow::Result<Self> {
-        let config_dir = global_config.config_path.parent().unwrap_or(&global_config.workspace_dir);
+        let config_dir = global_config
+            .config_path
+            .parent()
+            .unwrap_or(&global_config.workspace_dir);
         let db_path = config.resolve_db_path(config_dir);
         let db = TenantDb::open(&db_path)?;
 
@@ -127,40 +130,14 @@ impl TenantRouter {
         // 2. Cache miss — query DB.
         match self.db.find_by_channel(channel, sender_id).await {
             Ok(Some(record)) => {
-                let config_dir = self.global_config.config_path.parent()
-                    .map(|p| p.to_path_buf())
-                    .unwrap_or_else(|| self.workspace_dir.clone());
-
-                // Resolve paths using the unified architecture.
-                // Root: config_dir/users/{tenant_dir}/...
-                let tenant_dir_str = record.tenant_dir.as_deref();
-                let owner_dir = self.config.resolve_owner_dir(&config_dir, tenant_dir_str);
-                let agent_workspace = self.config.resolve_agent_workspace(
-                    &config_dir, tenant_dir_str, &record.agent_id,
-                );
-
-                match TenantContext::load(
-                    &record.agent_id,
-                    &record.user_id,
-                    agent_workspace.clone(),
-                    owner_dir,
-                    self.config.default_model.clone(),
-                    self.config.default_provider.clone(),
-                    record.template.clone(),
-                    record.nickname.clone(),
-                    record.star_name.clone(),
-                    record.plan.clone(),
-                    &self.global_config,
-                )
-                .await
-                {
+                match TenantContext::load_from_record(&record, &self.global_config).await {
                     Ok(ctx) => {
                         let ctx = Arc::new(ctx);
                         let mut cache = self.cache.write().unwrap_or_else(|e| e.into_inner());
                         cache.insert(key, ctx.clone());
                         tracing::info!(
                             agent_id = %ctx.agent_id,
-                            ?tenant_dir_str,
+                            tenant_dir = ?record.tenant_dir,
                             channel,
                             sender_id,
                             "Tenant context loaded from DB"
@@ -439,12 +416,23 @@ fn collect_system_metrics() -> SystemMetrics {
                 if let Some(data) = lines.next() {
                     let parts: Vec<&str> = data.split_whitespace().collect();
                     if parts.len() >= 4 {
-                        let tz_block = if cfg!(target_os = "macos") { parts[1] } else { parts[1] };
-                        let used_block = if cfg!(target_os = "macos") { parts[2] } else { parts[2] };
-                        if let (Ok(total_k), Ok(used_k)) = (tz_block.parse::<f64>(), used_block.parse::<f64>()) {
+                        let tz_block = if cfg!(target_os = "macos") {
+                            parts[1]
+                        } else {
+                            parts[1]
+                        };
+                        let used_block = if cfg!(target_os = "macos") {
+                            parts[2]
+                        } else {
+                            parts[2]
+                        };
+                        if let (Ok(total_k), Ok(used_k)) =
+                            (tz_block.parse::<f64>(), used_block.parse::<f64>())
+                        {
                             if total_k > 0.0 {
                                 let usage = (used_k / total_k * 100.0 * 100.0).round() / 100.0;
-                                let total_gb = (total_k / (1024.0 * 1024.0) * 100.0).round() / 100.0;
+                                let total_gb =
+                                    (total_k / (1024.0 * 1024.0) * 100.0).round() / 100.0;
                                 (Some(usage), Some(total_gb))
                             } else {
                                 (None, None)

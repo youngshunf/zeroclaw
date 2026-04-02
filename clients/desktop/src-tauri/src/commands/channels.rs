@@ -1,8 +1,8 @@
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tauri::{AppHandle, Manager};
-use reqwest::Client;
 use std::time::Duration;
+use tauri::{AppHandle, Manager};
 
 use crate::sidecar::manager::SidecarManager;
 
@@ -30,22 +30,20 @@ pub struct AuthStatusResponse {
 }
 
 #[tauri::command]
-pub async fn list_user_agents(
-    app: AppHandle,
-) -> Result<Vec<AgentRecord>, String> {
+pub async fn list_user_agents(app: AppHandle) -> Result<Vec<AgentRecord>, String> {
     let manager = app.state::<Arc<SidecarManager>>();
     let db_path = manager.config_dir().join("tenant.db");
-    
-    let conn = rusqlite::Connection::open(&db_path)
-        .map_err(|e| format!("Failed to open DB: {}", e))?;
-        
+
+    let conn =
+        rusqlite::Connection::open(&db_path).map_err(|e| format!("Failed to open DB: {}", e))?;
+
     let mut stmt = conn.prepare_cached(
         "SELECT agent_id, template, star_name, hasn_id FROM agents WHERE user_id = ?1 ORDER BY created_at"
     ).map_err(|e| e.to_string())?;
-    
+
     // Desktop user is always default
     let user_id = "desktop_user_id";
-    
+
     let rows = stmt
         .query_map(rusqlite::params![user_id], |row| {
             Ok(AgentRecord {
@@ -58,7 +56,7 @@ pub async fn list_user_agents(
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
-        
+
     Ok(rows)
 }
 
@@ -71,17 +69,18 @@ pub async fn bind_channel_to_agent(
 ) -> Result<(), String> {
     let manager = app.state::<Arc<SidecarManager>>();
     let db_path = manager.config_dir().join("tenant.db");
-    
-    let conn = rusqlite::Connection::open(&db_path)
-        .map_err(|e| format!("Failed to open DB: {}", e))?;
-        
+
+    let conn =
+        rusqlite::Connection::open(&db_path).map_err(|e| format!("Failed to open DB: {}", e))?;
+
     let user_id = "desktop_user_id";
-    
+
     conn.execute(
         "INSERT OR REPLACE INTO routing (channel_type, sender_id, agent_id, user_id)
          VALUES (?1, ?2, ?3, ?4)",
         rusqlite::params![channel_type, sender_id, agent_id, user_id],
-    ).map_err(|e| e.to_string())?;
+    )
+    .map_err(|e| e.to_string())?;
 
     Ok(())
 }
@@ -106,12 +105,18 @@ struct WxStatusResponse {
 pub async fn generate_weixin_qr() -> Result<QrCodeResponse, String> {
     let client = Client::builder()
         .timeout(Duration::from_millis(8000))
-        .build().map_err(|e| e.to_string())?;
-        
+        .build()
+        .map_err(|e| e.to_string())?;
+
     let url = format!("{}/ilink/bot/get_bot_qrcode?bot_type=3", FIXED_BASE_URL);
-    let resp = client.get(&url).send().await.map_err(|e| e.to_string())?
-        .error_for_status().map_err(|e| e.to_string())?;
-        
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .error_for_status()
+        .map_err(|e| e.to_string())?;
+
     let text = resp.text().await.map_err(|e| e.to_string())?;
     tracing::info!("WeChat QR API response: {}", &text[..text.len().min(500)]);
     let qr_response: WxQRCodeResponse = serde_json::from_str(&text).map_err(|e| e.to_string())?;
@@ -148,9 +153,13 @@ pub async fn poll_weixin_auth_status(
 ) -> Result<AuthStatusResponse, String> {
     let client = Client::builder()
         .timeout(Duration::from_millis(35000))
-        .build().map_err(|e| e.to_string())?;
+        .build()
+        .map_err(|e| e.to_string())?;
 
-    let url = format!("{}/ilink/bot/get_qrcode_status?qrcode={}", FIXED_BASE_URL, qrcode);
+    let url = format!(
+        "{}/ilink/bot/get_qrcode_status?qrcode={}",
+        FIXED_BASE_URL, qrcode
+    );
     let resp = match client.get(&url).send().await {
         Ok(r) => r,
         Err(e) => {
@@ -166,8 +175,9 @@ pub async fn poll_weixin_auth_status(
     };
 
     let text = resp.text().await.map_err(|e| e.to_string())?;
-    let status_response: WxStatusResponse = serde_json::from_str(&text).map_err(|e| e.to_string())?;
-    
+    let status_response: WxStatusResponse =
+        serde_json::from_str(&text).map_err(|e| e.to_string())?;
+
     Ok(AuthStatusResponse {
         status: status_response.status,
         bot_token: status_response.bot_token,
@@ -190,8 +200,9 @@ pub async fn save_weixin_credentials(
 
     let content = std::fs::read_to_string(&config_path)
         .map_err(|e| format!("Failed to read config.toml: {}", e))?;
-    
-    let mut doc = content.parse::<toml_edit::DocumentMut>()
+
+    let mut doc = content
+        .parse::<toml_edit::DocumentMut>()
         .map_err(|e| format!("Failed to parse config.toml: {}", e))?;
 
     // Ensure [channels_config] exists
@@ -203,9 +214,14 @@ pub async fn save_weixin_credentials(
     let mut weixin_table = toml_edit::Table::new();
     weixin_table.insert("bot_token", toml_edit::value(&bot_token));
     weixin_table.insert("bot_id", toml_edit::value(&bot_id));
-    weixin_table.insert("base_url", toml_edit::value(
-        base_url.as_deref().unwrap_or("https://ilinkai.weixin.qq.com")
-    ));
+    weixin_table.insert(
+        "base_url",
+        toml_edit::value(
+            base_url
+                .as_deref()
+                .unwrap_or("https://ilinkai.weixin.qq.com"),
+        ),
+    );
 
     doc["channels_config"]["weixin"] = toml_edit::Item::Table(weixin_table);
 

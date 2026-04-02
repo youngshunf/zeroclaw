@@ -68,8 +68,7 @@ impl Tool for SopApproveTool {
             .ok_or_else(|| anyhow::anyhow!("Missing 'run_id' parameter"))?;
 
         // Lock engine, ensure SOPs loaded for current tenant, approve
-        let ws = crate::tools::get_active_workspace()
-            .unwrap_or_else(|| self.workspace_dir.clone());
+        let ws = crate::tools::get_active_workspace().unwrap_or_else(|| self.workspace_dir.clone());
         let (result, run_snapshot) = {
             let mut engine = self
                 .engine

@@ -1,6 +1,6 @@
-use std::path::PathBuf;
-use crate::sidecar::manager::SidecarManager;
 use crate::sidecar::constants::HEALTH_TIMEOUT;
+use crate::sidecar::manager::SidecarManager;
+use std::path::PathBuf;
 
 impl SidecarManager {
     /// 配置目录路径
@@ -11,7 +11,9 @@ impl SidecarManager {
     /// 是否有有效的唤星配置文件（包含 [huanxing] enabled = true）
     pub fn has_valid_huanxing_config(&self) -> bool {
         let config_path = self.config_dir.join("config.toml");
-        if !config_path.exists() { return false; }
+        if !config_path.exists() {
+            return false;
+        }
         let content = std::fs::read_to_string(&config_path).unwrap_or_default();
         // 必须同时有 [huanxing] 段且 enabled = true
         content.contains("[huanxing]") && content.contains("enabled = true")
@@ -118,7 +120,10 @@ impl SidecarManager {
     }
 
     /// 更新 config.toml 中的快捷配置
-    pub fn update_config(&self, updates: crate::sidecar::models::QuickConfig) -> Result<(), String> {
+    pub fn update_config(
+        &self,
+        updates: crate::sidecar::models::QuickConfig,
+    ) -> Result<(), String> {
         let config_path = self.config_dir.join("config.toml");
         let content =
             std::fs::read_to_string(&config_path).map_err(|e| format!("读取配置文件失败: {e}"))?;

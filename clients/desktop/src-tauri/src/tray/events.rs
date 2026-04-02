@@ -1,4 +1,4 @@
-use tauri::{AppHandle, Manager, Runtime, Emitter, menu::MenuEvent};
+use tauri::{menu::MenuEvent, AppHandle, Emitter, Manager, Runtime};
 
 pub fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, event: MenuEvent) {
     match event.id().as_ref() {
@@ -17,7 +17,7 @@ pub fn show_main_window<R: Runtime>(app: &AppHandle<R>, navigate_to: Option<&str
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
         let _ = window.set_focus();
-        
+
         // 借助 hash 路由或自定义事件通知前端跳转
         if let Some(path) = navigate_to {
             // 使用 tauri::Emitter 发送跳转事件，更加优雅

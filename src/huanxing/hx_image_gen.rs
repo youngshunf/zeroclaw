@@ -1,5 +1,5 @@
-use crate::security::policy::ToolOperation;
 use crate::security::SecurityPolicy;
+use crate::security::policy::ToolOperation;
 use crate::tools::traits::{Tool, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
@@ -45,10 +45,15 @@ impl HxImageGenTool {
 
     /// Read api_key from a tenant's workspace config.toml at runtime.
     async fn resolve_tenant_api_key(workspace_dir: &std::path::Path) -> Option<String> {
-        let config_path = workspace_dir.join("config.toml");
-        if !config_path.exists() {
-            return None;
-        }
+        let _ = crate::huanxing::config::promote_legacy_agent_config_from_workspace(workspace_dir);
+        let canonical_path =
+            crate::huanxing::config::agent_config_path_from_workspace(workspace_dir);
+        let legacy_path = workspace_dir.join("config.toml");
+        let config_path = if canonical_path.exists() {
+            canonical_path
+        } else {
+            legacy_path
+        };
         let content = tokio::fs::read_to_string(&config_path).await.ok()?;
         // Simple partial deserialize to extract api_key
         #[derive(serde::Deserialize)]
@@ -91,7 +96,11 @@ impl HxImageGenTool {
             .unwrap_or("1024x1024");
 
         // Allow model override from args, else use configured models
-        let models_to_try = if let Some(model_arg) = args.get("model").and_then(|v| v.as_str()).filter(|s| !s.trim().is_empty()) {
+        let models_to_try = if let Some(model_arg) = args
+            .get("model")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+        {
             vec![model_arg.to_string()]
         } else {
             self.models.clone()
@@ -107,8 +116,8 @@ impl HxImageGenTool {
 
         // ── Resolve api_key dynamically from tenant workspace ─────
         // Priority: tenant workspace config.toml api_key > global fallback api_key
-        let active_security = crate::tools::get_active_security()
-            .unwrap_or_else(|| self.security.clone());
+        let active_security =
+            crate::tools::get_active_security().unwrap_or_else(|| self.security.clone());
         let api_key = Self::resolve_tenant_api_key(&active_security.workspace_dir)
             .await
             .or_else(|| {
@@ -149,7 +158,7 @@ impl HxImageGenTool {
         // ── Loop over models for fallback ───────────────────────────
         for model in &models_to_try {
             tracing::info!("hx_image_gen: attempting generation with model '{}'", model);
-            
+
             let body = json!({
                 "model": model,
                 "prompt": prompt,
@@ -178,7 +187,9 @@ impl HxImageGenTool {
                             match resp.json::<serde_json::Value>().await {
                                 Ok(json) => break json,
                                 Err(e) => {
-                                    let err_msg = format!("Failed to parse JSON response for model {model}: {e}");
+                                    let err_msg = format!(
+                                        "Failed to parse JSON response for model {model}: {e}"
+                                    );
                                     tracing::warn!("hx_image_gen: {}", err_msg);
                                     last_error = err_msg;
                                     break serde_json::Value::Null; // will be caught below
@@ -199,7 +210,8 @@ impl HxImageGenTool {
                         }
 
                         // Non-retryable error or retries exhausted → fall through to next model
-                        let err_msg = format!("API error ({status}) with model {model}: {body_text}");
+                        let err_msg =
+                            format!("API error ({status}) with model {model}: {body_text}");
                         tracing::warn!("hx_image_gen failed: {}", err_msg);
                         last_error = err_msg;
                         break serde_json::Value::Null;
@@ -220,49 +232,63 @@ impl HxImageGenTool {
 
             // ── Successful response — extract image ─────────────────
             let image_url = resp_json.pointer("/data/0/url").and_then(|v| v.as_str());
-            let b64_json = resp_json.pointer("/data/0/b64_json").and_then(|v| v.as_str());
+            let b64_json = resp_json
+                .pointer("/data/0/b64_json")
+                .and_then(|v| v.as_str());
 
             let bytes = if let Some(u) = image_url {
                 // ── Download image URL ─────────────────────────────────
                 let img_resp = match client.get(u).send().await {
                     Ok(r) => r,
                     Err(e) => {
-                        let err_msg = format!("Failed to download image from {} (model {}): {}", u, model, e);
+                        let err_msg = format!(
+                            "Failed to download image from {} (model {}): {}",
+                            u, model, e
+                        );
                         tracing::warn!("hx_image_gen failed: {}", err_msg);
                         last_error = err_msg;
                         continue;
                     }
                 };
-                
+
                 if !img_resp.status().is_success() {
-                    let err_msg = format!("Failed to download image from {} (status {})", u, img_resp.status());
+                    let err_msg = format!(
+                        "Failed to download image from {} (status {})",
+                        u,
+                        img_resp.status()
+                    );
                     tracing::warn!("hx_image_gen failed: {}", err_msg);
                     last_error = err_msg;
                     continue;
                 }
-                
+
                 match img_resp.bytes().await {
                     Ok(b) => b.to_vec(),
                     Err(e) => {
-                        let err_msg = format!("Failed to read image bytes (model {}): {}", model, e);
+                        let err_msg =
+                            format!("Failed to read image bytes (model {}): {}", model, e);
                         tracing::warn!("hx_image_gen failed: {}", err_msg);
                         last_error = err_msg;
                         continue;
                     }
                 }
             } else if let Some(b64) = b64_json {
-                use base64::{engine::general_purpose, Engine as _};
+                use base64::{Engine as _, engine::general_purpose};
                 match general_purpose::STANDARD.decode(b64) {
                     Ok(decoded) => decoded,
                     Err(e) => {
-                        let err_msg = format!("Failed to decode base64 image (model {}): {}", model, e);
+                        let err_msg =
+                            format!("Failed to decode base64 image (model {}): {}", model, e);
                         tracing::warn!("hx_image_gen failed: {}", err_msg);
                         last_error = err_msg;
                         continue;
                     }
                 }
             } else {
-                let err_msg = format!("No image URL or b64_json in API response for model {}", model);
+                let err_msg = format!(
+                    "No image URL or b64_json in API response for model {}",
+                    model
+                );
                 tracing::warn!("hx_image_gen failed: {}", err_msg);
                 last_error = err_msg;
                 continue;
@@ -270,7 +296,7 @@ impl HxImageGenTool {
 
             // ── Save to disk ───────────────────────────────────────────
             let images_dir = active_security.workspace_dir.join("images");
-            
+
             if let Err(e) = tokio::fs::create_dir_all(&images_dir).await {
                 return Ok(ToolResult {
                     success: false,
@@ -423,6 +449,34 @@ mod tests {
         );
         let result = tool.execute(json!({"prompt": "test"})).await.unwrap();
         assert!(!result.success);
-        assert!(result.error.as_deref().unwrap().contains("API Key is required"));
+        assert!(
+            result
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("API Key is required")
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_tenant_api_key_prefers_wrapper_config() {
+        let temp = tempfile::tempdir().unwrap();
+        let wrapper = temp.path().join("agents").join("default");
+        let workspace = wrapper.join("workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+
+        tokio::fs::write(wrapper.join("config.toml"), "api_key = \"wrapper-key\"\n")
+            .await
+            .unwrap();
+        tokio::fs::write(
+            workspace.join("config.toml"),
+            "api_key = \"legacy-workspace-key\"\n",
+        )
+        .await
+        .unwrap();
+
+        let api_key = HxImageGenTool::resolve_tenant_api_key(&workspace).await;
+
+        assert_eq!(api_key.as_deref(), Some("wrapper-key"));
     }
 }

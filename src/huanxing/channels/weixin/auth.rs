@@ -39,7 +39,8 @@ pub async fn start_weixin_login_qr(bot_type: &str) -> Result<ActiveLogin> {
     let url = format!("{FIXED_BASE_URL}/ilink/bot/get_bot_qrcode?bot_type={bot_type}");
     let resp = client.get(&url).send().await?.error_for_status()?;
     let text = resp.text().await?;
-    let qr_response: QRCodeResponse = serde_json::from_str(&text).context("failed to parse QR response")?;
+    let qr_response: QRCodeResponse =
+        serde_json::from_str(&text).context("failed to parse QR response")?;
 
     Ok(ActiveLogin {
         session_key: uuid::Uuid::new_v4().to_string(),
@@ -74,6 +75,7 @@ pub async fn poll_qr_status(base_url: &str, qrcode: &str) -> Result<StatusRespon
     };
 
     let text = resp.text().await?;
-    let status_response: StatusResponse = serde_json::from_str(&text).context("failed to parse status poll")?;
+    let status_response: StatusResponse =
+        serde_json::from_str(&text).context("failed to parse status poll")?;
     Ok(status_response)
 }

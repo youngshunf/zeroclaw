@@ -1,19 +1,19 @@
 use crate::channels::traits::{Channel, ChannelMessage, SendMessage};
 use crate::huanxing::config::NapcatConfig;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
 use reqwest::Url;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 use tokio_tungstenite::connect_async;
-use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use uuid::Uuid;
 
 const NAPCAT_SEND_PRIVATE: &str = "/send_private_msg";
@@ -62,7 +62,7 @@ async fn compose_onebot_content(content: &str, reply_message_id: Option<&str>) -
         }
     }
 
-    use base64::{engine::general_purpose, Engine as _};
+    use base64::{Engine as _, engine::general_purpose};
 
     for line in content.lines() {
         let trimmed = line.trim();
@@ -81,7 +81,10 @@ async fn compose_onebot_content(content: &str, reply_message_id: Option<&str>) -
         // 2. Try to parse [IMAGE:...]
         let marker = if let Some(path) = image_path_opt {
             Some(path.trim())
-        } else if let Some(path) = trimmed.strip_prefix("[IMAGE:").and_then(|v| v.strip_suffix(']')) {
+        } else if let Some(path) = trimmed
+            .strip_prefix("[IMAGE:")
+            .and_then(|v| v.strip_suffix(']'))
+        {
             Some(path.trim())
         } else {
             None
@@ -90,7 +93,10 @@ async fn compose_onebot_content(content: &str, reply_message_id: Option<&str>) -
         if let Some(path) = marker {
             if !path.is_empty() {
                 // If the path is local, encode as base64 so Napcat (if inside Docker) can read it
-                if path.starts_with('/') || path.starts_with("file://") || std::path::Path::new(path).exists() {
+                if path.starts_with('/')
+                    || path.starts_with("file://")
+                    || std::path::Path::new(path).exists()
+                {
                     let clean_path = path.strip_prefix("file://").unwrap_or(path);
                     if let Ok(bytes) = tokio::fs::read(clean_path).await {
                         let b64 = general_purpose::STANDARD.encode(&bytes);
@@ -105,14 +111,19 @@ async fn compose_onebot_content(content: &str, reply_message_id: Option<&str>) -
 
         // 3. Try HuanXing voice support
         #[cfg(feature = "huanxing")]
-        if let Some(voice_path) = trimmed.strip_prefix("[VOICE:").and_then(|v| v.strip_suffix(']')).map(str::trim) {
+        if let Some(voice_path) = trimmed
+            .strip_prefix("[VOICE:")
+            .and_then(|v| v.strip_suffix(']'))
+            .map(str::trim)
+        {
             if !voice_path.is_empty() {
                 // Strip file:// prefix if present, keep plain path
-                let clean_path = voice_path
-                    .strip_prefix("file://")
-                    .unwrap_or(voice_path);
+                let clean_path = voice_path.strip_prefix("file://").unwrap_or(voice_path);
 
-                tracing::debug!("napcat voice: attempting to read local file: {}", clean_path);
+                tracing::debug!(
+                    "napcat voice: attempting to read local file: {}",
+                    clean_path
+                );
 
                 if let Ok(bytes) = tokio::fs::read(clean_path).await {
                     let b64 = general_purpose::STANDARD.encode(&bytes);
@@ -125,7 +136,8 @@ async fn compose_onebot_content(content: &str, reply_message_id: Option<&str>) -
                 } else {
                     tracing::warn!("napcat voice: failed to read file: {}", clean_path);
                     // Last resort: pass raw path to NapCat (unlikely to work in Docker)
-                    if let Some(cq) = crate::huanxing::voice::compose_napcat_voice_segment(trimmed) {
+                    if let Some(cq) = crate::huanxing::voice::compose_napcat_voice_segment(trimmed)
+                    {
                         parts.push(cq);
                     }
                 }
@@ -187,8 +199,7 @@ fn parse_message_segments(message: &Value) -> String {
             // HuanXing voice support: parse "record" segments to [VOICE:url]
             #[cfg(feature = "huanxing")]
             "record" => {
-                if let Some(voice_marker) =
-                    crate::huanxing::voice::parse_napcat_voice_segment(data)
+                if let Some(voice_marker) = crate::huanxing::voice::parse_napcat_voice_segment(data)
                 {
                     parts.push(voice_marker);
                 }
@@ -614,8 +625,9 @@ mod tests {
         let msg = channel.parse_message_event(&event).await.unwrap();
         assert_eq!(msg.reply_target, "group:30003");
         assert!(msg.content.contains("photo"));
-        assert!(msg
-            .content
-            .contains("[IMAGE:https://img.example.com/1.jpg]"));
+        assert!(
+            msg.content
+                .contains("[IMAGE:https://img.example.com/1.jpg]")
+        );
     }
 }

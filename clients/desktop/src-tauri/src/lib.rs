@@ -14,7 +14,6 @@ use sidecar::SidecarManager;
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
 
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let manager = Arc::new(SidecarManager::new());
@@ -67,8 +66,9 @@ pub fn run() {
                         }
 
                         // 异步更新后台缓存应用市场数据
+                        let market_handle = handle.clone();
                         tauri::async_runtime::spawn(async move {
-                            marketplace::sync_marketplace_data().await;
+                            marketplace::sync_marketplace_data(Some(market_handle)).await;
                         });
 
                         return;
@@ -138,7 +138,11 @@ pub fn run() {
             tauri::RunEvent::Exit => {
                 tracing::info!("App exiting, huanxing sidecar continues running in background");
             }
-            tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::CloseRequested { api, .. }, .. } => {
+            tauri::RunEvent::WindowEvent {
+                label,
+                event: tauri::WindowEvent::CloseRequested { api, .. },
+                ..
+            } => {
                 if label == "main" {
                     if let Some(window) = app_handle.get_webview_window("main") {
                         let _ = window.hide();

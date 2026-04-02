@@ -72,6 +72,7 @@ pub struct Agent {
     /// When MCP deferred loading is enabled, tools are activated via `tool_search`
     /// and stored here for lookup during tool execution.
     activated_tools: Option<Arc<std::sync::Mutex<crate::tools::ActivatedToolSet>>>,
+    system_prompt_override: Option<String>,
 }
 
 pub struct AgentBuilder {
@@ -101,6 +102,15 @@ pub struct AgentBuilder {
     security_summary: Option<String>,
     autonomy_level: Option<crate::security::AutonomyLevel>,
     activated_tools: Option<Arc<std::sync::Mutex<crate::tools::ActivatedToolSet>>>,
+    system_prompt_override: Option<String>,
+}
+
+struct AgentRuntimeOverrides {
+    owner_dir: Option<std::path::PathBuf>,
+    memory: Option<Arc<dyn Memory>>,
+    security: Option<Arc<SecurityPolicy>>,
+    response_cache_root: Option<std::path::PathBuf>,
+    system_prompt_override: Option<String>,
 }
 
 impl AgentBuilder {
@@ -132,6 +142,7 @@ impl AgentBuilder {
             security_summary: None,
             autonomy_level: None,
             activated_tools: None,
+            system_prompt_override: None,
         }
     }
 
@@ -277,6 +288,11 @@ impl AgentBuilder {
         self
     }
 
+    pub fn system_prompt_override(mut self, system_prompt_override: Option<String>) -> Self {
+        self.system_prompt_override = system_prompt_override;
+        self
+    }
+
     pub fn build(self) -> Result<Agent> {
         let mut tools = self
             .tools
@@ -338,6 +354,7 @@ impl AgentBuilder {
                 .autonomy_level
                 .unwrap_or(crate::security::AutonomyLevel::Supervised),
             activated_tools: self.activated_tools,
+            system_prompt_override: self.system_prompt_override,
         })
     }
 }
@@ -385,23 +402,46 @@ impl Agent {
     }
 
     pub async fn from_config(config: &Config) -> Result<Self> {
+        Self::from_config_with_overrides(
+            config,
+            AgentRuntimeOverrides {
+                owner_dir: None,
+                memory: None,
+                security: None,
+                response_cache_root: None,
+                system_prompt_override: None,
+            },
+        )
+        .await
+    }
+
+    async fn from_config_with_overrides(
+        config: &Config,
+        overrides: AgentRuntimeOverrides,
+    ) -> Result<Self> {
         let observer: Arc<dyn Observer> =
             Arc::from(observability::create_observer(&config.observability));
         let runtime: Arc<dyn runtime::RuntimeAdapter> =
             Arc::from(runtime::create_runtime(&config.runtime)?);
         let config_dir = config.config_path.parent().map(|p| p.to_path_buf());
-        let security = Arc::new(
-            SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir)
-                .with_config_dir(config_dir),
-        );
+        let security = overrides.security.unwrap_or_else(|| {
+            Arc::new(
+                SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir)
+                    .with_config_dir(config_dir.clone()),
+            )
+        });
 
-        let memory: Arc<dyn Memory> = Arc::from(memory::create_memory_with_storage_and_routes(
-            &config.memory,
-            &config.embedding_routes,
-            Some(&config.storage.provider.config),
-            &config.workspace_dir,
-            config.api_key.as_deref(),
-        )?);
+        let memory: Arc<dyn Memory> = if let Some(memory) = overrides.memory {
+            memory
+        } else {
+            Arc::from(memory::create_memory_with_storage_and_routes(
+                &config.memory,
+                &config.embedding_routes,
+                Some(&config.storage.provider.config),
+                &config.workspace_dir,
+                config.api_key.as_deref(),
+            )?)
+        };
 
         let composio_key = if config.composio.enabled {
             config.composio.api_key.as_deref()
@@ -534,9 +574,14 @@ impl Agent {
             .collect();
         let available_hints: Vec<String> = route_model_by_hint.keys().cloned().collect();
 
+        let response_cache_root = overrides
+            .response_cache_root
+            .as_deref()
+            .unwrap_or(&config.workspace_dir);
+
         let response_cache = if config.memory.response_cache_enabled {
             crate::memory::response_cache::ResponseCache::with_hot_cache(
-                &config.workspace_dir,
+                response_cache_root,
                 config.memory.response_cache_ttl_minutes,
                 config.memory.response_cache_max_entries,
                 config.memory.response_cache_hot_entries,
@@ -563,7 +608,11 @@ impl Agent {
             .model_name(model_name)
             .temperature(config.default_temperature)
             .workspace_dir(config.workspace_dir.clone())
-            .owner_dir(config.workspace_dir.clone())
+            .owner_dir(
+                overrides
+                    .owner_dir
+                    .unwrap_or_else(|| config.workspace_dir.clone()),
+            )
             .classification_config(config.query_classification.clone())
             .available_hints(available_hints)
             .route_model_by_hint(route_model_by_hint)
@@ -577,7 +626,25 @@ impl Agent {
             .security_summary(Some(security.prompt_summary()))
             .autonomy_level(config.autonomy.level)
             .activated_tools(activated_tools)
+            .system_prompt_override(overrides.system_prompt_override)
             .build()
+    }
+
+    #[cfg(feature = "huanxing")]
+    pub async fn from_tenant_context(
+        tenant: &crate::huanxing::tenant::TenantContext,
+    ) -> Result<Self> {
+        Self::from_config_with_overrides(
+            tenant.runtime_config(),
+            AgentRuntimeOverrides {
+                owner_dir: Some(tenant.owner_dir.clone()),
+                memory: Some(tenant.memory.clone()),
+                security: tenant.security.clone(),
+                response_cache_root: Some(tenant.owner_dir.clone()),
+                system_prompt_override: Some(tenant.system_prompt.clone()),
+            },
+        )
+        .await
     }
 
     fn trim_history(&mut self) {
@@ -608,6 +675,9 @@ impl Agent {
     }
 
     fn build_system_prompt(&self) -> Result<String> {
+        if let Some(system_prompt) = &self.system_prompt_override {
+            return Ok(system_prompt.clone());
+        }
         let instructions = self.tool_dispatcher.prompt_instructions(&self.tools);
         let ctx = PromptContext {
             workspace_dir: &self.workspace_dir,

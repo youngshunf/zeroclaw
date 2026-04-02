@@ -57,8 +57,7 @@ impl Tool for FileReadTool {
         // Per-request security override (injected by channel message
         // processing via `with_active_security`).  Falls back to the
         // global policy baked into this tool instance.
-        let security = crate::tools::get_active_security()
-            .unwrap_or_else(|| self.security.clone());
+        let security = crate::tools::get_active_security().unwrap_or_else(|| self.security.clone());
 
         if security.is_rate_limited() {
             return Ok(ToolResult {
@@ -106,10 +105,7 @@ impl Tool for FileReadTool {
             return Ok(ToolResult {
                 success: false,
                 output: String::new(),
-                error: Some(
-                    security
-                        .resolved_path_violation_message(&resolved_path),
-                ),
+                error: Some(security.resolved_path_violation_message(&resolved_path)),
             });
         }
 

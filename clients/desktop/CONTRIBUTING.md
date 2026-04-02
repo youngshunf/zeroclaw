@@ -23,32 +23,66 @@
 
 ## 2. 目录结构约定
 
+> [!NOTE]
+> 项目已完成目录结构统一化迁移，原 `src/huanxing/` 子目录已合并至 `src/` 根级。所有代码按功能模块分组，不再区分"上游"与"唤星"物理隔离层。
+
 ```
 clients/desktop/src/
-├── components/           # 上游 ZeroClaw 公共组件（不要修改）
-│   ├── ui/               # 基础 UI 原语 (Select, ...)
-│   ├── chat/             # 上游聊天组件
-│   ├── config/           # 配置表单组件
-│   └── layout/           # 上游布局组件
-├── hooks/                # 公共 hooks（跨模块复用）
-├── lib/                  # 公共工具库（ws, api, i18n, session...）
-├── huanxing/             # ⭐ 唤星自有代码（零入侵隔离层）
-│   ├── components/       # 唤星专属组件
-│   │   ├── layout/       # NavRail, App Shell
-│   │   ├── chat/         # 聊天输入、消息气泡、图片消息
-│   │   ├── sop/          # SOP 运行面板、历史列表
-│   │   ├── markdown/     # Markdown 渲染增强
-│   │   └── profile/      # 用户资料组件
-│   ├── pages/            # 页面级组件
-│   ├── lib/              # 唤星专属 API 客户端
-│   └── styles/           # huanxing.css 主题系统
+├── App.tsx               # 应用入口、路由、认证守卫、主题管理
+├── main.tsx              # React 挂载点
+├── config.ts             # 唤星会话配置管理
+├── onboard.ts            # 首次使用引导流程
+│
+├── assets/               # 静态资源（Logo、图标 SVG/PNG）
+│
+├── components/           # 公共组件（跨页面复用）
+│   ├── ui/               # 基础 UI 原语（Input, Select, Dialog, AlertDialog, Textarea, FolderTreeSelect）
+│   ├── billing/          # 订阅/充值组件（CheckoutModal, CreditsTab, SubscriptionTab, UsageStats）
+│   ├── chat/             # 聊天组件（SessionList, StreamingBubble, ProgressPanel, HxImage*）
+│   │   └── input/        # 聊天输入组件（HxChatInput, HxMentionMenu, HxSlashMenu, HxVoiceButton）
+│   ├── config/           # 配置表单组件（ConfigFormEditor, ConfigRawEditor, ConfigSection）
+│   │   └── fields/       # 表单字段组件（NumberField, SelectField, TagListField, TextField, ToggleField）
+│   ├── effects/          # 视觉特效组件（StarfieldCanvas, SupernovaCanvas, GlowingStar）
+│   ├── integrations/     # 集成引导组件（ChatChannelsGuide）
+│   ├── layout/           # 布局组件（HuanxingLayout, NavRail, Header, Sidebar, SettingsPanel）
+│   ├── markdown/         # Markdown 渲染（Markdown, CodeBlock, CollapsibleSection）
+│   ├── mermaid/          # Mermaid 图表渲染（MermaidViewer）
+│   ├── onboard/          # 引导进度组件（OnboardProgress）
+│   ├── profile/          # 用户资料组件（AvatarCropDialog）
+│   └── sop/              # SOP 组件（SopRunPanel, SopHistoryList）
+│
+├── hooks/                # 公共 Hooks（跨模块复用）
+│
+├── lib/                  # 公共工具库（API 客户端、WebSocket、i18n、工具函数）
+│
+├── pages/                # 页面级组件（按功能模块分子目录）
+│   ├── agent/            # AI 对话主界面（ChatLayout, AgentChat）
+│   ├── agents/           # Agent 管理（AgentManager）
+│   ├── auth/             # 登录认证（Login）
+│   ├── channels/         # 渠道管理（ChannelsLayout, WeixinAuthModal）
+│   ├── contacts/         # 通讯录（Contacts）
+│   ├── docs/             # 文档管理（Documents）
+│   ├── engine/           # 引擎管理（Engine）
+│   ├── hasn/             # HASN 社交（HasnChat）
+│   ├── market/           # 应用市场（Marketplace）
+│   ├── profile/          # 个人资料（ProfilePage）
+│   ├── settings/         # 设置子页（Dashboard, Config, Cost, Cron, Tools, Memory, Logs, Doctor, Devices, Integrations）
+│   └── sop/              # SOP 工作台（SopWorkbench, SopEditor）
+│
+├── stores/               # Zustand 状态管理（useSubscriptionStore）
+├── styles/               # 样式文件（huanxing.css, huanxing-theme.css, chatscope-*.css）
+│   └── modules/          # 模块化样式（layout.css, chat.css, contacts.css, components.css）
+├── test/                 # 测试辅助
+└── types/                # TypeScript 类型定义
 ```
 
 ### 规则
 
 > [!IMPORTANT]
-> - `src/components/` 下的文件属于上游 ZeroClaw，**禁止直接修改**，需通过 `huanxing/` 层包装扩展
-> - 所有唤星新增代码必须放在 `src/huanxing/` 目录内
+> - 所有导入路径必须使用 `@/` 别名（如 `import { Input } from '@/components/ui/Input'`），**禁止使用** `../../` 深层相对路径
+> - 新增页面必须放在 `pages/{功能模块}/` 子目录下，不允许直接在 `pages/` 根级创建文件（`ImageViewer.tsx` 为历史遗留例外）
+> - 新增公共组件必须放在 `components/{功能分类}/` 下，确保可被多页面复用
+> - `lib/` 下的模块按职责单一化原则拆分，每个文件只暴露一个功能域的 API
 
 ---
 
@@ -137,37 +171,88 @@ else root.classList.remove('dark');
 
 ---
 
-## 4. 组件复用规范
+## 4. 组件复用规范（禁止重复造轮子）
+
+> [!CAUTION]
+> **不要自己定义 UI 组件！** 这是本项目最重要的工程纪律之一。每一个自定义组件都意味着额外的维护成本、不一致的交互行为和潜在的无障碍缺陷。请严格遵循以下决策树。
 
 ### 4.1 优先级决策树
 
-开发新功能时，按以下顺序选择方案：
+开发新功能时，**必须**按以下顺序逐级排查，只有当上一级确实无法满足需求时才可进入下一级：
 
 ```
-1. 项目内已有组件？ → 直接用
-      ↓ 没有
-2. 已安装的依赖库能做？ → 用库组件
-      ↓ 不行
-3. Radix UI 有对应原语？ → 基于 Radix 封装
-      ↓ 没有
-4. 社区成熟库？ → 评估后引入
+1. 项目内已有组件？ → 直接使用，禁止二次封装同功能组件
+      ↓ 确认没有（在 components/ 全目录搜索过）
+2. 已安装的依赖库能做？ → 用库组件 + 唤星主题样式适配
+      ↓ 确认不行
+3. Radix UI 有对应原语？ → npm install @radix-ui/react-xxx
+   → 封装为 components/ui/Xxx.tsx，适配 hx-* 主题
+   → 作为公共组件供全项目复用
+      ↓ Radix 没有
+4. 社区成熟库？ → 评估后引入（须满足 §4.3 审批标准）
       ↓ 都没有
-5. 自行实现（最后手段）
+5. 自行实现（最后手段，须在 PR 中说明为何前 4 级均不可行）
+```
+
+> [!IMPORTANT]
+> **业务组件同理**：在 `components/` 中新增业务组件前，先确认是否已有功能相近的组件可以扩展或复合使用。拒绝为单一页面创建仅用一次的"公共组件"——那应该是页面内的局部组件。
+
+### 4.1.1 Radix UI 封装标准流程
+
+当需要新的基础 UI 原语（如 Tooltip、Switch、Tabs 等）时：
+
+1. **安装**：`npm install @radix-ui/react-xxx`
+2. **封装**：在 `src/components/ui/Xxx.tsx` 创建封装组件
+3. **样式适配**：使用 `hx-*` 语义化 Tailwind 类适配项目主题，确保 Light/Dark 双模式兼容
+4. **导出**：组件必须是通用的，不绑定任何业务逻辑
+5. **文档**：在本文件 §4.2 的 UI 基础组件表中登记
+
+```tsx
+// 示例：src/components/ui/Tooltip.tsx
+import * as TooltipPrimitive from '@radix-ui/react-tooltip';
+
+export function Tooltip({ children, content }: { children: React.ReactNode; content: string }) {
+  return (
+    <TooltipPrimitive.Provider>
+      <TooltipPrimitive.Root>
+        <TooltipPrimitive.Trigger asChild>{children}</TooltipPrimitive.Trigger>
+        <TooltipPrimitive.Content
+          className="bg-hx-bg-panel text-hx-text-primary text-xs px-3 py-1.5 rounded-hx-radius-sm
+                     border border-hx-border shadow-hx-shadow-md z-50"
+          sideOffset={5}
+        >
+          {content}
+          <TooltipPrimitive.Arrow className="fill-hx-bg-panel" />
+        </TooltipPrimitive.Content>
+      </TooltipPrimitive.Root>
+    </TooltipPrimitive.Provider>
+  );
+}
 ```
 
 ### 4.2 项目内已有可复用资源
+
+> [!WARNING]
+> 在新建任何组件之前，请先通读本节清单。如果你需要的功能已经存在，**直接引用**。
 
 #### UI 基础组件 (`src/components/ui/`)
 
 | 组件 | 路径 | 说明 |
 |------|------|------|
+| `Input` | `components/ui/Input.tsx` | 文本输入框，已适配 `hx-input` 主题 |
+| `Textarea` | `components/ui/Textarea.tsx` | 多行文本域，已适配主题 |
 | `Select` | `components/ui/Select.tsx` | 基于 Radix 的下拉选择器，已适配主题 |
+| `Dialog` | `components/ui/Dialog.tsx` | 基于 Radix 的模态对话框，已适配主题 |
+| `AlertDialog` | `components/ui/AlertDialog.tsx` | 基于 Radix 的确认弹窗（删除/危险操作），已适配主题 |
+| `FolderTreeSelect` | `components/ui/FolderTreeSelect.tsx` | 树形文件夹选择器 |
 
 #### 已安装的 UI 原语库
 
 | 库 | 用途 | 使用场景 |
 |----|------|----------|
 | `@radix-ui/react-select` | 下拉选择 | 所有 select / dropdown |
+| `@radix-ui/react-dialog` | 模态对话框 | 表单弹窗、详情面板 |
+| `@radix-ui/react-alert-dialog` | 确认弹窗 | 删除确认、危险操作二次确认 |
 | `@radix-ui/react-popover` | 弹出层 | tooltip, popover, 菜单 |
 | `cmdk` | 命令面板 | 斜杠菜单、全局搜索 |
 | `lucide-react` | 图标 | **所有图标统一用这个** |
@@ -176,39 +261,48 @@ else root.classList.remove('dark');
 | `@uiw/react-codemirror` | 代码编辑器 | 代码块、配置编辑 |
 | `react-markdown` + `remark-gfm` + `rehype-raw` | Markdown 渲染 | 聊天消息、文档展示 |
 | `shiki` | 代码高亮 | Markdown 中的代码块 |
+| `@tiptap/react` + `@tiptap/starter-kit` | 富文本编辑 | 文档编辑器 |
+| `qrcode.react` | 二维码生成 | 支付/分享二维码 |
+| `zustand` | 状态管理 | 全局状态存储 |
 
 #### 公共 Hooks (`src/hooks/`)
 
 | Hook | 用途 |
 |------|------|
 | `useActiveAgent` | 获取/切换当前活跃 Agent |
+| `useAgentSkills` | Agent 技能列表管理 |
 | `useApi` | API 请求封装 (loading, error, data) |
 | `useAuth` | 认证状态管理 |
 | `useWebSocket` | WebSocket 连接管理 |
 | `useSSE` | Server-Sent Events 封装 |
 | `useDraft` | 草稿状态管理 |
+| `useHasn` | HASN 协议交互 |
+| `useHasnContacts` | HASN 通讯录管理 |
+| `useSidecar` | ZeroClaw Sidecar 进程管理 |
+| `useVoiceRecorder` | 语音录制 |
 
-#### 公共工具 (`src/lib/`)
+#### 公共工具库 (`src/lib/`)
 
 | 模块 | 用途 |
 |------|------|
+| `api.ts` | API 基础请求封装（含 Token 注入） |
 | `ws.ts` | WsMultiplexer 全局 WebSocket 多路复用 |
-| `api.ts` | API 基础请求封装 |
 | `i18n.ts` | 国际化翻译 |
-| `session-manager.ts` | 会话管理 |
+| `session-manager.ts` / `session-api.ts` | 会话管理 |
 | `auth.ts` | 认证工具 |
-
-#### 唤星专属 API 客户端 (`src/huanxing/lib/`)
-
-| 模块 | 用途 |
-|------|------|
 | `agent-api.ts` | Agent CRUD |
 | `sop-api.ts` | SOP 列表、执行、历史 |
-| `hasn-api.ts` | HASN 社交网络 API |
+| `hasn-api.ts` / `hasn-ws.ts` | HASN 社交网络 API 与 WebSocket |
 | `marketplace-api.ts` | 应用市场 API |
-| `huanxing-api.ts` | 唤星平台通用 API |
+| `huanxing-api.ts` | 唤星平台通用 API（登录、验证码等） |
+| `subscription-api.ts` | 订阅与计费 API |
+| `document-api.ts` | 文档管理 API |
 | `file-upload.ts` | 文件上传 |
-| `token-refresh.ts` | Token 刷新 |
+| `token-refresh.ts` | Token 自动刷新 |
+| `audio.ts` | 音频播放工具 |
+| `cropImage.ts` | 图片裁剪工具函数 |
+| `connection.ts` | 连接状态管理 |
+| `utils.ts` | 通用工具函数 |
 
 ### 4.3 新增依赖的审批标准
 
@@ -227,7 +321,7 @@ else root.classList.remove('dark');
 **✅ 正确（必须使用 `resolveApiUrl` 转换）：**
 
 ```tsx
-import { resolveApiUrl } from '@/huanxing/config';
+import { resolveApiUrl } from '@/config';
 
 // 组件渲染必须经过绝对路径转换
 <img 
@@ -248,12 +342,15 @@ import { resolveApiUrl } from '@/huanxing/config';
 ## 5. 页面开发模板
 
 ```tsx
-// src/huanxing/pages/MyNewPage.tsx
+// src/pages/{module}/MyNewPage.tsx
+// 例如：src/pages/settings/Billing.tsx
 
 import React, { useState, useEffect } from 'react';
 import { SomeIcon } from 'lucide-react';
 import { useActiveAgent } from '@/hooks/useActiveAgent';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/Select';
+import { Input } from '@/components/ui/Input';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/Dialog';
 
 export default function MyNewPage() {
   const [activeAgent] = useActiveAgent();
@@ -346,11 +443,11 @@ import { Play, CheckCircle, AlertTriangle } from 'lucide-react';
 
 ### 8.1 新增 API 模块
 
-所有唤星专属 API 放在 `src/huanxing/lib/` 下：
+所有 API 模块统一放在 `src/lib/` 下：
 
 ```ts
-// src/huanxing/lib/my-api.ts
-import { apiFetch } from './huanxing-api';   // 唤星统一 fetch wrapper
+// src/lib/my-api.ts
+import { apiFetch } from '@/lib/huanxing-api';   // 唤星统一 fetch wrapper
 
 export interface MyResponse { ... }
 
@@ -377,9 +474,10 @@ return () => unsubscribe();
 
 - [ ] **主题兼容**：Light 和 Dark 模式下均正常显示（特别检查标签、副标题、内嵌框）
 - [ ] **变量检查**：无硬编码的颜色值和非法内联设定（搜索 `style={{ color: `、`bg-white` 排除污染）
-- [ ] **组件复用**：使用了已有的 Select、图标库等，未重复造轮
-- [ ] **API 规范**：新 API 调用统一挂靠 `huanxing/lib/` 下封装好的 fetcher 钩子层
-- [ ] **零入侵**：未修改 `src/components/` 下的上游文件基座
+- [ ] **组件复用**：已搜索 `components/ui/` 确认无现有可用组件，若新增了 UI 组件则已封装为公共组件并登记至本文档 §4.2
+- [ ] **Radix 优先**：需要新基础 UI 时优先使用 Radix UI 原语封装，而非自造原生标签组件
+- [ ] **API 规范**：新 API 调用统一挂靠 `src/lib/` 下封装好的 fetcher
+- [ ] **导入路径**：所有 import 使用 `@/` 别名，无 `../../` 深层相对路径
 - [ ] **TypeScript**：`npm run build` 确保核心静态解析未产生红线报警
 - [ ] **自适应弹性（响应式）**：缩放视图边界窗口内容无硬溢出
 
@@ -395,6 +493,9 @@ return () => unsubscribe();
 | `style={{ color: '#6B7280' }}` | `className="text-hx-text-secondary"` |
 | `import { FaXxx } from 'react-icons/fa'` | `import { Xxx } from 'lucide-react'` |
 | 自己手撸 `<select>` 标签构建交互 | `import { Select } from '@/components/ui/Select'` |
+| 自己手撸 `<dialog>` 或 `window.confirm()` | `import { Dialog } from '@/components/ui/Dialog'` 或 `AlertDialog` |
+| 自己手撸 `<input>` 标签 | `import { Input } from '@/components/ui/Input'` |
+| 为单个页面重复封装已有公共组件 | 直接引用 `@/components/` 下的已有组件 |
 | 各自为政新建 WebSocket 连接通道 | `wsMultiplexer.subscribe(sessionId, handler)` |
 | `npm install some-large-ui-framework` | 探索在已存 Radix 原语和原生 CSS 方案中闭环实现 |
 

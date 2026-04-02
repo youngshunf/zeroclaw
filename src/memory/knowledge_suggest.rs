@@ -7,7 +7,11 @@
 use crate::memory::knowledge_graph::{KnowledgeGraph, KnowledgeNode};
 
 /// Query the knowledge graph for items relevant to the user's message.
-pub fn suggest_knowledge(graph: &KnowledgeGraph, query: &str, max_items: usize) -> Vec<KnowledgeNode> {
+pub fn suggest_knowledge(
+    graph: &KnowledgeGraph,
+    query: &str,
+    max_items: usize,
+) -> Vec<KnowledgeNode> {
     if query.trim().is_empty() || max_items == 0 {
         return Vec::new();
     }

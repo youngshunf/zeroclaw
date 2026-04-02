@@ -85,8 +85,7 @@ impl Tool for SopStatusTool {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        let ws = crate::tools::get_active_workspace()
-            .unwrap_or_else(|| self.workspace_dir.clone());
+        let ws = crate::tools::get_active_workspace().unwrap_or_else(|| self.workspace_dir.clone());
         let mut engine = self
             .engine
             .lock()

@@ -75,7 +75,10 @@ pub fn load_sops(
 
 /// Load SOPs from a specific directory. Each subdirectory may contain
 /// `SOP.toml` (metadata + triggers) and `SOP.md` (procedure steps).
-pub fn load_sops_from_directory(sops_dir: &Path, default_execution_mode: SopExecutionMode) -> Vec<Sop> {
+pub fn load_sops_from_directory(
+    sops_dir: &Path,
+    default_execution_mode: SopExecutionMode,
+) -> Vec<Sop> {
     if !sops_dir.exists() {
         return Vec::new();
     }
@@ -820,7 +823,10 @@ type = "manual"
     fn resolve_sops_dir_relative_joined_with_workspace() {
         let ws = Path::new("/home/user/.huanxing/agents/default");
         let dir = resolve_sops_dir(ws, Some("sops"));
-        assert_eq!(dir, PathBuf::from("/home/user/.huanxing/agents/default/sops"));
+        assert_eq!(
+            dir,
+            PathBuf::from("/home/user/.huanxing/agents/default/sops")
+        );
     }
 
     #[test]

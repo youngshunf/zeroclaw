@@ -1,12 +1,12 @@
-use crate::tools::traits::{Tool, ToolResult};
 use crate::security::SecurityPolicy;
+use crate::tools::traits::{Tool, ToolResult};
 use async_trait::async_trait;
 use regex::Regex;
 use reqwest::StatusCode;
 use serde_json::json;
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 /// Web search tool for searching the internet.
@@ -52,7 +52,9 @@ impl HxWebSearchTool {
             StatusCode::FORBIDDEN | StatusCode::TOO_MANY_REQUESTS => {
                 " DuckDuckGo may be blocking this network. Try [web_search].provider = \"brave\" with [web_search].brave_api_key, or set provider = \"firecrawl\"."
             }
-            StatusCode::SERVICE_UNAVAILABLE | StatusCode::BAD_GATEWAY | StatusCode::GATEWAY_TIMEOUT => {
+            StatusCode::SERVICE_UNAVAILABLE
+            | StatusCode::BAD_GATEWAY
+            | StatusCode::GATEWAY_TIMEOUT => {
                 " DuckDuckGo may be temporarily unavailable. Retry later or switch providers."
             }
             _ => "",
@@ -567,12 +569,16 @@ impl HxWebSearchTool {
     }
 
     async fn search_searxng(&self, query: &str) -> anyhow::Result<String> {
-        let instance_url = self.searxng_instance_url.as_deref()
+        let instance_url = self
+            .searxng_instance_url
+            .as_deref()
             .filter(|u| !u.is_empty())
-            .ok_or_else(|| anyhow::anyhow!(
-                "SearXNG instance URL not configured. Set [web_search] searxng_instance_url \
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "SearXNG instance URL not configured. Set [web_search] searxng_instance_url \
                  in config.toml or the SEARXNG_INSTANCE_URL environment variable."
-            ))?;
+                )
+            })?;
         let base_url = instance_url.trim_end_matches('/');
 
         let encoded_query = urlencoding::encode(query);

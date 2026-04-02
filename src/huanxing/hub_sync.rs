@@ -16,11 +16,11 @@
 //! `GET https://gitee.com/{owner}/{repo}/repository/archive/{branch}.tar.gz`
 
 use axum::{
+    Json, Router,
     extract::State,
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
-    Json, Router,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -106,14 +106,18 @@ async fn list_templates(State(state): State<AppState>) -> impl IntoResponse {
         if let Err(e) = run_sync(&hub_dir, &config.huanxing.hub_sync).await {
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
-                Json(serde_json::json!({"error": format!("hub 同步失败: {e}"), "templates": []})  ),
+                Json(serde_json::json!({"error": format!("hub 同步失败: {e}"), "templates": []})),
             )
                 .into_response();
         }
     }
 
     let templates = read_templates_from_registry(&registry_path).await;
-    (StatusCode::OK, Json(serde_json::json!({"templates": templates}))).into_response()
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({"templates": templates})),
+    )
+        .into_response()
 }
 
 /// POST /api/hub/sync — 手动触发 hub 同步
@@ -122,14 +126,17 @@ async fn trigger_sync(State(state): State<AppState>) -> impl IntoResponse {
     let hub_dir = resolve_hub_dir(&config);
 
     match run_sync(&hub_dir, &config.huanxing.hub_sync).await {
-        Ok(result) => (StatusCode::OK, Json(serde_json::json!({
-            "status": "ok",
-            "updated": result.updated,
-            "version": result.version,
-            "templates": result.templates,
-            "skills": result.skills,
-            "synced_at": result.synced_at.to_rfc3339(),
-        })))
+        Ok(result) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "status": "ok",
+                "updated": result.updated,
+                "version": result.version,
+                "templates": result.templates,
+                "skills": result.skills,
+                "synced_at": result.synced_at.to_rfc3339(),
+            })),
+        )
             .into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -160,13 +167,16 @@ async fn sync_status(State(state): State<AppState>) -> impl IntoResponse {
         (None, None, 0)
     };
 
-    (StatusCode::OK, Json(serde_json::json!({
-        "initialized": registry_path.exists(),
-        "hub_dir": hub_dir.to_string_lossy(),
-        "last_sync": last_sync.map(|t| t.to_rfc3339()),
-        "version": version,
-        "templates_count": templates_count,
-    })))
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "initialized": registry_path.exists(),
+            "hub_dir": hub_dir.to_string_lossy(),
+            "last_sync": last_sync.map(|t| t.to_rfc3339()),
+            "version": version,
+            "templates_count": templates_count,
+        })),
+    )
         .into_response()
 }
 
@@ -181,9 +191,7 @@ pub async fn run_sync(
     let branch = &sync_config.gitee_branch;
 
     // 下载 tarball
-    let url = format!(
-        "https://gitee.com/{repo}/repository/archive/{branch}.tar.gz"
-    );
+    let url = format!("https://gitee.com/{repo}/repository/archive/{branch}.tar.gz");
 
     tracing::info!(%url, "开始下载 hub tarball");
 
@@ -198,10 +206,7 @@ pub async fn run_sync(
         .await?;
 
     if !response.status().is_success() {
-        anyhow::bail!(
-            "Gitee tarball 下载失败: HTTP {}",
-            response.status()
-        );
+        anyhow::bail!("Gitee tarball 下载失败: HTTP {}", response.status());
     }
 
     let bytes = response.bytes().await?;
@@ -217,10 +222,7 @@ pub async fn run_sync(
     // 在阻塞线程中执行 tar 解压（CPU 密集型）
     let tmp_dir_clone = tmp_dir.clone();
     let bytes_clone = bytes.clone();
-    tokio::task::spawn_blocking(move || {
-        extract_tarball(&bytes_clone, &tmp_dir_clone)
-    })
-    .await??;
+    tokio::task::spawn_blocking(move || extract_tarball(&bytes_clone, &tmp_dir_clone)).await??;
 
     // tarball 解压后通常有一级子目录（repo-branch/）
     // 找到 registry.json 所在的实际目录
@@ -271,10 +273,7 @@ pub async fn run_sync(
 }
 
 /// 检查是否需要同步（hub 不存在或超过 sync_interval_hours）
-pub fn needs_sync(
-    hub_dir: &PathBuf,
-    sync_config: &crate::huanxing::config::HubSyncConfig,
-) -> bool {
+pub fn needs_sync(hub_dir: &PathBuf, sync_config: &crate::huanxing::config::HubSyncConfig) -> bool {
     let registry_path = hub_dir.join("registry.json");
     if !registry_path.exists() {
         return true;

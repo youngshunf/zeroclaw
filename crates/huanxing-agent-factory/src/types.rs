@@ -16,7 +16,7 @@ pub struct TemplateDefinition {
     pub temperature: Option<f64>,
     #[serde(default, deserialize_with = "deserialize_skills")]
     pub skills: SkillsConfig,
-    
+
     // We only need the ID array from marketplace to do downloads
     #[serde(default)]
     pub sops: Vec<String>,

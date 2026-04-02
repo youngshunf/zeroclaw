@@ -4,24 +4,17 @@
 //! 供 WS （hx_ws.rs）和 HTTP（hasn_invoke.rs）两个入口共享复用。
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
 use crate::gateway::AppState;
-
-/// 从 config.toml 中读取的工作区配置片段
-#[derive(Debug, Default, serde::Deserialize)]
-#[serde(default)]
-struct BridgeWorkspaceConfig {
-    pub hasn_id: Option<String>,
-    pub display_name: Option<String>,
-}
+use crate::huanxing::TenantContext;
 
 /// Agent 桥接器 — hasn_id 解析 + 同步 Agent 调用
 pub struct AgentBridge {
-    /// hasn_id → 工作区路径 缓存
-    hasn_id_cache: Mutex<HashMap<String, PathBuf>>,
+    /// hasn_id → TenantContext 缓存
+    hasn_id_cache: Mutex<HashMap<String, Arc<TenantContext>>>,
 }
 
 impl AgentBridge {
@@ -31,63 +24,58 @@ impl AgentBridge {
         }
     }
 
-    /// 通过 hasn_id 查找对应的 Agent 工作区目录 (Unified Node Architecture)
+    /// 通过 hasn_id 查找对应的 TenantContext。
     ///
     /// 1. 查缓存
-    /// 2. 查 TenantDb，获取 tenant_dir 和 agent_id，解析真实路径
-    pub async fn resolve_workspace_by_hasn_id(
+    /// 2. 统一通过 TenantContext 解析 tenant + agent 运行时
+    pub async fn resolve_tenant_by_hasn_id(
         &self,
         state: &AppState,
         hasn_id: &str,
-    ) -> Option<PathBuf> {
+    ) -> Option<Arc<TenantContext>> {
         // 1. 先查缓存
         {
             let cache = self.hasn_id_cache.lock().await;
-            if let Some(path) = cache.get(hasn_id) {
-                if path.exists() {
-                    return Some(path.clone());
+            if let Some(ctx) = cache.get(hasn_id) {
+                if ctx.workspace_dir.exists() {
+                    return Some(ctx.clone());
                 }
             }
         }
 
-        // 2. 查 TenantDb (Unified Node Architecture)
+        // 2. 统一通过 TenantContext 解析
         let config = state.config.lock().clone();
-        let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
-        let db_path = config.huanxing.resolve_db_path(config_dir);
-
-        if let Ok(db) = crate::huanxing::db::TenantDb::open(&db_path) {
-            if let Ok(Some(record)) = db.find_by_hasn_id(hasn_id).await {
-                let workspace = config.huanxing.resolve_agent_workspace(
-                    config_dir,
-                    record.tenant_dir.as_deref(),
-                    &record.agent_id,
+        match TenantContext::load_by_hasn_id(&config, hasn_id).await {
+            Ok(Some(ctx)) if ctx.workspace_dir.exists() => {
+                debug!(
+                    hasn_id,
+                    workspace = %ctx.workspace_dir.display(),
+                    "hasn_id 解析命中"
                 );
-
-                if workspace.exists() {
-                    debug!(hasn_id, workspace = %workspace.display(), "hasn_id 解析命中");
-                    self.hasn_id_cache
-                        .lock()
-                        .await
-                        .insert(hasn_id.to_string(), workspace.clone());
-                    return Some(workspace);
-                } else {
-                    warn!(hasn_id, workspace = %workspace.display(), "数据库找到记录，但工作区目录不存在");
-                }
+                let ctx = Arc::new(ctx);
+                self.hasn_id_cache
+                    .lock()
+                    .await
+                    .insert(hasn_id.to_string(), ctx.clone());
+                Some(ctx)
+            }
+            Ok(Some(ctx)) => {
+                warn!(
+                    hasn_id,
+                    workspace = %ctx.workspace_dir.display(),
+                    "数据库找到记录，但工作区目录不存在"
+                );
+                None
+            }
+            Ok(None) => {
+                warn!(hasn_id, "未找到 hasn_id 对应的 Agent 工作区");
+                None
+            }
+            Err(err) => {
+                warn!(hasn_id, error = %err, "hasn_id 解析 TenantContext 失败");
+                None
             }
         }
-
-        warn!(hasn_id, "未找到 hasn_id 对应的 Agent 工作区");
-        None
-    }
-
-    /// 通过 agent_name（目录名）直接定位工作区
-    pub fn resolve_workspace_by_name(
-        &self,
-        agents_dir: &Path,
-        agent_name: &str,
-    ) -> Option<PathBuf> {
-        let workspace = agents_dir.join(agent_name);
-        workspace.exists().then_some(workspace)
     }
 
     /// 同步调用 Agent 处理一条消息（HASN invoke 用）
@@ -100,23 +88,18 @@ impl AgentBridge {
     pub async fn invoke(
         &self,
         state: &AppState,
-        workspace: &Path,
+        tenant: &TenantContext,
         session_id: &str,
         message: &str,
     ) -> anyhow::Result<InvokeResult> {
-        let config = state.config.lock().clone();
-
-        // 创建隔离 Agent（使用指定工作区）
-        let mut agent_config = config.clone();
-        agent_config.workspace_dir = workspace.to_path_buf();
-        let mut agent = crate::agent::Agent::from_config(&agent_config).await?;
+        let mut agent = tenant.create_agent().await?;
         agent.set_memory_session_id(Some(session_id.to_string()));
 
-        // 创建 per-workspace session backend
         let session_key = format!("hasn_{session_id}");
-        let per_user_backend =
-            crate::huanxing::tenant::create_session_backend_for_workspace(workspace, &config)
-                .or_else(|| state.session_backend.clone());
+        let per_user_backend = tenant
+            .session_manager
+            .clone()
+            .or_else(|| state.session_backend.clone());
 
         // 恢复历史
         if let Some(ref backend) = per_user_backend {
@@ -138,7 +121,11 @@ impl AgentBridge {
         }
 
         // 执行 Agent turn
-        info!(session_id, workspace = %workspace.display(), "HASN invoke: Agent.turn()");
+        info!(
+            session_id,
+            workspace = %tenant.workspace_dir.display(),
+            "HASN invoke: Agent.turn()"
+        );
         let response = agent.turn(message).await?;
 
         // 持久化 Agent 回复
@@ -147,32 +134,26 @@ impl AgentBridge {
             let _ = backend.append(&session_key, &assistant_msg);
         }
 
-        Ok(InvokeResult {
-            reply: response,
-        })
+        Ok(InvokeResult { reply: response })
     }
 
     /// 流式同步调用 Agent 处理一条消息（供 WS UI 消费用）
     pub async fn invoke_streaming(
         &self,
         state: &AppState,
-        workspace: &Path,
+        tenant: &TenantContext,
         session_id: &str,
         message: &str,
         tx: tokio::sync::mpsc::UnboundedSender<String>,
     ) -> anyhow::Result<()> {
-        let config = state.config.lock().clone();
-
-        // 创建隔离 Agent
-        let mut agent_config = config.clone();
-        agent_config.workspace_dir = workspace.to_path_buf();
-        let mut agent = crate::agent::Agent::from_config(&agent_config).await?;
+        let mut agent = tenant.create_agent().await?;
         agent.set_memory_session_id(Some(session_id.to_string()));
 
         let session_key = format!("hasn_{session_id}");
-        let per_user_backend =
-            crate::huanxing::tenant::create_session_backend_for_workspace(workspace, &config)
-                .or_else(|| state.session_backend.clone());
+        let per_user_backend = tenant
+            .session_manager
+            .clone()
+            .or_else(|| state.session_backend.clone());
 
         if let Some(ref backend) = per_user_backend {
             let messages = backend.load(&session_key);
@@ -183,10 +164,14 @@ impl AgentBridge {
             let _ = backend.append(&session_key, &user_msg);
         }
 
-        info!(session_id, workspace = %workspace.display(), "HASN invoke_streaming: Agent.turn_streamed()");
-        
+        info!(
+            session_id,
+            workspace = %tenant.workspace_dir.display(),
+            "HASN invoke_streaming: Agent.turn_streamed()"
+        );
+
         let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<crate::agent::TurnEvent>(100);
-        
+
         let tx_clone = tx.clone();
         tokio::spawn(async move {
             while let Some(event) = event_rx.recv().await {

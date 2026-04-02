@@ -229,8 +229,9 @@ static DEFERRED_ACTION_WITHOUT_TOOL_CALL_REGEX: LazyLock<Regex> = LazyLock::new(
 
 /// Detect common CJK deferred-action phrases (e.g., Chinese "让我…查看")
 /// that imply a follow-up tool call should occur.
-static CJK_DEFERRED_ACTION_CUE_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(让我|我来|我会|我们来|我们会|我先|先让我|马上|在做|要做|正在做|去做)").unwrap());
+static CJK_DEFERRED_ACTION_CUE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(让我|我来|我会|我们来|我们会|我先|先让我|马上|在做|要做|正在做|去做)").unwrap()
+});
 
 /// Action verbs commonly used when promising to perform tool-backed work in CJK text.
 static CJK_DEFERRED_ACTION_VERB_REGEX: LazyLock<Regex> = LazyLock::new(|| {
@@ -1066,7 +1067,7 @@ fn parse_perl_style_tool_calls(response: &str) -> Vec<ParsedToolCall> {
         for arg_cap in ARGS_FLEXIBLE_RE.captures_iter(&args_search_region) {
             let key = arg_cap.get(1).map(|m| m.as_str()).unwrap_or("");
             let mut value = arg_cap.get(2).map(|m| m.as_str()).unwrap_or("").trim();
-            
+
             // Further clean up trailing `"` or `'` if the model missed the opening quote
             // but included a closing quote (or vice versa).
             if value.starts_with('"') || value.starts_with('\'') {
@@ -1075,15 +1076,12 @@ fn parse_perl_style_tool_calls(response: &str) -> Vec<ParsedToolCall> {
             if value.ends_with('"') || value.ends_with('\'') {
                 value = &value[..value.len().saturating_sub(1)];
             }
-            
+
             // Clean up any double-quote escapes \" that might have lived inside
             let unescaped_val = value.replace("\\\"", "\"");
 
             if !key.is_empty() {
-                arguments.insert(
-                    key.to_string(),
-                    serde_json::Value::String(unescaped_val),
-                );
+                arguments.insert(key.to_string(), serde_json::Value::String(unescaped_val));
             }
         }
 
@@ -1758,8 +1756,9 @@ fn parse_tool_calls(response: &str) -> (String, Vec<ParsedToolCall>) {
             for call in perl_calls {
                 calls.push(call);
                 // Try to remove the TOOL_CALL block from text
-                static STRIP_RE: LazyLock<Regex> =
-                    LazyLock::new(|| Regex::new(r"(?s)\[?TOOL_CALL\]?.*?\[?/TOOL_CALL\]?").unwrap());
+                static STRIP_RE: LazyLock<Regex> = LazyLock::new(|| {
+                    Regex::new(r"(?s)\[?TOOL_CALL\]?.*?\[?/TOOL_CALL\]?").unwrap()
+                });
                 cleaned_text = STRIP_RE.replace_all(&cleaned_text, "").to_string();
             }
             if !cleaned_text.trim().is_empty() {
@@ -2780,10 +2779,9 @@ pub(crate) async fn run_tool_call_loop(
                 });
 
                 // Record cost via task-local tracker (no-op when not scoped)
-                let _ = resp
-                    .usage
-                    .as_ref()
-                    .and_then(|usage| record_tool_loop_cost_usage(active_provider_name, active_model, usage));
+                let _ = resp.usage.as_ref().and_then(|usage| {
+                    record_tool_loop_cost_usage(active_provider_name, active_model, usage)
+                });
 
                 let response_text = resp.text_or_empty().to_string();
                 // First try native structured tool calls (OpenAI-format).
@@ -8009,7 +8007,12 @@ Tail"#;
         let response = "[TOOL_CALL]\n{tool => \"shell\", args => {\n  --command \"bash /opt/napcat/start.sh restart\"</parameter>\n}}\n[/TOOL_CALL]";
 
         let calls = parse_perl_style_tool_calls(response);
-        assert_eq!(calls.len(), 1, "expected 1 tool call but got {}", calls.len());
+        assert_eq!(
+            calls.len(),
+            1,
+            "expected 1 tool call but got {}",
+            calls.len()
+        );
         assert_eq!(calls[0].name, "shell");
         assert_eq!(
             calls[0].arguments.get("command").unwrap().as_str().unwrap(),
@@ -8038,11 +8041,18 @@ Tail"#;
         let response = "[TOOL_CALL]\n{tool => \"cron_list\", args => {\n}}\n[/TOOL_CALL]";
 
         let (text, calls) = parse_tool_calls(response);
-        assert_eq!(calls.len(), 1, "expected 1 tool call with empty args, text was: {text:?}");
+        assert_eq!(
+            calls.len(),
+            1,
+            "expected 1 tool call with empty args, text was: {text:?}"
+        );
         assert_eq!(calls[0].name, "cron_list");
         assert!(calls[0].arguments.as_object().unwrap().is_empty());
         // The TOOL_CALL block should be stripped from user-visible text
-        assert!(text.trim().is_empty(), "TOOL_CALL text should be stripped, got: {text:?}");
+        assert!(
+            text.trim().is_empty(),
+            "TOOL_CALL text should be stripped, got: {text:?}"
+        );
     }
 
     #[test]

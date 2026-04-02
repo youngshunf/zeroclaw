@@ -360,12 +360,7 @@ fn default_version() -> String {
 
 impl HasnEnvelope {
     /// 构造一条待发送的普通文本消息
-    pub fn new_text(
-        from: EntityRef,
-        to: EntityRef,
-        conversation_id: &str,
-        text: &str,
-    ) -> Self {
+    pub fn new_text(from: EntityRef, to: EntityRef, conversation_id: &str, text: &str) -> Self {
         Self {
             id: format!("msg_{}", ulid::Ulid::new()),
             version: "1.0".to_string(),
@@ -528,10 +523,7 @@ impl HasnMessageRecord {
                 entity_type: EntityType::Human,
                 owner_id: self.to_owner_id.clone(),
             },
-            content: MessageContent {
-                content_type,
-                body,
-            },
+            content: MessageContent { content_type, body },
             context: MessageContext {
                 conversation_id: self.conversation_id.clone(),
                 relation_type: None,

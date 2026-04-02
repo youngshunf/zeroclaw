@@ -113,10 +113,10 @@ use crate::agent::loop_::{
     is_model_switch_requested, run_tool_call_loop, scope_thread_id, scrub_credentials,
 };
 use crate::approval::ApprovalManager;
+use crate::channels::session_backend::SessionBackend;
 use crate::config::Config;
 use crate::identity;
 use crate::memory::{self, Memory};
-use crate::channels::session_backend::SessionBackend;
 use crate::observability::traits::{ObserverEvent, ObserverMetric};
 use crate::observability::{self, Observer, runtime_trace};
 use crate::providers::reliable::{scope_provider_fallback, take_last_provider_fallback};
@@ -445,10 +445,7 @@ impl InFlightTaskCompletion {
 ///
 /// Falls back to the original URL if download fails — the multimodal layer will
 /// handle the error gracefully for history messages.
-async fn localize_remote_image_markers(
-    content: &str,
-    workspace_dir: &std::path::Path,
-) -> String {
+async fn localize_remote_image_markers(content: &str, workspace_dir: &std::path::Path) -> String {
     use std::path::Path;
 
     let media_dir = workspace_dir.join("media");
@@ -540,10 +537,17 @@ fn conversation_history_key(msg: &traits::ChannelMessage) -> String {
     // NapCat (QQ) sets thread_ts to the per-message ID, which is unique
     // every time — skip it so conversations persist across messages.
     match &msg.thread_ts {
-        Some(tid) if msg.channel != "napcat" && msg.channel != "wechat_pad" && msg.channel != "qqbot" && msg.channel != "weixin" => format!(
-            "{}_{}_{}_{}",
-            msg.channel, msg.reply_target, tid, msg.sender
-        ),
+        Some(tid)
+            if msg.channel != "napcat"
+                && msg.channel != "wechat_pad"
+                && msg.channel != "qqbot"
+                && msg.channel != "weixin" =>
+        {
+            format!(
+                "{}_{}_{}_{}",
+                msg.channel, msg.reply_target, tid, msg.sender
+            )
+        }
         _ => format!("{}_{}_{}", msg.channel, msg.reply_target, msg.sender),
     }
 }
@@ -2483,7 +2487,10 @@ async fn process_channel_message(
     }
 
     // ── Resolve per-message context via abstraction layer ──────
-    let msg_ctx = ctx.context_resolver.resolve(&msg.channel, &msg.sender).await;
+    let msg_ctx = ctx
+        .context_resolver
+        .resolve(&msg.channel, &msg.sender)
+        .await;
     let is_multi_tenant = ctx.context_resolver.is_multi_tenant();
 
     tracing::debug!(
@@ -2536,8 +2543,7 @@ async fn process_channel_message(
     // goes stale.  This runs after msg_ctx is resolved so we know the
     // correct per-tenant workspace_dir.
     if msg.content.contains("[IMAGE:http") {
-        msg.content =
-            localize_remote_image_markers(&msg.content, &msg_ctx.workspace_dir).await;
+        msg.content = localize_remote_image_markers(&msg.content, &msg_ctx.workspace_dir).await;
     }
     // ── Media pipeline: enrich inbound message with media annotations ──
     if ctx.media_pipeline.enabled && !msg.attachments.is_empty() {
@@ -2573,12 +2579,12 @@ async fn process_channel_message(
     if msg_ctx.knowledge_config.suggest_on_query && msg_ctx.knowledge_config.enabled {
         let mut suggestions = vec![];
 
-        if msg_ctx.knowledge_config.cross_workspace_search && msg_ctx.cross_knowledge_index.is_some() {
+        if msg_ctx.knowledge_config.cross_workspace_search
+            && msg_ctx.cross_knowledge_index.is_some()
+        {
             if let Some(ref cross_index) = msg_ctx.cross_knowledge_index {
-                let cross_res = cross_index.search(
-                    &msg.content,
-                    msg_ctx.knowledge_config.suggest_max_items,
-                );
+                let cross_res =
+                    cross_index.search(&msg.content, msg_ctx.knowledge_config.suggest_max_items);
                 suggestions.extend(cross_res.into_iter().map(|r| r.node));
             }
         } else if let Some(ref kg) = msg_ctx.knowledge_graph {
@@ -2677,7 +2683,10 @@ async fn process_channel_message(
             &route.provider,
             Some(tenant_api_key.clone()),
             None,
-            msg_ctx.reliability.clone().unwrap_or_else(|| runtime_defaults.reliability.clone()),
+            msg_ctx
+                .reliability
+                .clone()
+                .unwrap_or_else(|| runtime_defaults.reliability.clone()),
             ctx.provider_runtime_options.clone(),
         )
         .await
@@ -2689,7 +2698,13 @@ async fn process_channel_message(
                     error = %err,
                     "Failed to create provider with tenant api_key, falling back to global"
                 );
-                match get_or_create_provider(ctx.as_ref(), &route.provider, route.api_key.as_deref()).await {
+                match get_or_create_provider(
+                    ctx.as_ref(),
+                    &route.provider,
+                    route.api_key.as_deref(),
+                )
+                .await
+                {
                     Ok(p) => p,
                     Err(err) => {
                         let safe_err = providers::sanitize_api_error(&err.to_string());
@@ -2711,12 +2726,7 @@ async fn process_channel_message(
             }
         }
     } else {
-        match get_or_create_provider(
-            ctx.as_ref(),
-            &route.provider,
-            route.api_key.as_deref(),
-        )
-        .await
+        match get_or_create_provider(ctx.as_ref(), &route.provider, route.api_key.as_deref()).await
         {
             Ok(provider) => provider,
             Err(err) => {
@@ -2802,7 +2812,9 @@ async fn process_channel_message(
                     let mut histories = effective_histories
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    if !histories.contains(&history_key) { histories.put(history_key.clone(), msgs); }
+                    if !histories.contains(&history_key) {
+                        histories.put(history_key.clone(), msgs);
+                    }
                     tracing::debug!(
                         agent_id = %msg_ctx.agent_id,
                         history_key = %history_key,
@@ -2830,7 +2842,9 @@ async fn process_channel_message(
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let turns = histories.get_or_insert_mut(history_key.clone(), Vec::new);
         turns.push(user_turn);
-        let max_history = msg_ctx.max_history_messages.unwrap_or(ctx.max_history_messages);
+        let max_history = msg_ctx
+            .max_history_messages
+            .unwrap_or(ctx.max_history_messages);
         while turns.len() > max_history {
             turns.remove(0);
         }
@@ -3152,11 +3166,14 @@ async fn process_channel_message(
         Cancelled,
     }
 
-    let timeout_budget_secs =
-        channel_message_timeout_budget_secs(
-            msg_ctx.message_timeout_secs.unwrap_or(ctx.message_timeout_secs),
-            msg_ctx.max_tool_iterations.unwrap_or(ctx.max_tool_iterations),
-        );
+    let timeout_budget_secs = channel_message_timeout_budget_secs(
+        msg_ctx
+            .message_timeout_secs
+            .unwrap_or(ctx.message_timeout_secs),
+        msg_ctx
+            .max_tool_iterations
+            .unwrap_or(ctx.max_tool_iterations),
+    );
     let llm_call_start = Instant::now();
     #[allow(clippy::cast_possible_truncation)]
     let elapsed_before_llm_ms = started_at.elapsed().as_millis() as u64;
@@ -3170,14 +3187,17 @@ async fn process_channel_message(
 
     // Effective non_cli_excluded_tools: tenant override or global
     let tenant_excluded_tools: Vec<String>;
-    let effective_excluded_tools: &[String] = if let Some(ref tools) = msg_ctx.non_cli_excluded_tools {
-        tenant_excluded_tools = tools.clone();
-        &tenant_excluded_tools
-    } else {
-        ctx.non_cli_excluded_tools.as_ref()
-    };
+    let effective_excluded_tools: &[String] =
+        if let Some(ref tools) = msg_ctx.non_cli_excluded_tools {
+            tenant_excluded_tools = tools.clone();
+            &tenant_excluded_tools
+        } else {
+            ctx.non_cli_excluded_tools.as_ref()
+        };
 
-    let effective_max_tool_iterations = msg_ctx.max_tool_iterations.unwrap_or(ctx.max_tool_iterations);
+    let effective_max_tool_iterations = msg_ctx
+        .max_tool_iterations
+        .unwrap_or(ctx.max_tool_iterations);
 
     // Build the cost tracking context for upstream cost accounting
     let cost_tracking_context = ctx.cost_tracking.clone().map(|state| {
@@ -3292,19 +3312,27 @@ async fn process_channel_message(
     let (llm_result, fallback_info) = if is_multi_tenant {
         let ws = msg_ctx.workspace_dir.clone();
         let kg_cfg = msg_ctx.knowledge_config.clone();
-        
+
         let f1 = crate::tools::with_active_knowledge_config(kg_cfg, run_llm_future);
-        
+
         if let Some(sec) = msg_ctx.security.clone() {
             let f2 = crate::tools::with_active_security(sec, f1);
             if let Some(kg) = msg_ctx.knowledge_graph.clone() {
-                crate::tools::with_active_workspace(ws, crate::tools::with_active_knowledge_graph(kg, f2)).await
+                crate::tools::with_active_workspace(
+                    ws,
+                    crate::tools::with_active_knowledge_graph(kg, f2),
+                )
+                .await
             } else {
                 crate::tools::with_active_workspace(ws, f2).await
             }
         } else {
             if let Some(kg) = msg_ctx.knowledge_graph.clone() {
-                crate::tools::with_active_workspace(ws, crate::tools::with_active_knowledge_graph(kg, f1)).await
+                crate::tools::with_active_workspace(
+                    ws,
+                    crate::tools::with_active_knowledge_graph(kg, f1),
+                )
+                .await
             } else {
                 crate::tools::with_active_workspace(ws, f1).await
             }
@@ -3514,7 +3542,9 @@ async fn process_channel_message(
                         .unwrap_or_else(std::sync::PoisonError::into_inner);
                     let turns = histories.get_or_insert_mut(history_key.clone(), Vec::new);
                     turns.push(assistant_turn);
-                    let max_history = msg_ctx.max_history_messages.unwrap_or(ctx.max_history_messages);
+                    let max_history = msg_ctx
+                        .max_history_messages
+                        .unwrap_or(ctx.max_history_messages);
                     while turns.len() > max_history {
                         turns.remove(0);
                     }
@@ -3740,7 +3770,9 @@ async fn process_channel_message(
                                 .unwrap_or_else(std::sync::PoisonError::into_inner);
                             let turns = histories.get_or_insert_mut(history_key.clone(), Vec::new);
                             turns.push(fail_turn.clone());
-                            let max_history = msg_ctx.max_history_messages.unwrap_or(ctx.max_history_messages);
+                            let max_history = msg_ctx
+                                .max_history_messages
+                                .unwrap_or(ctx.max_history_messages);
                             while turns.len() > max_history {
                                 turns.remove(0);
                             }
@@ -3800,7 +3832,9 @@ async fn process_channel_message(
                         .unwrap_or_else(std::sync::PoisonError::into_inner);
                     let turns = histories.get_or_insert_mut(history_key.clone(), Vec::new);
                     turns.push(timeout_turn.clone());
-                    let max_history = msg_ctx.max_history_messages.unwrap_or(ctx.max_history_messages);
+                    let max_history = msg_ctx
+                        .max_history_messages
+                        .unwrap_or(ctx.max_history_messages);
                     while turns.len() > max_history {
                         turns.remove(0);
                     }
@@ -5823,34 +5857,39 @@ pub async fn start_channels(config: Config) -> Result<()> {
         .as_ref()
         .is_some_and(|mx| mx.interrupt_on_new_message);
 
-    let default_resolver = Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
-        crate::channels::context_resolver::MessageContext {
-            agent_id: "default".to_string(),
-            is_guardian: false,
-            nickname: None,
-            star_name: None,
-            model: Some(model.clone()),
-            provider: None,
-            api_key: config.api_key.clone(),
-            temperature: Some(temperature),
-            system_prompt: system_prompt.clone(),
-            memory: Arc::clone(&mem),
-            conversation_histories: Arc::new(std::sync::Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::new(crate::channels::MAX_CONVERSATION_SENDERS).unwrap()))),
-            session_manager: None,
-            workspace_dir: config.workspace_dir.clone(),
-            security: None,
-            non_cli_excluded_tools: None,
-            compact_context: None,
-            max_history_messages: None,
-            max_tool_iterations: None,
-            message_timeout_secs: None,
-            multimodal: None,
-            reliability: None,
-                    knowledge_graph: None,
-                    cross_knowledge_index: None,
-                    knowledge_config: Default::default(),
-        },
-    )) as Arc<dyn crate::channels::context_resolver::MessageContextResolver>;
+    let default_resolver = Arc::new(
+        crate::channels::context_resolver::DefaultContextResolver::new(
+            crate::channels::context_resolver::MessageContext {
+                agent_id: "default".to_string(),
+                is_guardian: false,
+                nickname: None,
+                star_name: None,
+                model: Some(model.clone()),
+                provider: None,
+                api_key: config.api_key.clone(),
+                temperature: Some(temperature),
+                system_prompt: system_prompt.clone(),
+                memory: Arc::clone(&mem),
+                conversation_histories: Arc::new(std::sync::Mutex::new(lru::LruCache::new(
+                    std::num::NonZeroUsize::new(crate::channels::MAX_CONVERSATION_SENDERS).unwrap(),
+                ))),
+                session_manager: None,
+                workspace_dir: config.workspace_dir.clone(),
+                security: None,
+                non_cli_excluded_tools: None,
+                compact_context: None,
+                max_history_messages: None,
+                max_tool_iterations: None,
+                message_timeout_secs: None,
+                multimodal: None,
+                reliability: None,
+                knowledge_graph: None,
+                cross_knowledge_index: None,
+                knowledge_config: Default::default(),
+            },
+        ),
+    )
+        as Arc<dyn crate::channels::context_resolver::MessageContextResolver>;
 
     let context_resolver = {
         #[cfg(feature = "huanxing")]
@@ -5878,10 +5917,12 @@ pub async fn start_channels(config: Config) -> Result<()> {
         #[cfg(feature = "huanxing")]
         {
             if config.huanxing.enabled {
-                runner.register(Box::new(crate::huanxing::voice_hook::VoiceSynthesisHook::new(
-                    Arc::clone(&context_resolver),
-                    &config,
-                )));
+                runner.register(Box::new(
+                    crate::huanxing::voice_hook::VoiceSynthesisHook::new(
+                        Arc::clone(&context_resolver),
+                        &config,
+                    ),
+                ));
             }
         }
         Some(Arc::new(runner))
@@ -6362,31 +6403,43 @@ mod tests {
             )),
             activated_tools: None,
             cost_tracking: None,
-            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
-                crate::channels::context_resolver::MessageContext {
-                    agent_id: "test".to_string(),
-                    is_guardian: false,
-                    nickname: None,
-                    star_name: None,
-                    model: None,
-                    provider: None,
-                    api_key: None,
-                    temperature: None,
-                    system_prompt: String::new(),
-                    memory: Arc::new(crate::memory::NoneMemory),
-                    conversation_histories: Arc::new(std::sync::Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::new(crate::channels::MAX_CONVERSATION_SENDERS).unwrap()))),
-                    session_manager: None,
-                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
-                    security: None,
-                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
-                    message_timeout_secs: None,
-                    multimodal: None,
-                    reliability: None,
-                    knowledge_graph: None,
-                    cross_knowledge_index: None,
-                    knowledge_config: Default::default(),
-                },
-            )),
+            context_resolver: Arc::new(
+                crate::channels::context_resolver::DefaultContextResolver::new(
+                    crate::channels::context_resolver::MessageContext {
+                        agent_id: "test".to_string(),
+                        is_guardian: false,
+                        nickname: None,
+                        star_name: None,
+                        model: None,
+                        provider: None,
+                        api_key: None,
+                        temperature: None,
+                        system_prompt: String::new(),
+                        memory: Arc::new(crate::memory::NoneMemory),
+                        conversation_histories: Arc::new(std::sync::Mutex::new(
+                            lru::LruCache::new(
+                                std::num::NonZeroUsize::new(
+                                    crate::channels::MAX_CONVERSATION_SENDERS,
+                                )
+                                .unwrap(),
+                            ),
+                        )),
+                        session_manager: None,
+                        workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                        security: None,
+                        non_cli_excluded_tools: None,
+                        compact_context: None,
+                        max_history_messages: None,
+                        max_tool_iterations: None,
+                        message_timeout_secs: None,
+                        multimodal: None,
+                        reliability: None,
+                        knowledge_graph: None,
+                        cross_knowledge_index: None,
+                        knowledge_config: Default::default(),
+                    },
+                ),
+            ),
             max_tool_result_chars: 0,
             context_token_budget: 0,
             debouncer: Arc::new(debounce::MessageDebouncer::new(Duration::ZERO)),
@@ -6513,31 +6566,43 @@ mod tests {
             )),
             activated_tools: None,
             cost_tracking: None,
-            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
-                crate::channels::context_resolver::MessageContext {
-                    agent_id: "test".to_string(),
-                    is_guardian: false,
-                    nickname: None,
-                    star_name: None,
-                    model: None,
-                    provider: None,
-                    api_key: None,
-                    temperature: None,
-                    system_prompt: String::new(),
-                    memory: Arc::new(crate::memory::NoneMemory),
-                    conversation_histories: Arc::new(std::sync::Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::new(crate::channels::MAX_CONVERSATION_SENDERS).unwrap()))),
-                    session_manager: None,
-                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
-                    security: None,
-                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
-                    message_timeout_secs: None,
-                    multimodal: None,
-                    reliability: None,
-                    knowledge_graph: None,
-                    cross_knowledge_index: None,
-                    knowledge_config: Default::default(),
-                },
-            )),
+            context_resolver: Arc::new(
+                crate::channels::context_resolver::DefaultContextResolver::new(
+                    crate::channels::context_resolver::MessageContext {
+                        agent_id: "test".to_string(),
+                        is_guardian: false,
+                        nickname: None,
+                        star_name: None,
+                        model: None,
+                        provider: None,
+                        api_key: None,
+                        temperature: None,
+                        system_prompt: String::new(),
+                        memory: Arc::new(crate::memory::NoneMemory),
+                        conversation_histories: Arc::new(std::sync::Mutex::new(
+                            lru::LruCache::new(
+                                std::num::NonZeroUsize::new(
+                                    crate::channels::MAX_CONVERSATION_SENDERS,
+                                )
+                                .unwrap(),
+                            ),
+                        )),
+                        session_manager: None,
+                        workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                        security: None,
+                        non_cli_excluded_tools: None,
+                        compact_context: None,
+                        max_history_messages: None,
+                        max_tool_iterations: None,
+                        message_timeout_secs: None,
+                        multimodal: None,
+                        reliability: None,
+                        knowledge_graph: None,
+                        cross_knowledge_index: None,
+                        knowledge_config: Default::default(),
+                    },
+                ),
+            ),
             max_tool_result_chars: 0,
             context_token_budget: 0,
             debouncer: Arc::new(debounce::MessageDebouncer::new(Duration::ZERO)),
@@ -6621,31 +6686,43 @@ mod tests {
             )),
             activated_tools: None,
             cost_tracking: None,
-            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
-                crate::channels::context_resolver::MessageContext {
-                    agent_id: "test".to_string(),
-                    is_guardian: false,
-                    nickname: None,
-                    star_name: None,
-                    model: None,
-                    provider: None,
-                    api_key: None,
-                    temperature: None,
-                    system_prompt: String::new(),
-                    memory: Arc::new(crate::memory::NoneMemory),
-                    conversation_histories: Arc::new(std::sync::Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::new(crate::channels::MAX_CONVERSATION_SENDERS).unwrap()))),
-                    session_manager: None,
-                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
-                    security: None,
-                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
-                    message_timeout_secs: None,
-                    multimodal: None,
-                    reliability: None,
-                    knowledge_graph: None,
-                    cross_knowledge_index: None,
-                    knowledge_config: Default::default(),
-                },
-            )),
+            context_resolver: Arc::new(
+                crate::channels::context_resolver::DefaultContextResolver::new(
+                    crate::channels::context_resolver::MessageContext {
+                        agent_id: "test".to_string(),
+                        is_guardian: false,
+                        nickname: None,
+                        star_name: None,
+                        model: None,
+                        provider: None,
+                        api_key: None,
+                        temperature: None,
+                        system_prompt: String::new(),
+                        memory: Arc::new(crate::memory::NoneMemory),
+                        conversation_histories: Arc::new(std::sync::Mutex::new(
+                            lru::LruCache::new(
+                                std::num::NonZeroUsize::new(
+                                    crate::channels::MAX_CONVERSATION_SENDERS,
+                                )
+                                .unwrap(),
+                            ),
+                        )),
+                        session_manager: None,
+                        workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                        security: None,
+                        non_cli_excluded_tools: None,
+                        compact_context: None,
+                        max_history_messages: None,
+                        max_tool_iterations: None,
+                        message_timeout_secs: None,
+                        multimodal: None,
+                        reliability: None,
+                        knowledge_graph: None,
+                        cross_knowledge_index: None,
+                        knowledge_config: Default::default(),
+                    },
+                ),
+            ),
             max_tool_result_chars: 0,
             context_token_budget: 0,
             debouncer: Arc::new(debounce::MessageDebouncer::new(Duration::ZERO)),
@@ -6746,31 +6823,43 @@ mod tests {
             )),
             activated_tools: None,
             cost_tracking: None,
-            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
-                crate::channels::context_resolver::MessageContext {
-                    agent_id: "test".to_string(),
-                    is_guardian: false,
-                    nickname: None,
-                    star_name: None,
-                    model: None,
-                    provider: None,
-                    api_key: None,
-                    temperature: None,
-                    system_prompt: String::new(),
-                    memory: Arc::new(crate::memory::NoneMemory),
-                    conversation_histories: Arc::new(std::sync::Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::new(crate::channels::MAX_CONVERSATION_SENDERS).unwrap()))),
-                    session_manager: None,
-                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
-                    security: None,
-                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
-                    message_timeout_secs: None,
-                    multimodal: None,
-                    reliability: None,
-                    knowledge_graph: None,
-                    cross_knowledge_index: None,
-                    knowledge_config: Default::default(),
-                },
-            )),
+            context_resolver: Arc::new(
+                crate::channels::context_resolver::DefaultContextResolver::new(
+                    crate::channels::context_resolver::MessageContext {
+                        agent_id: "test".to_string(),
+                        is_guardian: false,
+                        nickname: None,
+                        star_name: None,
+                        model: None,
+                        provider: None,
+                        api_key: None,
+                        temperature: None,
+                        system_prompt: String::new(),
+                        memory: Arc::new(crate::memory::NoneMemory),
+                        conversation_histories: Arc::new(std::sync::Mutex::new(
+                            lru::LruCache::new(
+                                std::num::NonZeroUsize::new(
+                                    crate::channels::MAX_CONVERSATION_SENDERS,
+                                )
+                                .unwrap(),
+                            ),
+                        )),
+                        session_manager: None,
+                        workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                        security: None,
+                        non_cli_excluded_tools: None,
+                        compact_context: None,
+                        max_history_messages: None,
+                        max_tool_iterations: None,
+                        message_timeout_secs: None,
+                        multimodal: None,
+                        reliability: None,
+                        knowledge_graph: None,
+                        cross_knowledge_index: None,
+                        knowledge_config: Default::default(),
+                    },
+                ),
+            ),
             max_tool_result_chars: 0,
             context_token_budget: 0,
             debouncer: Arc::new(debounce::MessageDebouncer::new(Duration::ZERO)),
@@ -7372,31 +7461,43 @@ BTC is currently around $65,000 based on latest tool output."#
             )),
             activated_tools: None,
             cost_tracking: None,
-            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
-                crate::channels::context_resolver::MessageContext {
-                    agent_id: "test".to_string(),
-                    is_guardian: false,
-                    nickname: None,
-                    star_name: None,
-                    model: None,
-                    provider: None,
-                    api_key: None,
-                    temperature: None,
-                    system_prompt: String::new(),
-                    memory: Arc::new(crate::memory::NoneMemory),
-                    conversation_histories: Arc::new(std::sync::Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::new(crate::channels::MAX_CONVERSATION_SENDERS).unwrap()))),
-                    session_manager: None,
-                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
-                    security: None,
-                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
-                    message_timeout_secs: None,
-                    multimodal: None,
-                    reliability: None,
-                    knowledge_graph: None,
-                    cross_knowledge_index: None,
-                    knowledge_config: Default::default(),
-                },
-            )),
+            context_resolver: Arc::new(
+                crate::channels::context_resolver::DefaultContextResolver::new(
+                    crate::channels::context_resolver::MessageContext {
+                        agent_id: "test".to_string(),
+                        is_guardian: false,
+                        nickname: None,
+                        star_name: None,
+                        model: None,
+                        provider: None,
+                        api_key: None,
+                        temperature: None,
+                        system_prompt: String::new(),
+                        memory: Arc::new(crate::memory::NoneMemory),
+                        conversation_histories: Arc::new(std::sync::Mutex::new(
+                            lru::LruCache::new(
+                                std::num::NonZeroUsize::new(
+                                    crate::channels::MAX_CONVERSATION_SENDERS,
+                                )
+                                .unwrap(),
+                            ),
+                        )),
+                        session_manager: None,
+                        workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                        security: None,
+                        non_cli_excluded_tools: None,
+                        compact_context: None,
+                        max_history_messages: None,
+                        max_tool_iterations: None,
+                        message_timeout_secs: None,
+                        multimodal: None,
+                        reliability: None,
+                        knowledge_graph: None,
+                        cross_knowledge_index: None,
+                        knowledge_config: Default::default(),
+                    },
+                ),
+            ),
             max_tool_result_chars: 0,
             context_token_budget: 0,
             debouncer: Arc::new(debounce::MessageDebouncer::new(Duration::ZERO)),
@@ -7489,31 +7590,43 @@ BTC is currently around $65,000 based on latest tool output."#
             )),
             activated_tools: None,
             cost_tracking: None,
-            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
-                crate::channels::context_resolver::MessageContext {
-                    agent_id: "test".to_string(),
-                    is_guardian: false,
-                    nickname: None,
-                    star_name: None,
-                    model: None,
-                    provider: None,
-                    api_key: None,
-                    temperature: None,
-                    system_prompt: String::new(),
-                    memory: Arc::new(crate::memory::NoneMemory),
-                    conversation_histories: Arc::new(std::sync::Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::new(crate::channels::MAX_CONVERSATION_SENDERS).unwrap()))),
-                    session_manager: None,
-                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
-                    security: None,
-                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
-                    message_timeout_secs: None,
-                    multimodal: None,
-                    reliability: None,
-                    knowledge_graph: None,
-                    cross_knowledge_index: None,
-                    knowledge_config: Default::default(),
-                },
-            )),
+            context_resolver: Arc::new(
+                crate::channels::context_resolver::DefaultContextResolver::new(
+                    crate::channels::context_resolver::MessageContext {
+                        agent_id: "test".to_string(),
+                        is_guardian: false,
+                        nickname: None,
+                        star_name: None,
+                        model: None,
+                        provider: None,
+                        api_key: None,
+                        temperature: None,
+                        system_prompt: String::new(),
+                        memory: Arc::new(crate::memory::NoneMemory),
+                        conversation_histories: Arc::new(std::sync::Mutex::new(
+                            lru::LruCache::new(
+                                std::num::NonZeroUsize::new(
+                                    crate::channels::MAX_CONVERSATION_SENDERS,
+                                )
+                                .unwrap(),
+                            ),
+                        )),
+                        session_manager: None,
+                        workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                        security: None,
+                        non_cli_excluded_tools: None,
+                        compact_context: None,
+                        max_history_messages: None,
+                        max_tool_iterations: None,
+                        message_timeout_secs: None,
+                        multimodal: None,
+                        reliability: None,
+                        knowledge_graph: None,
+                        cross_knowledge_index: None,
+                        knowledge_config: Default::default(),
+                    },
+                ),
+            ),
             max_tool_result_chars: 0,
             context_token_budget: 0,
             debouncer: Arc::new(debounce::MessageDebouncer::new(Duration::ZERO)),
@@ -7620,31 +7733,43 @@ BTC is currently around $65,000 based on latest tool output."#
             )),
             activated_tools: None,
             cost_tracking: None,
-            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
-                crate::channels::context_resolver::MessageContext {
-                    agent_id: "test".to_string(),
-                    is_guardian: false,
-                    nickname: None,
-                    star_name: None,
-                    model: None,
-                    provider: None,
-                    api_key: None,
-                    temperature: None,
-                    system_prompt: String::new(),
-                    memory: Arc::new(crate::memory::NoneMemory),
-                    conversation_histories: Arc::new(std::sync::Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::new(crate::channels::MAX_CONVERSATION_SENDERS).unwrap()))),
-                    session_manager: None,
-                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
-                    security: None,
-                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
-                    message_timeout_secs: None,
-                    multimodal: None,
-                    reliability: None,
-                    knowledge_graph: None,
-                    cross_knowledge_index: None,
-                    knowledge_config: Default::default(),
-                },
-            )),
+            context_resolver: Arc::new(
+                crate::channels::context_resolver::DefaultContextResolver::new(
+                    crate::channels::context_resolver::MessageContext {
+                        agent_id: "test".to_string(),
+                        is_guardian: false,
+                        nickname: None,
+                        star_name: None,
+                        model: None,
+                        provider: None,
+                        api_key: None,
+                        temperature: None,
+                        system_prompt: String::new(),
+                        memory: Arc::new(crate::memory::NoneMemory),
+                        conversation_histories: Arc::new(std::sync::Mutex::new(
+                            lru::LruCache::new(
+                                std::num::NonZeroUsize::new(
+                                    crate::channels::MAX_CONVERSATION_SENDERS,
+                                )
+                                .unwrap(),
+                            ),
+                        )),
+                        session_manager: None,
+                        workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                        security: None,
+                        non_cli_excluded_tools: None,
+                        compact_context: None,
+                        max_history_messages: None,
+                        max_tool_iterations: None,
+                        message_timeout_secs: None,
+                        multimodal: None,
+                        reliability: None,
+                        knowledge_graph: None,
+                        cross_knowledge_index: None,
+                        knowledge_config: Default::default(),
+                    },
+                ),
+            ),
             max_tool_result_chars: 0,
             context_token_budget: 0,
             debouncer: Arc::new(debounce::MessageDebouncer::new(Duration::ZERO)),
@@ -7736,31 +7861,43 @@ BTC is currently around $65,000 based on latest tool output."#
             )),
             activated_tools: None,
             cost_tracking: None,
-            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
-                crate::channels::context_resolver::MessageContext {
-                    agent_id: "test".to_string(),
-                    is_guardian: false,
-                    nickname: None,
-                    star_name: None,
-                    model: None,
-                    provider: None,
-                    api_key: None,
-                    temperature: None,
-                    system_prompt: String::new(),
-                    memory: Arc::new(crate::memory::NoneMemory),
-                    conversation_histories: Arc::new(std::sync::Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::new(crate::channels::MAX_CONVERSATION_SENDERS).unwrap()))),
-                    session_manager: None,
-                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
-                    security: None,
-                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
-                    message_timeout_secs: None,
-                    multimodal: None,
-                    reliability: None,
-                    knowledge_graph: None,
-                    cross_knowledge_index: None,
-                    knowledge_config: Default::default(),
-                },
-            )),
+            context_resolver: Arc::new(
+                crate::channels::context_resolver::DefaultContextResolver::new(
+                    crate::channels::context_resolver::MessageContext {
+                        agent_id: "test".to_string(),
+                        is_guardian: false,
+                        nickname: None,
+                        star_name: None,
+                        model: None,
+                        provider: None,
+                        api_key: None,
+                        temperature: None,
+                        system_prompt: String::new(),
+                        memory: Arc::new(crate::memory::NoneMemory),
+                        conversation_histories: Arc::new(std::sync::Mutex::new(
+                            lru::LruCache::new(
+                                std::num::NonZeroUsize::new(
+                                    crate::channels::MAX_CONVERSATION_SENDERS,
+                                )
+                                .unwrap(),
+                            ),
+                        )),
+                        session_manager: None,
+                        workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                        security: None,
+                        non_cli_excluded_tools: None,
+                        compact_context: None,
+                        max_history_messages: None,
+                        max_tool_iterations: None,
+                        message_timeout_secs: None,
+                        multimodal: None,
+                        reliability: None,
+                        knowledge_graph: None,
+                        cross_knowledge_index: None,
+                        knowledge_config: Default::default(),
+                    },
+                ),
+            ),
             max_tool_result_chars: 0,
             context_token_budget: 0,
             debouncer: Arc::new(debounce::MessageDebouncer::new(Duration::ZERO)),
@@ -7862,31 +7999,43 @@ BTC is currently around $65,000 based on latest tool output."#
             )),
             activated_tools: None,
             cost_tracking: None,
-            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
-                crate::channels::context_resolver::MessageContext {
-                    agent_id: "test".to_string(),
-                    is_guardian: false,
-                    nickname: None,
-                    star_name: None,
-                    model: None,
-                    provider: None,
-                    api_key: None,
-                    temperature: None,
-                    system_prompt: String::new(),
-                    memory: Arc::new(crate::memory::NoneMemory),
-                    conversation_histories: Arc::new(std::sync::Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::new(crate::channels::MAX_CONVERSATION_SENDERS).unwrap()))),
-                    session_manager: None,
-                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
-                    security: None,
-                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
-                    message_timeout_secs: None,
-                    multimodal: None,
-                    reliability: None,
-                    knowledge_graph: None,
-                    cross_knowledge_index: None,
-                    knowledge_config: Default::default(),
-                },
-            )),
+            context_resolver: Arc::new(
+                crate::channels::context_resolver::DefaultContextResolver::new(
+                    crate::channels::context_resolver::MessageContext {
+                        agent_id: "test".to_string(),
+                        is_guardian: false,
+                        nickname: None,
+                        star_name: None,
+                        model: None,
+                        provider: None,
+                        api_key: None,
+                        temperature: None,
+                        system_prompt: String::new(),
+                        memory: Arc::new(crate::memory::NoneMemory),
+                        conversation_histories: Arc::new(std::sync::Mutex::new(
+                            lru::LruCache::new(
+                                std::num::NonZeroUsize::new(
+                                    crate::channels::MAX_CONVERSATION_SENDERS,
+                                )
+                                .unwrap(),
+                            ),
+                        )),
+                        session_manager: None,
+                        workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                        security: None,
+                        non_cli_excluded_tools: None,
+                        compact_context: None,
+                        max_history_messages: None,
+                        max_tool_iterations: None,
+                        message_timeout_secs: None,
+                        multimodal: None,
+                        reliability: None,
+                        knowledge_graph: None,
+                        cross_knowledge_index: None,
+                        knowledge_config: Default::default(),
+                    },
+                ),
+            ),
             max_tool_result_chars: 0,
             context_token_budget: 0,
             debouncer: Arc::new(debounce::MessageDebouncer::new(Duration::ZERO)),
@@ -8009,31 +8158,43 @@ BTC is currently around $65,000 based on latest tool output."#
             )),
             activated_tools: None,
             cost_tracking: None,
-            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
-                crate::channels::context_resolver::MessageContext {
-                    agent_id: "test".to_string(),
-                    is_guardian: false,
-                    nickname: None,
-                    star_name: None,
-                    model: None,
-                    provider: None,
-                    api_key: None,
-                    temperature: None,
-                    system_prompt: String::new(),
-                    memory: Arc::new(crate::memory::NoneMemory),
-                    conversation_histories: Arc::new(std::sync::Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::new(crate::channels::MAX_CONVERSATION_SENDERS).unwrap()))),
-                    session_manager: None,
-                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
-                    security: None,
-                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
-                    message_timeout_secs: None,
-                    multimodal: None,
-                    reliability: None,
-                    knowledge_graph: None,
-                    cross_knowledge_index: None,
-                    knowledge_config: Default::default(),
-                },
-            )),
+            context_resolver: Arc::new(
+                crate::channels::context_resolver::DefaultContextResolver::new(
+                    crate::channels::context_resolver::MessageContext {
+                        agent_id: "test".to_string(),
+                        is_guardian: false,
+                        nickname: None,
+                        star_name: None,
+                        model: None,
+                        provider: None,
+                        api_key: None,
+                        temperature: None,
+                        system_prompt: String::new(),
+                        memory: Arc::new(crate::memory::NoneMemory),
+                        conversation_histories: Arc::new(std::sync::Mutex::new(
+                            lru::LruCache::new(
+                                std::num::NonZeroUsize::new(
+                                    crate::channels::MAX_CONVERSATION_SENDERS,
+                                )
+                                .unwrap(),
+                            ),
+                        )),
+                        session_manager: None,
+                        workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                        security: None,
+                        non_cli_excluded_tools: None,
+                        compact_context: None,
+                        max_history_messages: None,
+                        max_tool_iterations: None,
+                        message_timeout_secs: None,
+                        multimodal: None,
+                        reliability: None,
+                        knowledge_graph: None,
+                        cross_knowledge_index: None,
+                        knowledge_config: Default::default(),
+                    },
+                ),
+            ),
             max_tool_result_chars: 0,
             context_token_budget: 0,
             debouncer: Arc::new(debounce::MessageDebouncer::new(Duration::ZERO)),
@@ -8137,31 +8298,43 @@ BTC is currently around $65,000 based on latest tool output."#
             )),
             activated_tools: None,
             cost_tracking: None,
-            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
-                crate::channels::context_resolver::MessageContext {
-                    agent_id: "test".to_string(),
-                    is_guardian: false,
-                    nickname: None,
-                    star_name: None,
-                    model: None,
-                    provider: None,
-                    api_key: None,
-                    temperature: None,
-                    system_prompt: String::new(),
-                    memory: Arc::new(crate::memory::NoneMemory),
-                    conversation_histories: Arc::new(std::sync::Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::new(crate::channels::MAX_CONVERSATION_SENDERS).unwrap()))),
-                    session_manager: None,
-                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
-                    security: None,
-                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
-                    message_timeout_secs: None,
-                    multimodal: None,
-                    reliability: None,
-                    knowledge_graph: None,
-                    cross_knowledge_index: None,
-                    knowledge_config: Default::default(),
-                },
-            )),
+            context_resolver: Arc::new(
+                crate::channels::context_resolver::DefaultContextResolver::new(
+                    crate::channels::context_resolver::MessageContext {
+                        agent_id: "test".to_string(),
+                        is_guardian: false,
+                        nickname: None,
+                        star_name: None,
+                        model: None,
+                        provider: None,
+                        api_key: None,
+                        temperature: None,
+                        system_prompt: String::new(),
+                        memory: Arc::new(crate::memory::NoneMemory),
+                        conversation_histories: Arc::new(std::sync::Mutex::new(
+                            lru::LruCache::new(
+                                std::num::NonZeroUsize::new(
+                                    crate::channels::MAX_CONVERSATION_SENDERS,
+                                )
+                                .unwrap(),
+                            ),
+                        )),
+                        session_manager: None,
+                        workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                        security: None,
+                        non_cli_excluded_tools: None,
+                        compact_context: None,
+                        max_history_messages: None,
+                        max_tool_iterations: None,
+                        message_timeout_secs: None,
+                        multimodal: None,
+                        reliability: None,
+                        knowledge_graph: None,
+                        cross_knowledge_index: None,
+                        knowledge_config: Default::default(),
+                    },
+                ),
+            ),
             max_tool_result_chars: 0,
             context_token_budget: 0,
             debouncer: Arc::new(debounce::MessageDebouncer::new(Duration::ZERO)),
@@ -8280,31 +8453,43 @@ BTC is currently around $65,000 based on latest tool output."#
             )),
             activated_tools: None,
             cost_tracking: None,
-            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
-                crate::channels::context_resolver::MessageContext {
-                    agent_id: "test".to_string(),
-                    is_guardian: false,
-                    nickname: None,
-                    star_name: None,
-                    model: None,
-                    provider: None,
-                    api_key: None,
-                    temperature: None,
-                    system_prompt: String::new(),
-                    memory: Arc::new(crate::memory::NoneMemory),
-                    conversation_histories: Arc::new(std::sync::Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::new(crate::channels::MAX_CONVERSATION_SENDERS).unwrap()))),
-                    session_manager: None,
-                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
-                    security: None,
-                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
-                    message_timeout_secs: None,
-                    multimodal: None,
-                    reliability: None,
-                    knowledge_graph: None,
-                    cross_knowledge_index: None,
-                    knowledge_config: Default::default(),
-                },
-            )),
+            context_resolver: Arc::new(
+                crate::channels::context_resolver::DefaultContextResolver::new(
+                    crate::channels::context_resolver::MessageContext {
+                        agent_id: "test".to_string(),
+                        is_guardian: false,
+                        nickname: None,
+                        star_name: None,
+                        model: None,
+                        provider: None,
+                        api_key: None,
+                        temperature: None,
+                        system_prompt: String::new(),
+                        memory: Arc::new(crate::memory::NoneMemory),
+                        conversation_histories: Arc::new(std::sync::Mutex::new(
+                            lru::LruCache::new(
+                                std::num::NonZeroUsize::new(
+                                    crate::channels::MAX_CONVERSATION_SENDERS,
+                                )
+                                .unwrap(),
+                            ),
+                        )),
+                        session_manager: None,
+                        workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                        security: None,
+                        non_cli_excluded_tools: None,
+                        compact_context: None,
+                        max_history_messages: None,
+                        max_tool_iterations: None,
+                        message_timeout_secs: None,
+                        multimodal: None,
+                        reliability: None,
+                        knowledge_graph: None,
+                        cross_knowledge_index: None,
+                        knowledge_config: Default::default(),
+                    },
+                ),
+            ),
             max_tool_result_chars: 0,
             context_token_budget: 0,
             debouncer: Arc::new(debounce::MessageDebouncer::new(Duration::ZERO)),
@@ -8407,31 +8592,43 @@ BTC is currently around $65,000 based on latest tool output."#
             )),
             activated_tools: None,
             cost_tracking: None,
-            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
-                crate::channels::context_resolver::MessageContext {
-                    agent_id: "test".to_string(),
-                    is_guardian: false,
-                    nickname: None,
-                    star_name: None,
-                    model: None,
-                    provider: None,
-                    api_key: None,
-                    temperature: None,
-                    system_prompt: String::new(),
-                    memory: Arc::new(crate::memory::NoneMemory),
-                    conversation_histories: Arc::new(std::sync::Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::new(crate::channels::MAX_CONVERSATION_SENDERS).unwrap()))),
-                    session_manager: None,
-                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
-                    security: None,
-                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
-                    message_timeout_secs: None,
-                    multimodal: None,
-                    reliability: None,
-                    knowledge_graph: None,
-                    cross_knowledge_index: None,
-                    knowledge_config: Default::default(),
-                },
-            )),
+            context_resolver: Arc::new(
+                crate::channels::context_resolver::DefaultContextResolver::new(
+                    crate::channels::context_resolver::MessageContext {
+                        agent_id: "test".to_string(),
+                        is_guardian: false,
+                        nickname: None,
+                        star_name: None,
+                        model: None,
+                        provider: None,
+                        api_key: None,
+                        temperature: None,
+                        system_prompt: String::new(),
+                        memory: Arc::new(crate::memory::NoneMemory),
+                        conversation_histories: Arc::new(std::sync::Mutex::new(
+                            lru::LruCache::new(
+                                std::num::NonZeroUsize::new(
+                                    crate::channels::MAX_CONVERSATION_SENDERS,
+                                )
+                                .unwrap(),
+                            ),
+                        )),
+                        session_manager: None,
+                        workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                        security: None,
+                        non_cli_excluded_tools: None,
+                        compact_context: None,
+                        max_history_messages: None,
+                        max_tool_iterations: None,
+                        message_timeout_secs: None,
+                        multimodal: None,
+                        reliability: None,
+                        knowledge_graph: None,
+                        cross_knowledge_index: None,
+                        knowledge_config: Default::default(),
+                    },
+                ),
+            ),
             pacing: crate::config::PacingConfig {
                 loop_detection_enabled: false,
                 ..crate::config::PacingConfig::default()
@@ -8528,31 +8725,43 @@ BTC is currently around $65,000 based on latest tool output."#
             )),
             activated_tools: None,
             cost_tracking: None,
-            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
-                crate::channels::context_resolver::MessageContext {
-                    agent_id: "test".to_string(),
-                    is_guardian: false,
-                    nickname: None,
-                    star_name: None,
-                    model: None,
-                    provider: None,
-                    api_key: None,
-                    temperature: None,
-                    system_prompt: String::new(),
-                    memory: Arc::new(crate::memory::NoneMemory),
-                    conversation_histories: Arc::new(std::sync::Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::new(crate::channels::MAX_CONVERSATION_SENDERS).unwrap()))),
-                    session_manager: None,
-                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
-                    security: None,
-                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
-                    message_timeout_secs: None,
-                    multimodal: None,
-                    reliability: None,
-                    knowledge_graph: None,
-                    cross_knowledge_index: None,
-                    knowledge_config: Default::default(),
-                },
-            )),
+            context_resolver: Arc::new(
+                crate::channels::context_resolver::DefaultContextResolver::new(
+                    crate::channels::context_resolver::MessageContext {
+                        agent_id: "test".to_string(),
+                        is_guardian: false,
+                        nickname: None,
+                        star_name: None,
+                        model: None,
+                        provider: None,
+                        api_key: None,
+                        temperature: None,
+                        system_prompt: String::new(),
+                        memory: Arc::new(crate::memory::NoneMemory),
+                        conversation_histories: Arc::new(std::sync::Mutex::new(
+                            lru::LruCache::new(
+                                std::num::NonZeroUsize::new(
+                                    crate::channels::MAX_CONVERSATION_SENDERS,
+                                )
+                                .unwrap(),
+                            ),
+                        )),
+                        session_manager: None,
+                        workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                        security: None,
+                        non_cli_excluded_tools: None,
+                        compact_context: None,
+                        max_history_messages: None,
+                        max_tool_iterations: None,
+                        message_timeout_secs: None,
+                        multimodal: None,
+                        reliability: None,
+                        knowledge_graph: None,
+                        cross_knowledge_index: None,
+                        knowledge_config: Default::default(),
+                    },
+                ),
+            ),
             pacing: crate::config::PacingConfig {
                 loop_detection_enabled: false,
                 ..crate::config::PacingConfig::default()
@@ -8776,31 +8985,43 @@ BTC is currently around $65,000 based on latest tool output."#
             )),
             activated_tools: None,
             cost_tracking: None,
-            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
-                crate::channels::context_resolver::MessageContext {
-                    agent_id: "test".to_string(),
-                    is_guardian: false,
-                    nickname: None,
-                    star_name: None,
-                    model: None,
-                    provider: None,
-                    api_key: None,
-                    temperature: None,
-                    system_prompt: String::new(),
-                    memory: Arc::new(crate::memory::NoneMemory),
-                    conversation_histories: Arc::new(std::sync::Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::new(crate::channels::MAX_CONVERSATION_SENDERS).unwrap()))),
-                    session_manager: None,
-                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
-                    security: None,
-                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
-                    message_timeout_secs: None,
-                    multimodal: None,
-                    reliability: None,
-                    knowledge_graph: None,
-                    cross_knowledge_index: None,
-                    knowledge_config: Default::default(),
-                },
-            )),
+            context_resolver: Arc::new(
+                crate::channels::context_resolver::DefaultContextResolver::new(
+                    crate::channels::context_resolver::MessageContext {
+                        agent_id: "test".to_string(),
+                        is_guardian: false,
+                        nickname: None,
+                        star_name: None,
+                        model: None,
+                        provider: None,
+                        api_key: None,
+                        temperature: None,
+                        system_prompt: String::new(),
+                        memory: Arc::new(crate::memory::NoneMemory),
+                        conversation_histories: Arc::new(std::sync::Mutex::new(
+                            lru::LruCache::new(
+                                std::num::NonZeroUsize::new(
+                                    crate::channels::MAX_CONVERSATION_SENDERS,
+                                )
+                                .unwrap(),
+                            ),
+                        )),
+                        session_manager: None,
+                        workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                        security: None,
+                        non_cli_excluded_tools: None,
+                        compact_context: None,
+                        max_history_messages: None,
+                        max_tool_iterations: None,
+                        message_timeout_secs: None,
+                        multimodal: None,
+                        reliability: None,
+                        knowledge_graph: None,
+                        cross_knowledge_index: None,
+                        knowledge_config: Default::default(),
+                    },
+                ),
+            ),
             max_tool_result_chars: 0,
             context_token_budget: 0,
             debouncer: Arc::new(debounce::MessageDebouncer::new(Duration::ZERO)),
@@ -8915,31 +9136,43 @@ BTC is currently around $65,000 based on latest tool output."#
             )),
             activated_tools: None,
             cost_tracking: None,
-            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
-                crate::channels::context_resolver::MessageContext {
-                    agent_id: "test".to_string(),
-                    is_guardian: false,
-                    nickname: None,
-                    star_name: None,
-                    model: None,
-                    provider: None,
-                    api_key: None,
-                    temperature: None,
-                    system_prompt: String::new(),
-                    memory: Arc::new(crate::memory::NoneMemory),
-                    conversation_histories: Arc::new(std::sync::Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::new(crate::channels::MAX_CONVERSATION_SENDERS).unwrap()))),
-                    session_manager: None,
-                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
-                    security: None,
-                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
-                    message_timeout_secs: None,
-                    multimodal: None,
-                    reliability: None,
-                    knowledge_graph: None,
-                    cross_knowledge_index: None,
-                    knowledge_config: Default::default(),
-                },
-            )),
+            context_resolver: Arc::new(
+                crate::channels::context_resolver::DefaultContextResolver::new(
+                    crate::channels::context_resolver::MessageContext {
+                        agent_id: "test".to_string(),
+                        is_guardian: false,
+                        nickname: None,
+                        star_name: None,
+                        model: None,
+                        provider: None,
+                        api_key: None,
+                        temperature: None,
+                        system_prompt: String::new(),
+                        memory: Arc::new(crate::memory::NoneMemory),
+                        conversation_histories: Arc::new(std::sync::Mutex::new(
+                            lru::LruCache::new(
+                                std::num::NonZeroUsize::new(
+                                    crate::channels::MAX_CONVERSATION_SENDERS,
+                                )
+                                .unwrap(),
+                            ),
+                        )),
+                        session_manager: None,
+                        workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                        security: None,
+                        non_cli_excluded_tools: None,
+                        compact_context: None,
+                        max_history_messages: None,
+                        max_tool_iterations: None,
+                        message_timeout_secs: None,
+                        multimodal: None,
+                        reliability: None,
+                        knowledge_graph: None,
+                        cross_knowledge_index: None,
+                        knowledge_config: Default::default(),
+                    },
+                ),
+            ),
             max_tool_result_chars: 0,
             context_token_budget: 0,
             debouncer: Arc::new(debounce::MessageDebouncer::new(Duration::ZERO)),
@@ -9073,31 +9306,43 @@ BTC is currently around $65,000 based on latest tool output."#
             cost_tracking: None,
             query_classification: crate::config::QueryClassificationConfig::default(),
             pacing: crate::config::PacingConfig::default(),
-            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
-                crate::channels::context_resolver::MessageContext {
-                    agent_id: "test".to_string(),
-                    is_guardian: false,
-                    nickname: None,
-                    star_name: None,
-                    model: None,
-                    provider: None,
-                    api_key: None,
-                    temperature: None,
-                    system_prompt: String::new(),
-                    memory: Arc::new(crate::memory::NoneMemory),
-                    conversation_histories: Arc::new(std::sync::Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::new(crate::channels::MAX_CONVERSATION_SENDERS).unwrap()))),
-                    session_manager: None,
-                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
-                    security: None,
-                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
-                    message_timeout_secs: None,
-                    multimodal: None,
-                    reliability: None,
-                    knowledge_graph: None,
-                    cross_knowledge_index: None,
-                    knowledge_config: Default::default(),
-                },
-            )),
+            context_resolver: Arc::new(
+                crate::channels::context_resolver::DefaultContextResolver::new(
+                    crate::channels::context_resolver::MessageContext {
+                        agent_id: "test".to_string(),
+                        is_guardian: false,
+                        nickname: None,
+                        star_name: None,
+                        model: None,
+                        provider: None,
+                        api_key: None,
+                        temperature: None,
+                        system_prompt: String::new(),
+                        memory: Arc::new(crate::memory::NoneMemory),
+                        conversation_histories: Arc::new(std::sync::Mutex::new(
+                            lru::LruCache::new(
+                                std::num::NonZeroUsize::new(
+                                    crate::channels::MAX_CONVERSATION_SENDERS,
+                                )
+                                .unwrap(),
+                            ),
+                        )),
+                        session_manager: None,
+                        workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                        security: None,
+                        non_cli_excluded_tools: None,
+                        compact_context: None,
+                        max_history_messages: None,
+                        max_tool_iterations: None,
+                        message_timeout_secs: None,
+                        multimodal: None,
+                        reliability: None,
+                        knowledge_graph: None,
+                        cross_knowledge_index: None,
+                        knowledge_config: Default::default(),
+                    },
+                ),
+            ),
             max_tool_result_chars: 0,
             context_token_budget: 0,
             debouncer: Arc::new(debounce::MessageDebouncer::new(Duration::ZERO)),
@@ -9228,31 +9473,43 @@ BTC is currently around $65,000 based on latest tool output."#
             )),
             activated_tools: None,
             cost_tracking: None,
-            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
-                crate::channels::context_resolver::MessageContext {
-                    agent_id: "test".to_string(),
-                    is_guardian: false,
-                    nickname: None,
-                    star_name: None,
-                    model: None,
-                    provider: None,
-                    api_key: None,
-                    temperature: None,
-                    system_prompt: String::new(),
-                    memory: Arc::new(crate::memory::NoneMemory),
-                    conversation_histories: Arc::new(std::sync::Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::new(crate::channels::MAX_CONVERSATION_SENDERS).unwrap()))),
-                    session_manager: None,
-                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
-                    security: None,
-                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
-                    message_timeout_secs: None,
-                    multimodal: None,
-                    reliability: None,
-                    knowledge_graph: None,
-                    cross_knowledge_index: None,
-                    knowledge_config: Default::default(),
-                },
-            )),
+            context_resolver: Arc::new(
+                crate::channels::context_resolver::DefaultContextResolver::new(
+                    crate::channels::context_resolver::MessageContext {
+                        agent_id: "test".to_string(),
+                        is_guardian: false,
+                        nickname: None,
+                        star_name: None,
+                        model: None,
+                        provider: None,
+                        api_key: None,
+                        temperature: None,
+                        system_prompt: String::new(),
+                        memory: Arc::new(crate::memory::NoneMemory),
+                        conversation_histories: Arc::new(std::sync::Mutex::new(
+                            lru::LruCache::new(
+                                std::num::NonZeroUsize::new(
+                                    crate::channels::MAX_CONVERSATION_SENDERS,
+                                )
+                                .unwrap(),
+                            ),
+                        )),
+                        session_manager: None,
+                        workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                        security: None,
+                        non_cli_excluded_tools: None,
+                        compact_context: None,
+                        max_history_messages: None,
+                        max_tool_iterations: None,
+                        message_timeout_secs: None,
+                        multimodal: None,
+                        reliability: None,
+                        knowledge_graph: None,
+                        cross_knowledge_index: None,
+                        knowledge_config: Default::default(),
+                    },
+                ),
+            ),
             max_tool_result_chars: 0,
             context_token_budget: 0,
             debouncer: Arc::new(debounce::MessageDebouncer::new(Duration::ZERO)),
@@ -9361,31 +9618,43 @@ BTC is currently around $65,000 based on latest tool output."#
             )),
             activated_tools: None,
             cost_tracking: None,
-            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
-                crate::channels::context_resolver::MessageContext {
-                    agent_id: "test".to_string(),
-                    is_guardian: false,
-                    nickname: None,
-                    star_name: None,
-                    model: None,
-                    provider: None,
-                    api_key: None,
-                    temperature: None,
-                    system_prompt: String::new(),
-                    memory: Arc::new(crate::memory::NoneMemory),
-                    conversation_histories: Arc::new(std::sync::Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::new(crate::channels::MAX_CONVERSATION_SENDERS).unwrap()))),
-                    session_manager: None,
-                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
-                    security: None,
-                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
-                    message_timeout_secs: None,
-                    multimodal: None,
-                    reliability: None,
-                    knowledge_graph: None,
-                    cross_knowledge_index: None,
-                    knowledge_config: Default::default(),
-                },
-            )),
+            context_resolver: Arc::new(
+                crate::channels::context_resolver::DefaultContextResolver::new(
+                    crate::channels::context_resolver::MessageContext {
+                        agent_id: "test".to_string(),
+                        is_guardian: false,
+                        nickname: None,
+                        star_name: None,
+                        model: None,
+                        provider: None,
+                        api_key: None,
+                        temperature: None,
+                        system_prompt: String::new(),
+                        memory: Arc::new(crate::memory::NoneMemory),
+                        conversation_histories: Arc::new(std::sync::Mutex::new(
+                            lru::LruCache::new(
+                                std::num::NonZeroUsize::new(
+                                    crate::channels::MAX_CONVERSATION_SENDERS,
+                                )
+                                .unwrap(),
+                            ),
+                        )),
+                        session_manager: None,
+                        workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                        security: None,
+                        non_cli_excluded_tools: None,
+                        compact_context: None,
+                        max_history_messages: None,
+                        max_tool_iterations: None,
+                        message_timeout_secs: None,
+                        multimodal: None,
+                        reliability: None,
+                        knowledge_graph: None,
+                        cross_knowledge_index: None,
+                        knowledge_config: Default::default(),
+                    },
+                ),
+            ),
             max_tool_result_chars: 0,
             context_token_budget: 0,
             debouncer: Arc::new(debounce::MessageDebouncer::new(Duration::ZERO)),
@@ -9425,31 +9694,43 @@ BTC is currently around $65,000 based on latest tool output."#
         let runtime_ctx = Arc::new(ChannelRuntimeContext {
             compact_context: false,
             max_history_messages: MAX_CHANNEL_HISTORY,
-            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
-                crate::channels::context_resolver::MessageContext {
-                    agent_id: "test".to_string(),
-                    is_guardian: false,
-                    nickname: None,
-                    star_name: None,
-                    model: None,
-                    provider: None,
-                    api_key: None,
-                    temperature: None,
-                    system_prompt: String::new(),
-                    memory: Arc::new(crate::memory::NoneMemory),
-                    conversation_histories: Arc::new(std::sync::Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::new(crate::channels::MAX_CONVERSATION_SENDERS).unwrap()))),
-                    session_manager: None,
-                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
-                    security: None,
-                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
-                    message_timeout_secs: None,
-                    multimodal: None,
-                    reliability: None,
-                    knowledge_graph: None,
-                    cross_knowledge_index: None,
-                    knowledge_config: Default::default(),
-                }
-            )),
+            context_resolver: Arc::new(
+                crate::channels::context_resolver::DefaultContextResolver::new(
+                    crate::channels::context_resolver::MessageContext {
+                        agent_id: "test".to_string(),
+                        is_guardian: false,
+                        nickname: None,
+                        star_name: None,
+                        model: None,
+                        provider: None,
+                        api_key: None,
+                        temperature: None,
+                        system_prompt: String::new(),
+                        memory: Arc::new(crate::memory::NoneMemory),
+                        conversation_histories: Arc::new(std::sync::Mutex::new(
+                            lru::LruCache::new(
+                                std::num::NonZeroUsize::new(
+                                    crate::channels::MAX_CONVERSATION_SENDERS,
+                                )
+                                .unwrap(),
+                            ),
+                        )),
+                        session_manager: None,
+                        workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                        security: None,
+                        non_cli_excluded_tools: None,
+                        compact_context: None,
+                        max_history_messages: None,
+                        max_tool_iterations: None,
+                        message_timeout_secs: None,
+                        multimodal: None,
+                        reliability: None,
+                        knowledge_graph: None,
+                        cross_knowledge_index: None,
+                        knowledge_config: Default::default(),
+                    },
+                ),
+            ),
             channels_by_name: Arc::new(channels_by_name),
             provider: Arc::new(NoReplyProvider),
             default_provider: Arc::new("test-provider".to_string()),
@@ -9589,31 +9870,43 @@ BTC is currently around $65,000 based on latest tool output."#
             )),
             activated_tools: None,
             cost_tracking: None,
-            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
-                crate::channels::context_resolver::MessageContext {
-                    agent_id: "test".to_string(),
-                    is_guardian: false,
-                    nickname: None,
-                    star_name: None,
-                    model: None,
-                    provider: None,
-                    api_key: None,
-                    temperature: None,
-                    system_prompt: String::new(),
-                    memory: Arc::new(crate::memory::NoneMemory),
-                    conversation_histories: Arc::new(std::sync::Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::new(crate::channels::MAX_CONVERSATION_SENDERS).unwrap()))),
-                    session_manager: None,
-                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
-                    security: None,
-                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
-                    message_timeout_secs: None,
-                    multimodal: None,
-                    reliability: None,
-                    knowledge_graph: None,
-                    cross_knowledge_index: None,
-                    knowledge_config: Default::default(),
-                },
-            )),
+            context_resolver: Arc::new(
+                crate::channels::context_resolver::DefaultContextResolver::new(
+                    crate::channels::context_resolver::MessageContext {
+                        agent_id: "test".to_string(),
+                        is_guardian: false,
+                        nickname: None,
+                        star_name: None,
+                        model: None,
+                        provider: None,
+                        api_key: None,
+                        temperature: None,
+                        system_prompt: String::new(),
+                        memory: Arc::new(crate::memory::NoneMemory),
+                        conversation_histories: Arc::new(std::sync::Mutex::new(
+                            lru::LruCache::new(
+                                std::num::NonZeroUsize::new(
+                                    crate::channels::MAX_CONVERSATION_SENDERS,
+                                )
+                                .unwrap(),
+                            ),
+                        )),
+                        session_manager: None,
+                        workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                        security: None,
+                        non_cli_excluded_tools: None,
+                        compact_context: None,
+                        max_history_messages: None,
+                        max_tool_iterations: None,
+                        message_timeout_secs: None,
+                        multimodal: None,
+                        reliability: None,
+                        knowledge_graph: None,
+                        cross_knowledge_index: None,
+                        knowledge_config: Default::default(),
+                    },
+                ),
+            ),
             max_tool_result_chars: 0,
             context_token_budget: 0,
             debouncer: Arc::new(debounce::MessageDebouncer::new(Duration::ZERO)),
@@ -9658,7 +9951,8 @@ BTC is currently around $65,000 based on latest tool output."#
     fn prompt_contains_all_sections() {
         let ws = make_workspace();
         let tools = vec![("shell", "Run commands"), ("file_read", "Read files")];
-        let prompt = build_system_prompt(ws.path(), ws.path(), "test-model", &tools, &[], None, None);
+        let prompt =
+            build_system_prompt(ws.path(), ws.path(), "test-model", &tools, &[], None, None);
 
         // Section headers
         assert!(prompt.contains("## Tools"), "missing Tools section");
@@ -9693,7 +9987,8 @@ BTC is currently around $65,000 based on latest tool output."#
     fn prompt_includes_single_tool_protocol_block_after_append() {
         let ws = make_workspace();
         let tools = vec![("shell", "Run commands")];
-        let mut prompt = build_system_prompt(ws.path(), ws.path(), "gpt-4o", &tools, &[], None, None);
+        let mut prompt =
+            build_system_prompt(ws.path(), ws.path(), "gpt-4o", &tools, &[], None, None);
 
         assert!(
             !prompt.contains("## Tool Use Protocol"),
@@ -9804,7 +10099,15 @@ BTC is currently around $65,000 based on latest tool output."#
     #[test]
     fn prompt_runtime_metadata() {
         let ws = make_workspace();
-        let prompt = build_system_prompt(ws.path(), ws.path(), "claude-sonnet-4", &[], &[], None, None);
+        let prompt = build_system_prompt(
+            ws.path(),
+            ws.path(),
+            "claude-sonnet-4",
+            &[],
+            &[],
+            None,
+            None,
+        );
 
         assert!(prompt.contains("Model: claude-sonnet-4"));
         assert!(prompt.contains(&format!("OS: {}", std::env::consts::OS)));
@@ -10412,31 +10715,43 @@ BTC is currently around $65,000 based on latest tool output."#
             )),
             activated_tools: None,
             cost_tracking: None,
-            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
-                crate::channels::context_resolver::MessageContext {
-                    agent_id: "test".to_string(),
-                    is_guardian: false,
-                    nickname: None,
-                    star_name: None,
-                    model: None,
-                    provider: None,
-                    api_key: None,
-                    temperature: None,
-                    system_prompt: String::new(),
-                    memory: Arc::new(crate::memory::NoneMemory),
-                    conversation_histories: Arc::new(std::sync::Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::new(crate::channels::MAX_CONVERSATION_SENDERS).unwrap()))),
-                    session_manager: None,
-                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
-                    security: None,
-                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
-                    message_timeout_secs: None,
-                    multimodal: None,
-                    reliability: None,
-                    knowledge_graph: None,
-                    cross_knowledge_index: None,
-                    knowledge_config: Default::default(),
-                },
-            )),
+            context_resolver: Arc::new(
+                crate::channels::context_resolver::DefaultContextResolver::new(
+                    crate::channels::context_resolver::MessageContext {
+                        agent_id: "test".to_string(),
+                        is_guardian: false,
+                        nickname: None,
+                        star_name: None,
+                        model: None,
+                        provider: None,
+                        api_key: None,
+                        temperature: None,
+                        system_prompt: String::new(),
+                        memory: Arc::new(crate::memory::NoneMemory),
+                        conversation_histories: Arc::new(std::sync::Mutex::new(
+                            lru::LruCache::new(
+                                std::num::NonZeroUsize::new(
+                                    crate::channels::MAX_CONVERSATION_SENDERS,
+                                )
+                                .unwrap(),
+                            ),
+                        )),
+                        session_manager: None,
+                        workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                        security: None,
+                        non_cli_excluded_tools: None,
+                        compact_context: None,
+                        max_history_messages: None,
+                        max_tool_iterations: None,
+                        message_timeout_secs: None,
+                        multimodal: None,
+                        reliability: None,
+                        knowledge_graph: None,
+                        cross_knowledge_index: None,
+                        knowledge_config: Default::default(),
+                    },
+                ),
+            ),
             max_tool_result_chars: 0,
             context_token_budget: 0,
             debouncer: Arc::new(debounce::MessageDebouncer::new(Duration::ZERO)),
@@ -10581,31 +10896,43 @@ BTC is currently around $65,000 based on latest tool output."#
             )),
             activated_tools: None,
             cost_tracking: None,
-            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
-                crate::channels::context_resolver::MessageContext {
-                    agent_id: "test".to_string(),
-                    is_guardian: false,
-                    nickname: None,
-                    star_name: None,
-                    model: None,
-                    provider: None,
-                    api_key: None,
-                    temperature: None,
-                    system_prompt: String::new(),
-                    memory: Arc::new(crate::memory::NoneMemory),
-                    conversation_histories: Arc::new(std::sync::Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::new(crate::channels::MAX_CONVERSATION_SENDERS).unwrap()))),
-                    session_manager: None,
-                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
-                    security: None,
-                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
-                    message_timeout_secs: None,
-                    multimodal: None,
-                    reliability: None,
-                    knowledge_graph: None,
-                    cross_knowledge_index: None,
-                    knowledge_config: Default::default(),
-                },
-            )),
+            context_resolver: Arc::new(
+                crate::channels::context_resolver::DefaultContextResolver::new(
+                    crate::channels::context_resolver::MessageContext {
+                        agent_id: "test".to_string(),
+                        is_guardian: false,
+                        nickname: None,
+                        star_name: None,
+                        model: None,
+                        provider: None,
+                        api_key: None,
+                        temperature: None,
+                        system_prompt: String::new(),
+                        memory: Arc::new(crate::memory::NoneMemory),
+                        conversation_histories: Arc::new(std::sync::Mutex::new(
+                            lru::LruCache::new(
+                                std::num::NonZeroUsize::new(
+                                    crate::channels::MAX_CONVERSATION_SENDERS,
+                                )
+                                .unwrap(),
+                            ),
+                        )),
+                        session_manager: None,
+                        workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                        security: None,
+                        non_cli_excluded_tools: None,
+                        compact_context: None,
+                        max_history_messages: None,
+                        max_tool_iterations: None,
+                        message_timeout_secs: None,
+                        multimodal: None,
+                        reliability: None,
+                        knowledge_graph: None,
+                        cross_knowledge_index: None,
+                        knowledge_config: Default::default(),
+                    },
+                ),
+            ),
             max_tool_result_chars: 0,
             context_token_budget: 0,
             debouncer: Arc::new(debounce::MessageDebouncer::new(Duration::ZERO)),
@@ -10792,31 +11119,43 @@ BTC is currently around $65,000 based on latest tool output."#
             )),
             activated_tools: None,
             cost_tracking: None,
-            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
-                crate::channels::context_resolver::MessageContext {
-                    agent_id: "test".to_string(),
-                    is_guardian: false,
-                    nickname: None,
-                    star_name: None,
-                    model: None,
-                    provider: None,
-                    api_key: None,
-                    temperature: None,
-                    system_prompt: String::new(),
-                    memory: Arc::new(crate::memory::NoneMemory),
-                    conversation_histories: Arc::new(std::sync::Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::new(crate::channels::MAX_CONVERSATION_SENDERS).unwrap()))),
-                    session_manager: None,
-                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
-                    security: None,
-                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
-                    message_timeout_secs: None,
-                    multimodal: None,
-                    reliability: None,
-                    knowledge_graph: None,
-                    cross_knowledge_index: None,
-                    knowledge_config: Default::default(),
-                },
-            )),
+            context_resolver: Arc::new(
+                crate::channels::context_resolver::DefaultContextResolver::new(
+                    crate::channels::context_resolver::MessageContext {
+                        agent_id: "test".to_string(),
+                        is_guardian: false,
+                        nickname: None,
+                        star_name: None,
+                        model: None,
+                        provider: None,
+                        api_key: None,
+                        temperature: None,
+                        system_prompt: String::new(),
+                        memory: Arc::new(crate::memory::NoneMemory),
+                        conversation_histories: Arc::new(std::sync::Mutex::new(
+                            lru::LruCache::new(
+                                std::num::NonZeroUsize::new(
+                                    crate::channels::MAX_CONVERSATION_SENDERS,
+                                )
+                                .unwrap(),
+                            ),
+                        )),
+                        session_manager: None,
+                        workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                        security: None,
+                        non_cli_excluded_tools: None,
+                        compact_context: None,
+                        max_history_messages: None,
+                        max_tool_iterations: None,
+                        message_timeout_secs: None,
+                        multimodal: None,
+                        reliability: None,
+                        knowledge_graph: None,
+                        cross_knowledge_index: None,
+                        knowledge_config: Default::default(),
+                    },
+                ),
+            ),
             max_tool_result_chars: 0,
             context_token_budget: 0,
             debouncer: Arc::new(debounce::MessageDebouncer::new(Duration::ZERO)),
@@ -10935,31 +11274,43 @@ BTC is currently around $65,000 based on latest tool output."#
             )),
             activated_tools: None,
             cost_tracking: None,
-            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
-                crate::channels::context_resolver::MessageContext {
-                    agent_id: "test".to_string(),
-                    is_guardian: false,
-                    nickname: None,
-                    star_name: None,
-                    model: None,
-                    provider: None,
-                    api_key: None,
-                    temperature: None,
-                    system_prompt: String::new(),
-                    memory: Arc::new(crate::memory::NoneMemory),
-                    conversation_histories: Arc::new(std::sync::Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::new(crate::channels::MAX_CONVERSATION_SENDERS).unwrap()))),
-                    session_manager: None,
-                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
-                    security: None,
-                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
-                    message_timeout_secs: None,
-                    multimodal: None,
-                    reliability: None,
-                    knowledge_graph: None,
-                    cross_knowledge_index: None,
-                    knowledge_config: Default::default(),
-                },
-            )),
+            context_resolver: Arc::new(
+                crate::channels::context_resolver::DefaultContextResolver::new(
+                    crate::channels::context_resolver::MessageContext {
+                        agent_id: "test".to_string(),
+                        is_guardian: false,
+                        nickname: None,
+                        star_name: None,
+                        model: None,
+                        provider: None,
+                        api_key: None,
+                        temperature: None,
+                        system_prompt: String::new(),
+                        memory: Arc::new(crate::memory::NoneMemory),
+                        conversation_histories: Arc::new(std::sync::Mutex::new(
+                            lru::LruCache::new(
+                                std::num::NonZeroUsize::new(
+                                    crate::channels::MAX_CONVERSATION_SENDERS,
+                                )
+                                .unwrap(),
+                            ),
+                        )),
+                        session_manager: None,
+                        workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                        security: None,
+                        non_cli_excluded_tools: None,
+                        compact_context: None,
+                        max_history_messages: None,
+                        max_tool_iterations: None,
+                        message_timeout_secs: None,
+                        multimodal: None,
+                        reliability: None,
+                        knowledge_graph: None,
+                        cross_knowledge_index: None,
+                        knowledge_config: Default::default(),
+                    },
+                ),
+            ),
             max_tool_result_chars: 0,
             context_token_budget: 0,
             debouncer: Arc::new(debounce::MessageDebouncer::new(Duration::ZERO)),
@@ -11133,7 +11484,15 @@ This is an example JSON object for profile settings."#;
             aieos_inline: None,
         };
 
-        let prompt = build_system_prompt(tmp.path(), tmp.path(), "model", &[], &[], Some(&config), None);
+        let prompt = build_system_prompt(
+            tmp.path(),
+            tmp.path(),
+            "model",
+            &[],
+            &[],
+            Some(&config),
+            None,
+        );
 
         // Should contain AIEOS sections
         assert!(prompt.contains("## Identity"));
@@ -11192,7 +11551,8 @@ This is an example JSON object for profile settings."#;
         };
 
         let ws = make_workspace();
-        let prompt = build_system_prompt(ws.path(), ws.path(), "model", &[], &[], Some(&config), None);
+        let prompt =
+            build_system_prompt(ws.path(), ws.path(), "model", &[], &[], Some(&config), None);
 
         // Should fall back to OpenClaw format when AIEOS file is not found
         // (Error is logged to stderr with filename, not included in prompt)
@@ -11211,7 +11571,8 @@ This is an example JSON object for profile settings."#;
         };
 
         let ws = make_workspace();
-        let prompt = build_system_prompt(ws.path(), ws.path(), "model", &[], &[], Some(&config), None);
+        let prompt =
+            build_system_prompt(ws.path(), ws.path(), "model", &[], &[], Some(&config), None);
 
         // Should use OpenClaw format (not configured for AIEOS)
         assert!(prompt.contains("### SOUL.md"));
@@ -11229,7 +11590,8 @@ This is an example JSON object for profile settings."#;
         };
 
         let ws = make_workspace();
-        let prompt = build_system_prompt(ws.path(), ws.path(), "model", &[], &[], Some(&config), None);
+        let prompt =
+            build_system_prompt(ws.path(), ws.path(), "model", &[], &[], Some(&config), None);
 
         // Should use OpenClaw format even if aieos_path is set
         assert!(prompt.contains("### SOUL.md"));
@@ -11550,31 +11912,43 @@ This is an example JSON object for profile settings."#;
             )),
             activated_tools: None,
             cost_tracking: None,
-            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
-                crate::channels::context_resolver::MessageContext {
-                    agent_id: "test".to_string(),
-                    is_guardian: false,
-                    nickname: None,
-                    star_name: None,
-                    model: None,
-                    provider: None,
-                    api_key: None,
-                    temperature: None,
-                    system_prompt: String::new(),
-                    memory: Arc::new(crate::memory::NoneMemory),
-                    conversation_histories: Arc::new(std::sync::Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::new(crate::channels::MAX_CONVERSATION_SENDERS).unwrap()))),
-                    session_manager: None,
-                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
-                    security: None,
-                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
-                    message_timeout_secs: None,
-                    multimodal: None,
-                    reliability: None,
-                    knowledge_graph: None,
-                    cross_knowledge_index: None,
-                    knowledge_config: Default::default(),
-                },
-            )),
+            context_resolver: Arc::new(
+                crate::channels::context_resolver::DefaultContextResolver::new(
+                    crate::channels::context_resolver::MessageContext {
+                        agent_id: "test".to_string(),
+                        is_guardian: false,
+                        nickname: None,
+                        star_name: None,
+                        model: None,
+                        provider: None,
+                        api_key: None,
+                        temperature: None,
+                        system_prompt: String::new(),
+                        memory: Arc::new(crate::memory::NoneMemory),
+                        conversation_histories: Arc::new(std::sync::Mutex::new(
+                            lru::LruCache::new(
+                                std::num::NonZeroUsize::new(
+                                    crate::channels::MAX_CONVERSATION_SENDERS,
+                                )
+                                .unwrap(),
+                            ),
+                        )),
+                        session_manager: None,
+                        workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                        security: None,
+                        non_cli_excluded_tools: None,
+                        compact_context: None,
+                        max_history_messages: None,
+                        max_tool_iterations: None,
+                        message_timeout_secs: None,
+                        multimodal: None,
+                        reliability: None,
+                        knowledge_graph: None,
+                        cross_knowledge_index: None,
+                        knowledge_config: Default::default(),
+                    },
+                ),
+            ),
             max_tool_result_chars: 0,
             context_token_budget: 0,
             debouncer: Arc::new(debounce::MessageDebouncer::new(Duration::ZERO)),
@@ -11673,31 +12047,43 @@ This is an example JSON object for profile settings."#;
             )),
             activated_tools: None,
             cost_tracking: None,
-            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
-                crate::channels::context_resolver::MessageContext {
-                    agent_id: "test".to_string(),
-                    is_guardian: false,
-                    nickname: None,
-                    star_name: None,
-                    model: None,
-                    provider: None,
-                    api_key: None,
-                    temperature: None,
-                    system_prompt: String::new(),
-                    memory: Arc::new(crate::memory::NoneMemory),
-                    conversation_histories: Arc::new(std::sync::Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::new(crate::channels::MAX_CONVERSATION_SENDERS).unwrap()))),
-                    session_manager: None,
-                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
-                    security: None,
-                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
-                    message_timeout_secs: None,
-                    multimodal: None,
-                    reliability: None,
-                    knowledge_graph: None,
-                    cross_knowledge_index: None,
-                    knowledge_config: Default::default(),
-                },
-            )),
+            context_resolver: Arc::new(
+                crate::channels::context_resolver::DefaultContextResolver::new(
+                    crate::channels::context_resolver::MessageContext {
+                        agent_id: "test".to_string(),
+                        is_guardian: false,
+                        nickname: None,
+                        star_name: None,
+                        model: None,
+                        provider: None,
+                        api_key: None,
+                        temperature: None,
+                        system_prompt: String::new(),
+                        memory: Arc::new(crate::memory::NoneMemory),
+                        conversation_histories: Arc::new(std::sync::Mutex::new(
+                            lru::LruCache::new(
+                                std::num::NonZeroUsize::new(
+                                    crate::channels::MAX_CONVERSATION_SENDERS,
+                                )
+                                .unwrap(),
+                            ),
+                        )),
+                        session_manager: None,
+                        workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                        security: None,
+                        non_cli_excluded_tools: None,
+                        compact_context: None,
+                        max_history_messages: None,
+                        max_tool_iterations: None,
+                        message_timeout_secs: None,
+                        multimodal: None,
+                        reliability: None,
+                        knowledge_graph: None,
+                        cross_knowledge_index: None,
+                        knowledge_config: Default::default(),
+                    },
+                ),
+            ),
             max_tool_result_chars: 0,
             context_token_budget: 0,
             debouncer: Arc::new(debounce::MessageDebouncer::new(Duration::ZERO)),
@@ -11780,31 +12166,43 @@ This is an example JSON object for profile settings."#;
         let runtime_ctx = Arc::new(ChannelRuntimeContext {
             compact_context: false,
             max_history_messages: 50,
-            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
-                crate::channels::context_resolver::MessageContext {
-                    agent_id: "test".to_string(),
-                    is_guardian: false,
-                    nickname: None,
-                    star_name: None,
-                    model: None,
-                    provider: None,
-                    api_key: None,
-                    temperature: None,
-                    system_prompt: String::new(),
-                    memory: Arc::new(crate::memory::NoneMemory),
-                    conversation_histories: Arc::new(std::sync::Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::new(crate::channels::MAX_CONVERSATION_SENDERS).unwrap()))),
-                    session_manager: None,
-                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
-                    security: None,
-                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
-                    message_timeout_secs: None,
-                    multimodal: None,
-                    reliability: None,
-                    knowledge_graph: None,
-                    cross_knowledge_index: None,
-                    knowledge_config: Default::default(),
-                },
-            )),
+            context_resolver: Arc::new(
+                crate::channels::context_resolver::DefaultContextResolver::new(
+                    crate::channels::context_resolver::MessageContext {
+                        agent_id: "test".to_string(),
+                        is_guardian: false,
+                        nickname: None,
+                        star_name: None,
+                        model: None,
+                        provider: None,
+                        api_key: None,
+                        temperature: None,
+                        system_prompt: String::new(),
+                        memory: Arc::new(crate::memory::NoneMemory),
+                        conversation_histories: Arc::new(std::sync::Mutex::new(
+                            lru::LruCache::new(
+                                std::num::NonZeroUsize::new(
+                                    crate::channels::MAX_CONVERSATION_SENDERS,
+                                )
+                                .unwrap(),
+                            ),
+                        )),
+                        session_manager: None,
+                        workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                        security: None,
+                        non_cli_excluded_tools: None,
+                        compact_context: None,
+                        max_history_messages: None,
+                        max_tool_iterations: None,
+                        message_timeout_secs: None,
+                        multimodal: None,
+                        reliability: None,
+                        knowledge_graph: None,
+                        cross_knowledge_index: None,
+                        knowledge_config: Default::default(),
+                    },
+                ),
+            ),
             channels_by_name: Arc::new(channels_by_name),
             provider: Arc::new(FormatErrorProvider),
             default_provider: Arc::new("dummy".to_string()),
@@ -12031,31 +12429,43 @@ This is an example JSON object for profile settings."#;
             activated_tools: None,
             cost_tracking: None,
             pacing: crate::config::PacingConfig::default(),
-            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
-                crate::channels::context_resolver::MessageContext {
-                    agent_id: "test".to_string(),
-                    is_guardian: false,
-                    nickname: None,
-                    star_name: None,
-                    model: None,
-                    provider: None,
-                    api_key: None,
-                    temperature: None,
-                    system_prompt: String::new(),
-                    memory: Arc::new(crate::memory::NoneMemory),
-                    conversation_histories: Arc::new(std::sync::Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::new(crate::channels::MAX_CONVERSATION_SENDERS).unwrap()))),
-                    session_manager: None,
-                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
-                    security: None,
-                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
-                    message_timeout_secs: None,
-                    multimodal: None,
-                    reliability: None,
-                    knowledge_graph: None,
-                    cross_knowledge_index: None,
-                    knowledge_config: Default::default(),
-                },
-            )),
+            context_resolver: Arc::new(
+                crate::channels::context_resolver::DefaultContextResolver::new(
+                    crate::channels::context_resolver::MessageContext {
+                        agent_id: "test".to_string(),
+                        is_guardian: false,
+                        nickname: None,
+                        star_name: None,
+                        model: None,
+                        provider: None,
+                        api_key: None,
+                        temperature: None,
+                        system_prompt: String::new(),
+                        memory: Arc::new(crate::memory::NoneMemory),
+                        conversation_histories: Arc::new(std::sync::Mutex::new(
+                            lru::LruCache::new(
+                                std::num::NonZeroUsize::new(
+                                    crate::channels::MAX_CONVERSATION_SENDERS,
+                                )
+                                .unwrap(),
+                            ),
+                        )),
+                        session_manager: None,
+                        workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                        security: None,
+                        non_cli_excluded_tools: None,
+                        compact_context: None,
+                        max_history_messages: None,
+                        max_tool_iterations: None,
+                        message_timeout_secs: None,
+                        multimodal: None,
+                        reliability: None,
+                        knowledge_graph: None,
+                        cross_knowledge_index: None,
+                        knowledge_config: Default::default(),
+                    },
+                ),
+            ),
             max_tool_result_chars: 0,
             context_token_budget: 0,
             debouncer: Arc::new(debounce::MessageDebouncer::new(Duration::ZERO)),
@@ -12178,31 +12588,43 @@ This is an example JSON object for profile settings."#;
             activated_tools: None,
             cost_tracking: None,
             pacing: crate::config::PacingConfig::default(),
-            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
-                crate::channels::context_resolver::MessageContext {
-                    agent_id: "test".to_string(),
-                    is_guardian: false,
-                    nickname: None,
-                    star_name: None,
-                    model: None,
-                    provider: None,
-                    api_key: None,
-                    temperature: None,
-                    system_prompt: String::new(),
-                    memory: Arc::new(crate::memory::NoneMemory),
-                    conversation_histories: Arc::new(std::sync::Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::new(crate::channels::MAX_CONVERSATION_SENDERS).unwrap()))),
-                    session_manager: None,
-                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
-                    security: None,
-                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
-                    message_timeout_secs: None,
-                    multimodal: None,
-                    reliability: None,
-                    knowledge_graph: None,
-                    cross_knowledge_index: None,
-                    knowledge_config: Default::default(),
-                },
-            )),
+            context_resolver: Arc::new(
+                crate::channels::context_resolver::DefaultContextResolver::new(
+                    crate::channels::context_resolver::MessageContext {
+                        agent_id: "test".to_string(),
+                        is_guardian: false,
+                        nickname: None,
+                        star_name: None,
+                        model: None,
+                        provider: None,
+                        api_key: None,
+                        temperature: None,
+                        system_prompt: String::new(),
+                        memory: Arc::new(crate::memory::NoneMemory),
+                        conversation_histories: Arc::new(std::sync::Mutex::new(
+                            lru::LruCache::new(
+                                std::num::NonZeroUsize::new(
+                                    crate::channels::MAX_CONVERSATION_SENDERS,
+                                )
+                                .unwrap(),
+                            ),
+                        )),
+                        session_manager: None,
+                        workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                        security: None,
+                        non_cli_excluded_tools: None,
+                        compact_context: None,
+                        max_history_messages: None,
+                        max_tool_iterations: None,
+                        message_timeout_secs: None,
+                        multimodal: None,
+                        reliability: None,
+                        knowledge_graph: None,
+                        cross_knowledge_index: None,
+                        knowledge_config: Default::default(),
+                    },
+                ),
+            ),
             max_tool_result_chars: 0,
             context_token_budget: 0,
             debouncer: Arc::new(debounce::MessageDebouncer::new(Duration::ZERO)),
@@ -12317,31 +12739,43 @@ This is an example JSON object for profile settings."#;
             activated_tools: None,
             cost_tracking: None,
             pacing: crate::config::PacingConfig::default(),
-            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
-                crate::channels::context_resolver::MessageContext {
-                    agent_id: "test".to_string(),
-                    is_guardian: false,
-                    nickname: None,
-                    star_name: None,
-                    model: None,
-                    provider: None,
-                    api_key: None,
-                    temperature: None,
-                    system_prompt: String::new(),
-                    memory: Arc::new(crate::memory::NoneMemory),
-                    conversation_histories: Arc::new(std::sync::Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::new(crate::channels::MAX_CONVERSATION_SENDERS).unwrap()))),
-                    session_manager: None,
-                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
-                    security: None,
-                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
-                    message_timeout_secs: None,
-                    multimodal: None,
-                    reliability: None,
-                    knowledge_graph: None,
-                    cross_knowledge_index: None,
-                    knowledge_config: Default::default(),
-                },
-            )),
+            context_resolver: Arc::new(
+                crate::channels::context_resolver::DefaultContextResolver::new(
+                    crate::channels::context_resolver::MessageContext {
+                        agent_id: "test".to_string(),
+                        is_guardian: false,
+                        nickname: None,
+                        star_name: None,
+                        model: None,
+                        provider: None,
+                        api_key: None,
+                        temperature: None,
+                        system_prompt: String::new(),
+                        memory: Arc::new(crate::memory::NoneMemory),
+                        conversation_histories: Arc::new(std::sync::Mutex::new(
+                            lru::LruCache::new(
+                                std::num::NonZeroUsize::new(
+                                    crate::channels::MAX_CONVERSATION_SENDERS,
+                                )
+                                .unwrap(),
+                            ),
+                        )),
+                        session_manager: None,
+                        workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                        security: None,
+                        non_cli_excluded_tools: None,
+                        compact_context: None,
+                        max_history_messages: None,
+                        max_tool_iterations: None,
+                        message_timeout_secs: None,
+                        multimodal: None,
+                        reliability: None,
+                        knowledge_graph: None,
+                        cross_knowledge_index: None,
+                        knowledge_config: Default::default(),
+                    },
+                ),
+            ),
             max_tool_result_chars: 0,
             context_token_budget: 0,
             debouncer: Arc::new(debounce::MessageDebouncer::new(Duration::ZERO)),
@@ -12476,31 +12910,43 @@ This is an example JSON object for profile settings."#;
             activated_tools: None,
             cost_tracking: None,
             pacing: crate::config::PacingConfig::default(),
-            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
-                crate::channels::context_resolver::MessageContext {
-                    agent_id: "test".to_string(),
-                    is_guardian: false,
-                    nickname: None,
-                    star_name: None,
-                    model: None,
-                    provider: None,
-                    api_key: None,
-                    temperature: None,
-                    system_prompt: String::new(),
-                    memory: Arc::new(crate::memory::NoneMemory),
-                    conversation_histories: Arc::new(std::sync::Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::new(crate::channels::MAX_CONVERSATION_SENDERS).unwrap()))),
-                    session_manager: None,
-                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
-                    security: None,
-                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
-                    message_timeout_secs: None,
-                    multimodal: None,
-                    reliability: None,
-                    knowledge_graph: None,
-                    cross_knowledge_index: None,
-                    knowledge_config: Default::default(),
-                },
-            )),
+            context_resolver: Arc::new(
+                crate::channels::context_resolver::DefaultContextResolver::new(
+                    crate::channels::context_resolver::MessageContext {
+                        agent_id: "test".to_string(),
+                        is_guardian: false,
+                        nickname: None,
+                        star_name: None,
+                        model: None,
+                        provider: None,
+                        api_key: None,
+                        temperature: None,
+                        system_prompt: String::new(),
+                        memory: Arc::new(crate::memory::NoneMemory),
+                        conversation_histories: Arc::new(std::sync::Mutex::new(
+                            lru::LruCache::new(
+                                std::num::NonZeroUsize::new(
+                                    crate::channels::MAX_CONVERSATION_SENDERS,
+                                )
+                                .unwrap(),
+                            ),
+                        )),
+                        session_manager: None,
+                        workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                        security: None,
+                        non_cli_excluded_tools: None,
+                        compact_context: None,
+                        max_history_messages: None,
+                        max_tool_iterations: None,
+                        message_timeout_secs: None,
+                        multimodal: None,
+                        reliability: None,
+                        knowledge_graph: None,
+                        cross_knowledge_index: None,
+                        knowledge_config: Default::default(),
+                    },
+                ),
+            ),
             max_tool_result_chars: 0,
             context_token_budget: 0,
             debouncer: Arc::new(debounce::MessageDebouncer::new(Duration::ZERO)),
@@ -12776,31 +13222,43 @@ This is an example JSON object for profile settings."#;
             )),
             activated_tools: None,
             cost_tracking: None,
-            context_resolver: Arc::new(crate::channels::context_resolver::DefaultContextResolver::new(
-                crate::channels::context_resolver::MessageContext {
-                    agent_id: "test".to_string(),
-                    is_guardian: false,
-                    nickname: None,
-                    star_name: None,
-                    model: None,
-                    provider: None,
-                    api_key: None,
-                    temperature: None,
-                    system_prompt: String::new(),
-                    memory: Arc::new(crate::memory::NoneMemory),
-                    conversation_histories: Arc::new(std::sync::Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::new(crate::channels::MAX_CONVERSATION_SENDERS).unwrap()))),
-                    session_manager: None,
-                    workspace_dir: std::path::PathBuf::from("/tmp/test"),
-                    security: None,
-                    non_cli_excluded_tools: None, compact_context: None, max_history_messages: None, max_tool_iterations: None,
-                    message_timeout_secs: None,
-                    multimodal: None,
-                    reliability: None,
-                    knowledge_graph: None,
-                    cross_knowledge_index: None,
-                    knowledge_config: Default::default(),
-                },
-            )),
+            context_resolver: Arc::new(
+                crate::channels::context_resolver::DefaultContextResolver::new(
+                    crate::channels::context_resolver::MessageContext {
+                        agent_id: "test".to_string(),
+                        is_guardian: false,
+                        nickname: None,
+                        star_name: None,
+                        model: None,
+                        provider: None,
+                        api_key: None,
+                        temperature: None,
+                        system_prompt: String::new(),
+                        memory: Arc::new(crate::memory::NoneMemory),
+                        conversation_histories: Arc::new(std::sync::Mutex::new(
+                            lru::LruCache::new(
+                                std::num::NonZeroUsize::new(
+                                    crate::channels::MAX_CONVERSATION_SENDERS,
+                                )
+                                .unwrap(),
+                            ),
+                        )),
+                        session_manager: None,
+                        workspace_dir: std::path::PathBuf::from("/tmp/test"),
+                        security: None,
+                        non_cli_excluded_tools: None,
+                        compact_context: None,
+                        max_history_messages: None,
+                        max_tool_iterations: None,
+                        message_timeout_secs: None,
+                        multimodal: None,
+                        reliability: None,
+                        knowledge_graph: None,
+                        cross_knowledge_index: None,
+                        knowledge_config: Default::default(),
+                    },
+                ),
+            ),
             max_tool_result_chars: 0,
             context_token_budget: 0,
             debouncer: Arc::new(debounce::MessageDebouncer::new(Duration::ZERO)),

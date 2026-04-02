@@ -9,10 +9,10 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 
+use crate::sidecar::config::{cleanup_pid_file_helper, kill_by_pid_file_helper};
 use crate::sidecar::constants::*;
 use crate::sidecar::models::*;
 use crate::sidecar::monitor::{monitor_loop, SidecarMonitorHandle};
-use crate::sidecar::config::{kill_by_pid_file_helper, cleanup_pid_file_helper};
 
 pub struct SidecarManager {
     /// 子进程句柄
@@ -326,7 +326,13 @@ impl SidecarManager {
             .build()
             .unwrap_or_default();
 
-        if client.get(format!("http://127.0.0.1:{port}/health")).send().await.map(|r| r.status().is_success()).unwrap_or(false) {
+        if client
+            .get(format!("http://127.0.0.1:{port}/health"))
+            .send()
+            .await
+            .map(|r| r.status().is_success())
+            .unwrap_or(false)
+        {
             self.port.store(port as u32, Ordering::Relaxed);
             true
         } else {

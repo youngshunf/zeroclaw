@@ -94,7 +94,8 @@ pub async fn asr_via_dashscope(audio_url: &str) -> Result<String> {
         .context("ASR: failed to send DashScope request")?;
 
     let status = resp.status();
-    let resp_body: serde_json::Value = resp.json().await.context("ASR: failed to parse response")?;
+    let resp_body: serde_json::Value =
+        resp.json().await.context("ASR: failed to parse response")?;
 
     if !status.is_success() {
         let err_msg = resp_body["error"]["message"]
@@ -197,8 +198,7 @@ async fn transcribe_voice_url(
     let file_name = derive_audio_filename(audio_url, &content_type, &audio_bytes);
     tracing::info!("ASR: derived filename={file_name}");
 
-    crate::channels::transcription::transcribe_audio(audio_bytes.to_vec(), &file_name, config)
-        .await
+    crate::channels::transcription::transcribe_audio(audio_bytes.to_vec(), &file_name, config).await
 }
 
 /// Derive a filename with proper extension for audio format detection.
@@ -220,8 +220,18 @@ fn derive_audio_filename(url: &str, content_type: &str, data: &[u8]) -> String {
         let ext_lower = ext.to_ascii_lowercase();
         if matches!(
             ext_lower.as_str(),
-            "flac" | "mp3" | "mp4" | "mpeg" | "mpga" | "m4a" | "ogg" | "oga" | "opus" | "wav"
-                | "webm" | "amr"
+            "flac"
+                | "mp3"
+                | "mp4"
+                | "mpeg"
+                | "mpga"
+                | "m4a"
+                | "ogg"
+                | "oga"
+                | "opus"
+                | "wav"
+                | "webm"
+                | "amr"
         ) {
             return format!("voice.{ext_lower}");
         }
@@ -458,9 +468,7 @@ pub async fn auto_synthesize_voice_markers(
                             continue;
                         }
                         Err(e) => {
-                            tracing::warn!(
-                                "Auto-TTS synthesis failed: {e}; falling back to text"
-                            );
+                            tracing::warn!("Auto-TTS synthesis failed: {e}; falling back to text");
                             result.push_str(marker);
                             result.push('\n');
                             continue;
@@ -544,7 +552,7 @@ pub async fn synthesize_and_save(
 
     let status = resp.status();
 
-    // If the API returns a 302 Redirect (e.g. from New-API minimax/ali TTS direct OSS links), 
+    // If the API returns a 302 Redirect (e.g. from New-API minimax/ali TTS direct OSS links),
     // capture the Location header and return it as the audio URL, avoiding local cache.
     if status.is_redirection() {
         if let Some(loc) = resp.headers().get(reqwest::header::LOCATION) {
@@ -631,8 +639,7 @@ pub async fn lark_upload_audio(
         .text("file_name", filename.to_string())
         .part(
             "file",
-            reqwest::multipart::Part::bytes(audio_bytes.to_vec())
-                .file_name(filename.to_string()),
+            reqwest::multipart::Part::bytes(audio_bytes.to_vec()).file_name(filename.to_string()),
         );
 
     let resp = client
@@ -690,9 +697,7 @@ pub async fn lark_send_audio(
     let code = resp_body["code"].as_i64().unwrap_or(-1);
 
     if !status.is_success() || code != 0 {
-        anyhow::bail!(
-            "Lark send audio failed (status={status}, code={code}): {resp_body}"
-        );
+        anyhow::bail!("Lark send audio failed (status={status}, code={code}): {resp_body}");
     }
 
     tracing::info!("Lark: sent audio message to {recipient}");

@@ -244,12 +244,21 @@ impl TenantHeartbeatManager {
                     };
 
                     if let Err(e) = tx.send(msg).await {
-                        error!("💓 Tenant {}: failed to queue heartbeat message: {}", user_clone.agent_id, e);
+                        error!(
+                            "💓 Tenant {}: failed to queue heartbeat message: {}",
+                            user_clone.agent_id, e
+                        );
                     } else {
-                        info!("💓 Tenant {}: heartbeat message dispatched to channel runtime", user_clone.agent_id);
+                        info!(
+                            "💓 Tenant {}: heartbeat message dispatched to channel runtime",
+                            user_clone.agent_id
+                        );
                     }
                 } else {
-                    error!("💓 Tenant {}: global inbound queue not registered. Cannot dispatch heartbeat.", user_clone.agent_id);
+                    error!(
+                        "💓 Tenant {}: global inbound queue not registered. Cannot dispatch heartbeat.",
+                        user_clone.agent_id
+                    );
                 }
             });
 
@@ -272,7 +281,10 @@ impl TenantHeartbeatManager {
     /// Resolve workspace directory for a tenant.
     fn resolve_workspace(&self, tenant: &TenantRecord) -> PathBuf {
         let hx = &self.config.huanxing;
-        let config_dir = self.config.config_path.parent()
+        let config_dir = self
+            .config
+            .config_path
+            .parent()
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| self.config.workspace_dir.clone());
         hx.resolve_agent_workspace(&config_dir, tenant.tenant_dir.as_deref(), &tenant.agent_id)
@@ -293,8 +305,6 @@ impl TenantHeartbeatManager {
         last_run.retain(|_, v| now.signed_duration_since(*v).num_hours() < 24);
     }
 }
-
-
 
 // ── Huanxing-owned scheduled task parsing ─────────────────────────
 // Parses HEARTBEAT.md with `schedule:cron` support without modifying

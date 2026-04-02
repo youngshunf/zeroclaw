@@ -113,8 +113,6 @@ pub struct OnboardingConfig {
 // Workspace variant
 // ═══════════════════════════════════════════════════════
 
-
-
 // ═══════════════════════════════════════════════════════
 // Template engine
 // ═══════════════════════════════════════════════════════
@@ -248,7 +246,7 @@ impl TemplateEngine {
 
         // 1. Create directory structures
         tokio::fs::create_dir_all(agent_workspace_dir).await?;
-        
+
         if let Some(tdir) = tenant_workspace_dir {
             tokio::fs::create_dir_all(tdir).await?;
             tokio::fs::create_dir_all(tdir.join("memory")).await?;
@@ -261,44 +259,50 @@ impl TemplateEngine {
         let mut created_files = Vec::new();
 
         let template_dir = self.templates_dir.join(template_name);
-        
+
         // Unified base directory
         let base_dir = self.templates_dir.join("_base");
 
         // Helper to process directory files and substitute placeholders
-        let process_dir = |src_dir: &Path, dest_dir: &Path, files_list: &mut Vec<String>| -> Result<()> {
-            if !src_dir.exists() {
-                return Ok(());
-            }
-            let entries = std::fs::read_dir(src_dir)?;
-            for entry in entries {
-                let entry = entry?;
-                let path = entry.path();
-                if !path.is_file() {
-                    continue;
+        let process_dir =
+            |src_dir: &Path, dest_dir: &Path, files_list: &mut Vec<String>| -> Result<()> {
+                if !src_dir.exists() {
+                    return Ok(());
                 }
-                let file_name = entry.file_name().to_string_lossy().to_string();
-                if file_name.starts_with('.') || file_name == "template.yaml" || file_name == "template.json" {
-                    continue;
+                let entries = std::fs::read_dir(src_dir)?;
+                for entry in entries {
+                    let entry = entry?;
+                    let path = entry.path();
+                    if !path.is_file() {
+                        continue;
+                    }
+                    let file_name = entry.file_name().to_string_lossy().to_string();
+                    if file_name.starts_with('.')
+                        || file_name == "template.yaml"
+                        || file_name == "template.json"
+                    {
+                        continue;
+                    }
+                    let dest_name = if file_name.ends_with(".template") {
+                        file_name.trim_end_matches(".template").to_string()
+                    } else {
+                        file_name.clone()
+                    };
+                    let dest = dest_dir.join(&dest_name);
+                    if dest.exists() {
+                        continue;
+                    } // Don't overwrite existing
+
+                    let content = std::fs::read_to_string(&path)?;
+                    let content = self.substitute_placeholders(&content, user_info);
+                    std::fs::write(&dest, content)?;
+
+                    if !files_list.contains(&file_name) {
+                        files_list.push(file_name);
+                    }
                 }
-                let dest_name = if file_name.ends_with(".template") {
-                    file_name.trim_end_matches(".template").to_string()
-                } else {
-                    file_name.clone()
-                };
-                let dest = dest_dir.join(&dest_name);
-                if dest.exists() { continue; } // Don't overwrite existing
-                
-                let content = std::fs::read_to_string(&path)?;
-                let content = self.substitute_placeholders(&content, user_info);
-                std::fs::write(&dest, content)?;
-                
-                if !files_list.contains(&file_name) {
-                    files_list.push(file_name);
-                }
-            }
-            Ok(())
-        };
+                Ok(())
+            };
 
         // 2a. Copy tenant files (if requested)
         if let Some(tdir) = tenant_workspace_dir {
@@ -306,7 +310,11 @@ impl TemplateEngine {
         }
 
         // 2b. Copy agent files from base
-        process_dir(&base_dir.join("agent"), agent_workspace_dir, &mut created_files)?;
+        process_dir(
+            &base_dir.join("agent"),
+            agent_workspace_dir,
+            &mut created_files,
+        )?;
 
         // 2c. Overlay template-specific files to agent dir
         process_dir(&template_dir, agent_workspace_dir, &mut created_files)?;
@@ -315,7 +323,8 @@ impl TemplateEngine {
         let installed_skills = self.install_skills(agent_workspace_dir, &def).await?;
 
         // 4. Generate per-agent config.toml
-        self.generate_agent_config(agent_workspace_dir, &def, provider, api_key, user_info).await?;
+        self.generate_agent_config(agent_workspace_dir, &def, provider, api_key, user_info)
+            .await?;
         created_files.push("config.toml".to_string());
 
         tracing::info!(
@@ -531,7 +540,8 @@ auto_save = true
             result
         };
 
-        tokio::fs::write(workspace_dir.join("config.toml"), config).await?;
+        let config_path = crate::huanxing::config::agent_config_path_from_workspace(workspace_dir);
+        tokio::fs::write(config_path, config).await?;
         Ok(())
     }
 

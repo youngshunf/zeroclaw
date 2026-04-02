@@ -750,9 +750,13 @@ fn trigger_matches(trigger: &SopTrigger, event: &SopEvent) -> bool {
             }
         }
 
-        (SopTrigger::Cron { expression, payload: _ }, SopTriggerSource::Cron) => {
-            event.topic.as_deref().map_or(false, |t| t == expression)
-        }
+        (
+            SopTrigger::Cron {
+                expression,
+                payload: _,
+            },
+            SopTriggerSource::Cron,
+        ) => event.topic.as_deref().map_or(false, |t| t == expression),
 
         (SopTrigger::Manual, SopTriggerSource::Manual) => true,
 

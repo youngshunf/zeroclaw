@@ -137,6 +137,17 @@ fn open_agent_sessions_db(agent_workspace: &FsPath) -> rusqlite::Result<Connecti
     Ok(conn)
 }
 
+fn resolve_agent_session_workspace(
+    config: &crate::config::schema::Config,
+    config_dir: &FsPath,
+    tenant_dir: Option<&str>,
+    agent_id: &str,
+) -> std::path::PathBuf {
+    config
+        .huanxing
+        .resolve_agent_workspace(config_dir, tenant_dir, agent_id)
+}
+
 /// 从 agent workspace 中读取所有会话（合并 desktop_sessions + session_metadata）
 fn list_agent_sessions(agent_id: &str, agent_workspace: &FsPath) -> Vec<SessionInfo> {
     let conn = match open_agent_sessions_db(agent_workspace) {
@@ -196,26 +207,22 @@ async fn list_sessions(
     if !config.huanxing.enabled {
         return (StatusCode::OK, Json(serde_json::json!({ "sessions": [] }))).into_response();
     }
+    let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
 
-    let tenant_dir = crate::huanxing::api_agents::extract_tenant_dir(
-        &headers,
-        config.config_path.parent().unwrap_or(&config.workspace_dir),
-        &config.huanxing,
-    )
-    .await;
+    let tenant_dir =
+        crate::huanxing::api_agents::extract_tenant_dir(&headers, config_dir, &config.huanxing)
+            .await;
     let agents_dir = config
         .huanxing
-        .resolve_tenant_root(
-            config.config_path.parent().unwrap_or(&config.workspace_dir),
-            tenant_dir.as_deref(),
-        )
+        .resolve_tenant_root(config_dir, tenant_dir.as_deref())
         .join("agents");
 
     let mut all_sessions: Vec<SessionInfo> = Vec::new();
 
     if let Some(ref agent_id) = q.agent_id {
         // 只查指定 agent
-        let workspace = agents_dir.join(agent_id);
+        let workspace =
+            resolve_agent_session_workspace(&config, config_dir, tenant_dir.as_deref(), agent_id);
         if workspace.exists() {
             all_sessions = list_agent_sessions(agent_id, &workspace);
         }
@@ -232,8 +239,17 @@ async fn list_sessions(
                     if name.starts_with('.') {
                         continue;
                     }
+                    let workspace = resolve_agent_session_workspace(
+                        &config,
+                        config_dir,
+                        tenant_dir.as_deref(),
+                        &name,
+                    );
+                    if !workspace.exists() {
+                        continue;
+                    }
                     let sessions =
-                        tokio::task::block_in_place(|| list_agent_sessions(&name, &path));
+                        tokio::task::block_in_place(|| list_agent_sessions(&name, &workspace));
                     all_sessions.extend(sessions);
                 }
             }
@@ -269,20 +285,11 @@ async fn create_session(
         )
             .into_response();
     }
+    let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
 
-    let tenant_dir = crate::huanxing::api_agents::extract_tenant_dir(
-        &headers,
-        config.config_path.parent().unwrap_or(&config.workspace_dir),
-        &config.huanxing,
-    )
-    .await;
-    let agents_dir = config
-        .huanxing
-        .resolve_tenant_root(
-            config.config_path.parent().unwrap_or(&config.workspace_dir),
-            tenant_dir.as_deref(),
-        )
-        .join("agents");
+    let tenant_dir =
+        crate::huanxing::api_agents::extract_tenant_dir(&headers, config_dir, &config.huanxing)
+            .await;
 
     // agent_id 默认为 "default"（兼容单 agent 模式）
     let agent_id = req
@@ -290,7 +297,8 @@ async fn create_session(
         .clone()
         .unwrap_or_else(|| "default".to_string());
 
-    let workspace = agents_dir.join(&agent_id);
+    let workspace =
+        resolve_agent_session_workspace(&config, config_dir, tenant_dir.as_deref(), &agent_id);
     if !workspace.exists() {
         // agent 目录不存在，尝试创建（兼容 legacy 单 agent）
         if agent_id == "default" {
@@ -351,6 +359,36 @@ async fn create_session(
             Json(serde_json::json!({"error": format!("创建会话失败: {e}")})),
         )
             .into_response(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_agent_session_workspace;
+    use crate::config::Config;
+    use tempfile::tempdir;
+
+    #[test]
+    fn resolve_agent_session_workspace_uses_inner_workspace() {
+        let temp = tempdir().unwrap();
+        let config_dir = temp.path();
+        let mut config = Config::default();
+        config.huanxing.enabled = true;
+        config.config_path = config_dir.join("config.toml");
+        config.workspace_dir = config_dir.join("workspace");
+
+        let workspace =
+            resolve_agent_session_workspace(&config, config_dir, Some("001-tenant-a"), "default");
+
+        assert_eq!(
+            workspace,
+            config_dir
+                .join("users")
+                .join("001-tenant-a")
+                .join("agents")
+                .join("default")
+                .join("workspace")
+        );
     }
 }
 

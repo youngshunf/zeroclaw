@@ -1,8 +1,8 @@
 use crate::channels::traits::{Channel, ChannelMessage, SendMessage};
 use crate::huanxing::config::WechatPadConfig;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -63,35 +63,26 @@ struct WebhookPayload {
 impl WebhookPayload {
     /// Normalize the payload so message fields are accessible uniformly.
     fn msg_type_val(&self) -> Option<i64> {
-        self.msg_type.or_else(|| {
-            self.data
-                .get("MsgType")
-                .and_then(Value::as_i64)
-        })
+        self.msg_type
+            .or_else(|| self.data.get("MsgType").and_then(Value::as_i64))
     }
 
     fn from_user(&self) -> Option<&str> {
-        self.from_user_name.as_deref().or_else(|| {
-            self.data
-                .get("FromUserName")
-                .and_then(Value::as_str)
-        })
+        self.from_user_name
+            .as_deref()
+            .or_else(|| self.data.get("FromUserName").and_then(Value::as_str))
     }
 
     fn to_user(&self) -> Option<&str> {
-        self.to_user_name.as_deref().or_else(|| {
-            self.data
-                .get("ToUserName")
-                .and_then(Value::as_str)
-        })
+        self.to_user_name
+            .as_deref()
+            .or_else(|| self.data.get("ToUserName").and_then(Value::as_str))
     }
 
     fn content_text(&self) -> Option<&str> {
-        self.content.as_deref().or_else(|| {
-            self.data
-                .get("Content")
-                .and_then(Value::as_str)
-        })
+        self.content
+            .as_deref()
+            .or_else(|| self.data.get("Content").and_then(Value::as_str))
     }
 
     fn message_id(&self) -> String {
@@ -103,11 +94,7 @@ impl WebhookPayload {
 
     fn timestamp_val(&self) -> u64 {
         self.timestamp
-            .or_else(|| {
-                self.data
-                    .get("CreateTime")
-                    .and_then(Value::as_u64)
-            })
+            .or_else(|| self.data.get("CreateTime").and_then(Value::as_u64))
             .unwrap_or_else(current_unix_timestamp_secs)
     }
 
@@ -160,17 +147,15 @@ fn extract_group_sender_and_content(from: &str, content: &str) -> (String, Strin
 /// Strip @-mention from message content. Returns the cleaned content.
 fn strip_at_mention(content: &str) -> String {
     // WeChat @mentions look like: "@botname " or "@botname\u{2005}"
-    let re_start = content
-        .find('@')
-        .and_then(|start| {
-            // Find the space/separator after the mention
-            let rest = &content[start + 1..];
-            let end = rest
-                .find(|c: char| c == ' ' || c == '\u{2005}' || c == '\n')
-                .map(|i| start + 1 + i + 1)
-                .unwrap_or(content.len());
-            Some(end)
-        });
+    let re_start = content.find('@').and_then(|start| {
+        // Find the space/separator after the mention
+        let rest = &content[start + 1..];
+        let end = rest
+            .find(|c: char| c == ' ' || c == '\u{2005}' || c == '\n')
+            .map(|i| start + 1 + i + 1)
+            .unwrap_or(content.len());
+        Some(end)
+    });
 
     match re_start {
         Some(end) => {
@@ -302,10 +287,7 @@ impl WechatPadChannel {
     }
 
     fn auth_header_value(&self) -> String {
-        self.token
-            .as_deref()
-            .unwrap_or(&self.admin_key)
-            .to_string()
+        self.token.as_deref().unwrap_or(&self.admin_key).to_string()
     }
 
     async fn post_api(&self, endpoint: &str, body: &Value) -> Result<Value> {
@@ -374,12 +356,7 @@ impl WechatPadChannel {
                     .data
                     .get("FileName")
                     .and_then(Value::as_str)
-                    .or_else(|| {
-                        payload
-                            .data
-                            .get("Content")
-                            .and_then(Value::as_str)
-                    })
+                    .or_else(|| payload.data.get("Content").and_then(Value::as_str))
                     .unwrap_or("[收到一个应用消息]");
                 format!("[文件/链接: {title}]")
             }
@@ -399,8 +376,7 @@ impl WechatPadChannel {
             // Check if group_at_only and verify @-mention
             if self.group_at_only {
                 if let Some(ref wxid) = self.wxid {
-                    let has_at = body.contains(&format!("@{wxid}"))
-                        || body.contains("@所有人");
+                    let has_at = body.contains(&format!("@{wxid}")) || body.contains("@所有人");
                     if !has_at {
                         // Check if Content contains @mention in some form
                         let has_informal_at = body.starts_with('@');
@@ -508,7 +484,7 @@ impl Channel for WechatPadChannel {
     }
 
     async fn listen(&self, tx: tokio::sync::mpsc::Sender<ChannelMessage>) -> Result<()> {
-        use axum::{routing::post, Router};
+        use axum::{Router, routing::post};
 
         let tx = Arc::new(tx);
         let channel = Arc::new(WechatPadListenerState {
@@ -537,7 +513,9 @@ impl Channel for WechatPadChannel {
 
         let listener = tokio::net::TcpListener::bind(bind_addr)
             .await
-            .map_err(|e| anyhow!("Failed to bind WeChatPad webhook listener on {bind_addr}: {e}"))?;
+            .map_err(|e| {
+                anyhow!("Failed to bind WeChatPad webhook listener on {bind_addr}: {e}")
+            })?;
 
         axum::serve(listener, app)
             .await
@@ -703,7 +681,10 @@ mod tests {
         };
 
         let msg = channel.parse_webhook_event(&payload).unwrap();
-        assert!(msg.content.contains("[IMAGE:https://example.com/photo.jpg]"));
+        assert!(
+            msg.content
+                .contains("[IMAGE:https://example.com/photo.jpg]")
+        );
     }
 
     #[test]

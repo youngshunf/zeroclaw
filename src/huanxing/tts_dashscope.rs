@@ -12,7 +12,7 @@
 //!
 //! This is a huanxing-specific provider — kept in `src/huanxing/` per dev conventions.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 
 /// DashScope TTS provider using qwen3-tts models.
 pub struct DashScopeTtsProvider {
@@ -149,7 +149,8 @@ impl DashScopeTtsProvider {
 
         tracing::info!(
             "DashScope TTS: synthesizing with model={}, voice={}",
-            self.model, voice
+            self.model,
+            voice
         );
 
         let resp = self

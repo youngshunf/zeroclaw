@@ -3,9 +3,8 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fs;
 use std::path::PathBuf;
-
-
 
 /// Top-level `[huanxing]` configuration section in config.toml.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -13,8 +12,6 @@ use std::path::PathBuf;
 pub struct HuanXingConfig {
     /// Enable multi-tenant routing. When false, behaves as standard single-agent.
     pub enabled: bool,
-
-
 
     /// Path to the SQLite user database.
     /// Default: `{config_dir}/data/users.db`
@@ -289,6 +286,19 @@ impl HuanXingConfig {
             .join("workspace")
     }
 
+    /// Resolve the canonical agent config path at the wrapper root.
+    ///
+    /// Returns `{agent_wrapper}/config.toml`.
+    pub fn resolve_agent_config_path(
+        &self,
+        config_dir: &std::path::Path,
+        tenant_dir: Option<&str>,
+        agent_id: &str,
+    ) -> PathBuf {
+        self.resolve_agent_wrapper_dir(config_dir, tenant_dir, agent_id)
+            .join("config.toml")
+    }
+
     /// Resolve the memory database path within the owner workspace.
     ///
     /// Returns `{owner_workspace}/memory/brain.db`.
@@ -414,6 +424,51 @@ impl HuanXingConfig {
     }
 }
 
+pub fn agent_wrapper_dir_from_workspace(workspace_dir: &std::path::Path) -> PathBuf {
+    workspace_dir
+        .parent()
+        .unwrap_or(workspace_dir)
+        .to_path_buf()
+}
+
+pub fn agent_config_path_from_workspace(workspace_dir: &std::path::Path) -> PathBuf {
+    agent_wrapper_dir_from_workspace(workspace_dir).join("config.toml")
+}
+
+pub fn promote_legacy_agent_config(
+    agent_wrapper_dir: &std::path::Path,
+    workspace_dir: &std::path::Path,
+) -> std::io::Result<Option<PathBuf>> {
+    let canonical_path = agent_wrapper_dir.join("config.toml");
+    if canonical_path.exists() {
+        return Ok(Some(canonical_path));
+    }
+
+    let legacy_path = workspace_dir.join("config.toml");
+    if !legacy_path.exists() {
+        return Ok(None);
+    }
+
+    fs::create_dir_all(agent_wrapper_dir)?;
+    match fs::rename(&legacy_path, &canonical_path) {
+        Ok(()) => Ok(Some(canonical_path)),
+        Err(_) => {
+            fs::copy(&legacy_path, &canonical_path)?;
+            fs::remove_file(&legacy_path)?;
+            Ok(Some(canonical_path))
+        }
+    }
+}
+
+pub fn promote_legacy_agent_config_from_workspace(
+    workspace_dir: &std::path::Path,
+) -> std::io::Result<Option<PathBuf>> {
+    promote_legacy_agent_config(
+        &agent_wrapper_dir_from_workspace(workspace_dir),
+        workspace_dir,
+    )
+}
+
 /// Per-template configuration for tenant agent creation.
 
 /// HASN 节点连接配置 (`[huanxing.hasn]`).
@@ -450,9 +505,15 @@ pub struct HasnNodeConfig {
     pub max_retries: u32,
 }
 
-fn default_node_type() -> String { "desktop".to_string() }
-fn default_node_capacity() -> i32 { 3 }
-fn default_max_retries() -> u32 { 10 }
+fn default_node_type() -> String {
+    "desktop".to_string()
+}
+fn default_node_capacity() -> i32 {
+    3
+}
+fn default_max_retries() -> u32 {
+    10
+}
 
 impl Default for HasnNodeConfig {
     fn default() -> Self {

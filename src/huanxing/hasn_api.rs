@@ -11,10 +11,13 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{State, ws::{Message, WebSocket, WebSocketUpgrade}},
+    Json,
+    extract::{
+        State,
+        ws::{Message, WebSocket, WebSocketUpgrade},
+    },
     http::StatusCode,
     response::IntoResponse,
-    Json,
 };
 use serde::Deserialize;
 use tracing::{error, info};
@@ -66,12 +69,18 @@ pub async fn hasn_connect(
     let hasn_config = &config.huanxing.hasn;
 
     // 构建 WS URL
-    let base_url = req.url
+    let base_url = req
+        .url
         .or_else(|| hasn_config.central_url.clone())
         .unwrap_or_else(|| {
-            format!("{}/api/v1/hasn/ws/node", config.huanxing.hasn_url()
-                .replace("https://", "wss://")
-                .replace("http://", "ws://"))
+            format!(
+                "{}/api/v1/hasn/ws/node",
+                config
+                    .huanxing
+                    .hasn_url()
+                    .replace("https://", "wss://")
+                    .replace("http://", "ws://")
+            )
         });
 
     // 认证参数
@@ -87,7 +96,8 @@ pub async fn hasn_connect(
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({"error": "缺少认证凭据 (token 或 api_key)"})),
-        ).into_response();
+        )
+            .into_response();
     };
 
     let url = format!("{}{}", base_url, auth_param);
@@ -95,17 +105,25 @@ pub async fn hasn_connect(
     let connector = hasn_connector::global_connector();
     let max_retries = hasn_config.max_retries;
 
-    match connector.connect_with_retry(&url, max_retries, Arc::new(state)).await {
+    match connector
+        .connect_with_retry(&url, max_retries, Arc::new(state))
+        .await
+    {
         Ok(()) => {
             info!("[HASN API] 连接成功");
-            (StatusCode::OK, Json(serde_json::json!({"status": "connected"}))).into_response()
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({"status": "connected"})),
+            )
+                .into_response()
         }
         Err(e) => {
             error!("[HASN API] 连接失败: {}", e);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({"error": format!("连接失败: {e}")})),
-            ).into_response()
+            )
+                .into_response()
         }
     }
 }
@@ -114,7 +132,10 @@ pub async fn hasn_connect(
 pub async fn hasn_disconnect() -> impl IntoResponse {
     let connector = hasn_connector::global_connector();
     connector.disconnect().await;
-    (StatusCode::OK, Json(serde_json::json!({"status": "disconnected"})))
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({"status": "disconnected"})),
+    )
 }
 
 /// GET /api/v1/hasn/status
@@ -130,45 +151,46 @@ pub async fn hasn_status() -> impl IntoResponse {
 }
 
 /// POST /api/v1/hasn/send
-pub async fn hasn_send(
-    Json(req): Json<SendRequest>,
-) -> impl IntoResponse {
+pub async fn hasn_send(Json(req): Json<SendRequest>) -> impl IntoResponse {
     let connector = hasn_connector::global_connector();
 
-    match connector.send_message(&req.to, req.content, req.from_id, req.local_id).await {
-        Ok(()) => {
-            (StatusCode::OK, Json(serde_json::json!({"status": "sent"}))).into_response()
-        }
-        Err(e) => {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": format!("{e}")})),
-            ).into_response()
-        }
+    match connector
+        .send_message(&req.to, req.content, req.from_id, req.local_id)
+        .await
+    {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({"status": "sent"}))).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": format!("{e}")})),
+        )
+            .into_response(),
     }
 }
 
 /// POST /api/v1/hasn/report
-pub async fn hasn_report_agents(
-    Json(req): Json<ReportAgentsRequest>,
-) -> impl IntoResponse {
+pub async fn hasn_report_agents(Json(req): Json<ReportAgentsRequest>) -> impl IntoResponse {
     let connector = hasn_connector::global_connector();
 
-    let agents: Vec<AgentReport> = req.agents.into_iter().map(|a| AgentReport {
-        hasn_id: a.hasn_id,
-        owner_id: a.owner_id,
-    }).collect();
+    let agents: Vec<AgentReport> = req
+        .agents
+        .into_iter()
+        .map(|a| AgentReport {
+            hasn_id: a.hasn_id,
+            owner_id: a.owner_id,
+        })
+        .collect();
 
     match connector.report_agents(agents).await {
-        Ok(()) => {
-            (StatusCode::OK, Json(serde_json::json!({"status": "reported"}))).into_response()
-        }
-        Err(e) => {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": format!("{e}")})),
-            ).into_response()
-        }
+        Ok(()) => (
+            StatusCode::OK,
+            Json(serde_json::json!({"status": "reported"})),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": format!("{e}")})),
+        )
+            .into_response(),
     }
 }
 

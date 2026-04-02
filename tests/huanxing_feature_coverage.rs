@@ -17,14 +17,14 @@ mod huanxing_feature_coverage {
 
     #[test]
     fn all_huanxing_modules_compile() {
+        use zeroclaw::huanxing::api_client::ApiClient;
         use zeroclaw::huanxing::config::HuanXingConfig;
         use zeroclaw::huanxing::db::TenantDb;
-        use zeroclaw::huanxing::api_client::ApiClient;
-        use zeroclaw::huanxing::router::TenantRouter;
-        use zeroclaw::huanxing::registry::RegistryLoader;
         use zeroclaw::huanxing::multi_tenant_resolver::MultiTenantResolver;
-        use zeroclaw::huanxing::voice::HxVoiceConfig;
+        use zeroclaw::huanxing::registry::RegistryLoader;
+        use zeroclaw::huanxing::router::TenantRouter;
         use zeroclaw::huanxing::tts_dashscope::DashScopeTtsConfig;
+        use zeroclaw::huanxing::voice::HxVoiceConfig;
         use zeroclaw::huanxing::ws_observer::WsObserver;
 
         let _ = std::mem::size_of::<HuanXingConfig>();
@@ -47,9 +47,17 @@ mod huanxing_feature_coverage {
     fn assert_tool_spec(tool: &dyn Tool, expected_name: &str) {
         let spec = tool.spec();
         assert_eq!(spec.name, expected_name, "tool name mismatch");
-        assert!(!spec.description.is_empty(), "tool '{}' must have description", expected_name);
+        assert!(
+            !spec.description.is_empty(),
+            "tool '{}' must have description",
+            expected_name
+        );
         let params_json = serde_json::to_string(&spec.parameters).unwrap();
-        assert!(params_json.len() > 2, "tool '{}' must have parameters", expected_name);
+        assert!(
+            params_json.len() > 2,
+            "tool '{}' must have parameters",
+            expected_name
+        );
     }
 
     fn test_db() -> zeroclaw::huanxing::TenantDb {
@@ -61,11 +69,7 @@ mod huanxing_feature_coverage {
     }
 
     fn test_api() -> zeroclaw::huanxing::ApiClient {
-        zeroclaw::huanxing::ApiClient::new(
-            "http://localhost:3000",
-            "test-key",
-            "test-server",
-        )
+        zeroclaw::huanxing::ApiClient::new("http://localhost:3000", "test-key", "test-server")
     }
 
     // ── 2a. Core tools (tools.rs) — 17 tools ────────────────────
@@ -347,20 +351,21 @@ agent_key = "test-key-123"
     #[test]
     fn voice_compose_napcat_segment() {
         let segment = zeroclaw::huanxing::voice::compose_napcat_voice_segment(
-            "[VOICE:file:///tmp/voice.wav]"
+            "[VOICE:file:///tmp/voice.wav]",
         );
         assert!(segment.is_some(), "should compose napcat voice segment");
     }
 
     #[test]
     fn voice_parse_lark_audio() {
-        let (text, audio_keys) = zeroclaw::huanxing::voice::parse_lark_audio_content(
-            "Hello world"
-        );
+        let (text, audio_keys) = zeroclaw::huanxing::voice::parse_lark_audio_content("Hello world");
         // The function processes audio content — for plain text it returns
         // a placeholder; that's fine, the key contract is it doesn't panic.
         assert!(!text.is_empty(), "should return non-empty text");
-        assert!(audio_keys.is_empty(), "plain text should have no audio keys");
+        assert!(
+            audio_keys.is_empty(),
+            "plain text should have no audio keys"
+        );
     }
 
     #[test]
@@ -377,19 +382,25 @@ agent_key = "test-key-123"
 
     #[test]
     fn registry_loader_constructible() {
-        let loader = zeroclaw::huanxing::registry::RegistryLoader::new(
-            std::path::PathBuf::from("/tmp/nonexistent_hub"),
+        let loader = zeroclaw::huanxing::registry::RegistryLoader::new(std::path::PathBuf::from(
+            "/tmp/nonexistent_hub",
+        ));
+        assert_eq!(
+            loader.hub_dir(),
+            std::path::Path::new("/tmp/nonexistent_hub")
         );
-        assert_eq!(loader.hub_dir(), std::path::Path::new("/tmp/nonexistent_hub"));
     }
 
     #[tokio::test]
     async fn registry_loader_search_empty() {
-        let loader = zeroclaw::huanxing::registry::RegistryLoader::new(
-            std::path::PathBuf::from("/tmp/nonexistent_hub"),
-        );
+        let loader = zeroclaw::huanxing::registry::RegistryLoader::new(std::path::PathBuf::from(
+            "/tmp/nonexistent_hub",
+        ));
         let results = loader.search("test", None, 10).await;
-        assert!(results.is_empty(), "search on unloaded registry gives empty");
+        assert!(
+            results.is_empty(),
+            "search on unloaded registry gives empty"
+        );
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -409,7 +420,8 @@ agent_key = "test-key-123"
     #[test]
     fn context_resolver_types_exist() {
         let _ = std::any::type_name::<zeroclaw::channels::context_resolver::MessageContext>();
-        let _ = std::any::type_name::<zeroclaw::channels::context_resolver::DefaultContextResolver>();
+        let _ =
+            std::any::type_name::<zeroclaw::channels::context_resolver::DefaultContextResolver>();
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -472,9 +484,8 @@ agent_key = "test-key-123"
     #[test]
     fn permissions_tool_check() {
         // Guardian-only tools should be rejected for normal tenants
-        let result = zeroclaw::huanxing::permissions::check_permission(
-            "001-test-user", "hx_register_user"
-        );
+        let result =
+            zeroclaw::huanxing::permissions::check_permission("001-test-user", "hx_register_user");
         // Should either pass or fail with a reason — key is the function exists
         let _ = result;
     }

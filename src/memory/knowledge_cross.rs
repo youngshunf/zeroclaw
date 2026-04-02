@@ -1,12 +1,8 @@
-//! Cross-workspace knowledge search for same-user agent isolation on cloud.
+//! Cross-workspace knowledge search for legacy per-agent knowledge layouts.
 //!
-//! On **desktop**, all agents share a single knowledge.db via `owner_dir`,
-//! so cross-workspace search is inherently enabled — no extra logic needed.
-//!
-//! On **cloud**, each agent has its own knowledge.db under its workspace.
-//! When `cross_workspace_search = true`, this module discovers and queries
-//! all knowledge.db files under the user's agents directory, aggregating
-//! results and deduplicating by title.
+//! In the unified tenant architecture, user knowledge is normally shared via
+//! `owner_dir`, so this module is only needed for legacy or explicitly
+//! isolated per-agent knowledge layouts.
 
 use crate::memory::knowledge_graph::{KnowledgeGraph, KnowledgeNode};
 use std::path::{Path, PathBuf};
@@ -142,7 +138,11 @@ impl CrossWorkspaceKnowledgeIndex {
         }
 
         // Sort by score descending
-        all_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        all_results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         all_results.truncate(limit);
         all_results
     }
@@ -155,11 +155,21 @@ impl CrossWorkspaceKnowledgeIndex {
 
 /// Resolve the agents directory from a workspace path.
 ///
-/// On cloud, the structure is typically:
-/// `/opt/huanxing/agents/<agent_id>/` — each agent is a subdirectory.
-/// So `agents_dir` = parent of `workspace_dir`.
+/// Supports both:
+/// - Unified layout: `{tenant_root}/agents/{agent_id}/workspace/`
+/// - Legacy layout:  `{agents_dir}/{agent_id}/`
 pub fn agents_dir_from_workspace(workspace_dir: &Path) -> Option<PathBuf> {
-    workspace_dir.parent().map(PathBuf::from)
+    let wrapper_dir = workspace_dir.parent()?;
+    if workspace_dir.file_name().and_then(|n| n.to_str()) == Some("workspace") {
+        if wrapper_dir.file_name().and_then(|n| n.to_str()) != Some("workspace") {
+            if let Some(agents_dir) = wrapper_dir.parent() {
+                if agents_dir.file_name().and_then(|n| n.to_str()) == Some("agents") {
+                    return Some(agents_dir.to_path_buf());
+                }
+            }
+        }
+    }
+    Some(wrapper_dir.to_path_buf())
 }
 
 #[cfg(test)]
@@ -237,5 +247,24 @@ mod tests {
         let results = index.search("Same Title", 10);
         // Should only return 1 (deduplicated)
         assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn resolves_agents_dir_from_unified_workspace_layout() {
+        let tmp = TempDir::new().unwrap();
+        let workspace = tmp
+            .path()
+            .join("users")
+            .join("001-tenant-a")
+            .join("agents")
+            .join("default")
+            .join("workspace");
+
+        let agents_dir = agents_dir_from_workspace(&workspace).expect("agents dir");
+
+        assert_eq!(
+            agents_dir,
+            tmp.path().join("users").join("001-tenant-a").join("agents")
+        );
     }
 }

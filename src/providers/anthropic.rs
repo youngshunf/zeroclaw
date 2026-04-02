@@ -929,8 +929,14 @@ impl Provider for AnthropicProvider {
 
         // ── Debug: log raw Anthropic response structure ──
         {
-            let content_types: Vec<&str> = native_response.content.iter().map(|c| c.kind.as_str()).collect();
-            let tool_use_names: Vec<&str> = native_response.content.iter()
+            let content_types: Vec<&str> = native_response
+                .content
+                .iter()
+                .map(|c| c.kind.as_str())
+                .collect();
+            let tool_use_names: Vec<&str> = native_response
+                .content
+                .iter()
                 .filter(|c| c.kind == "tool_use")
                 .filter_map(|c| c.name.as_deref())
                 .collect();

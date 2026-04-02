@@ -1,6 +1,6 @@
 use tauri::{
-    AppHandle, Runtime,
     menu::{Menu, MenuItemBuilder, PredefinedMenuItem},
+    AppHandle, Runtime,
 };
 
 pub fn create_tray_menu<R: Runtime>(app: &AppHandle<R>) -> Result<Menu<R>, tauri::Error> {

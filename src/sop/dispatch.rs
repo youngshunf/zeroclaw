@@ -269,7 +269,11 @@ impl SopCronCache {
 
         for sop in eng.sops() {
             for trigger in &sop.triggers {
-                if let super::types::SopTrigger::Cron { expression, payload } = trigger {
+                if let super::types::SopTrigger::Cron {
+                    expression,
+                    payload,
+                } = trigger
+                {
                     // Normalize 5-field crontab to 6-field (prepend seconds)
                     let normalized = match crate::cron::normalize_expression(expression) {
                         Ok(n) => n,
@@ -283,7 +287,12 @@ impl SopCronCache {
                     };
                     match normalized.parse::<cron::Schedule>() {
                         Ok(schedule) => {
-                            schedules.push((sop.name.clone(), expression.clone(), payload.clone(), schedule));
+                            schedules.push((
+                                sop.name.clone(),
+                                expression.clone(),
+                                payload.clone(),
+                                schedule,
+                            ));
                         }
                         Err(e) => {
                             warn!(

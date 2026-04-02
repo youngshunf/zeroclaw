@@ -77,8 +77,7 @@ impl Tool for SopExecuteTool {
         };
 
         // Lock engine, ensure SOPs loaded for current tenant, start run
-        let ws = crate::tools::get_active_workspace()
-            .unwrap_or_else(|| self.workspace_dir.clone());
+        let ws = crate::tools::get_active_workspace().unwrap_or_else(|| self.workspace_dir.clone());
         let (action, run_snapshot) = {
             let mut engine = self
                 .engine

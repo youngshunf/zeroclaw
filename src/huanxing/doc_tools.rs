@@ -89,7 +89,7 @@ impl Tool for HxFolderTree {
                     success: false,
                     output: String::new(),
                     error: Some(e),
-                })
+                });
             }
         };
         match self
@@ -154,7 +154,7 @@ impl Tool for HxFolderCreate {
                     success: false,
                     output: String::new(),
                     error: Some(e),
-                })
+                });
             }
         };
         let mut body = json!({
@@ -229,7 +229,7 @@ impl Tool for HxFolderDelete {
                     success: false,
                     output: String::new(),
                     error: Some(e),
-                })
+                });
             }
         };
         let folder_id = args["folder_id"].as_i64().unwrap_or(0);
@@ -295,7 +295,7 @@ impl Tool for HxFolderMove {
                     success: false,
                     output: String::new(),
                     error: Some(e),
-                })
+                });
             }
         };
         let folder_id = args["folder_id"].as_i64().unwrap_or(0);
@@ -367,7 +367,7 @@ impl Tool for HxDocList {
                     success: false,
                     output: String::new(),
                     error: Some(e),
-                })
+                });
             }
         };
         let mut params: Vec<(&str, &str)> = Vec::new();
@@ -435,7 +435,7 @@ impl Tool for HxDocGet {
                     success: false,
                     output: String::new(),
                     error: Some(e),
-                })
+                });
             }
         };
         let doc_id = args["doc_id"].as_i64().unwrap_or(0);
@@ -502,7 +502,7 @@ impl Tool for HxDocCreate {
                     success: false,
                     output: String::new(),
                     error: Some(e),
-                })
+                });
             }
         };
         let tags: Vec<&str> = args["tags"]
@@ -589,7 +589,7 @@ impl Tool for HxDocUpdate {
                     success: false,
                     output: String::new(),
                     error: Some(e),
-                })
+                });
             }
         };
         let doc_id = args["doc_id"].as_i64().unwrap_or(0);
@@ -670,7 +670,7 @@ impl Tool for HxDocDelete {
                     success: false,
                     output: String::new(),
                     error: Some(e),
-                })
+                });
             }
         };
         let doc_id = args["doc_id"].as_i64().unwrap_or(0);
@@ -734,7 +734,7 @@ impl Tool for HxDocMove {
                     success: false,
                     output: String::new(),
                     error: Some(e),
-                })
+                });
             }
         };
         let doc_id = args["doc_id"].as_i64().unwrap_or(0);
@@ -800,7 +800,7 @@ impl Tool for HxDocShare {
                     success: false,
                     output: String::new(),
                     error: Some(e),
-                })
+                });
             }
         };
         let doc_id = args["doc_id"].as_i64().unwrap_or(0);

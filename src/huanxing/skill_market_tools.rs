@@ -8,7 +8,7 @@ use super::registry::RegistryLoader;
 use crate::security::SecurityPolicy;
 use crate::tools::traits::{Tool, ToolResult};
 use async_trait::async_trait;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -55,7 +55,7 @@ fn invalidate_current_user(slot: &RouterSlot, fallback_ws: &Path) {
 
 /// Get the effective workspace dir for the current tenant.
 /// 多租户模式下从 task-local ACTIVE_WORKSPACE 读取 per-tenant 目录；
-/// 非多租户模式下（CLI/单机）回退到工具构建时传入的 workspace_dir（agents_dir）。
+/// 非多租户模式下（CLI/单机）回退到工具构建时传入的 workspace_dir。
 fn tenant_workspace(fallback: &Path) -> PathBuf {
     crate::tools::get_active_workspace().unwrap_or_else(|| fallback.to_path_buf())
 }
@@ -278,7 +278,7 @@ impl Tool for HxSkillInfo {
                     success: false,
                     output: String::new(),
                     error: Some("缺少 skill_id 参数".to_string()),
-                })
+                });
             }
         };
 
@@ -289,7 +289,7 @@ impl Tool for HxSkillInfo {
                     success: false,
                     output: String::new(),
                     error: Some(format!("技能 '{skill_id}' 不存在")),
-                })
+                });
             }
         };
 
@@ -396,7 +396,7 @@ impl Tool for HxSkillInstall {
                     success: false,
                     output: String::new(),
                     error: Some("缺少 skill_id 参数".to_string()),
-                })
+                });
             }
         };
         let accept_risk = args
@@ -412,7 +412,7 @@ impl Tool for HxSkillInstall {
                     success: false,
                     output: String::new(),
                     error: Some(format!("技能 '{skill_id}' 不存在")),
-                })
+                });
             }
         };
 
@@ -498,7 +498,7 @@ impl Tool for HxSkillInstall {
                     success: false,
                     output: String::new(),
                     error: Some(format!("技能 '{}' 的文件在 hub 仓库中未找到", skill_id)),
-                })
+                });
             }
         };
 
@@ -617,7 +617,7 @@ impl Tool for HxSkillUninstall {
                     success: false,
                     output: String::new(),
                     error: Some("缺少 skill_id 参数".to_string()),
-                })
+                });
             }
         };
 
@@ -705,7 +705,8 @@ impl Tool for HxSkillList {
 
         // 收集私有技能 ID（来自 agent workspace）
         let private_skills_dir = ws.join("skills");
-        let mut private_skill_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut private_skill_ids: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
 
         if private_skills_dir.exists() {
             if let Ok(mut entries) = tokio::fs::read_dir(&private_skills_dir).await {
@@ -778,7 +779,12 @@ impl Tool for HxSkillList {
 
         // 公共技能（标记 source=common，已可直接使用，无需安装）
         for skill_id in &common_skill_ids {
-            let skill_path = self.common_skills_dir.as_ref().unwrap().join("skills").join(skill_id);
+            let skill_path = self
+                .common_skills_dir
+                .as_ref()
+                .unwrap()
+                .join("skills")
+                .join(skill_id);
             let installed_ver = read_manifest_version(&skill_path)
                 .await
                 .unwrap_or_else(|| "unknown".to_string());

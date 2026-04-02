@@ -1,10 +1,10 @@
-use std::sync::Arc;
 use async_trait::async_trait;
+use std::sync::Arc;
 
 use crate::channels::context_resolver::MessageContextResolver;
 use crate::config::Config;
 use crate::hooks::{HookHandler, HookResult};
-use crate::huanxing::voice::{auto_synthesize_voice_markers, HxVoiceConfig};
+use crate::huanxing::voice::{HxVoiceConfig, auto_synthesize_voice_markers};
 
 /// Hook that intercepts outgoing messages containing `[VOICE:...]` markers,
 /// synthesizes the audio via TTS, and downloads the file into the tenant's workspace.
@@ -46,7 +46,8 @@ impl HookHandler for VoiceSynthesisHook {
         let msg_ctx = self.resolver.resolve(&channel, &recipient).await;
 
         // perform the synthesis using existing business logic
-        let new_content = auto_synthesize_voice_markers(&content, voice_cfg, &msg_ctx.workspace_dir).await;
+        let new_content =
+            auto_synthesize_voice_markers(&content, voice_cfg, &msg_ctx.workspace_dir).await;
 
         HookResult::Continue((channel, recipient, new_content))
     }

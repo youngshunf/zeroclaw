@@ -8,9 +8,7 @@ use crate::huanxing::TenantRouter;
 
 /// Initialize all HuanXing multi-tenant systems, skills sync, and context resolver.
 /// Returns an overriding ContextResolver if successful, otherwise None (fallback to default resolver).
-pub async fn init_tenant_systems(
-    config: &Config,
-) -> Option<Arc<dyn MessageContextResolver>> {
+pub async fn init_tenant_systems(config: &Config) -> Option<Arc<dyn MessageContextResolver>> {
     if !config.huanxing.enabled {
         return None;
     }
@@ -25,10 +23,7 @@ pub async fn init_tenant_systems(
                 if added + updated + removed > 0 {
                     info!(
                         added,
-                        updated,
-                        removed,
-                        skipped,
-                        "Common skills synced from hub"
+                        updated, removed, skipped, "Common skills synced from hub"
                     );
                 }
             }
@@ -51,12 +46,14 @@ pub async fn init_tenant_systems(
             let router = Arc::new(router);
             // 注册全局 router 供 skill_market_tools 失效缓存使用
             crate::huanxing::skill_market_tools::register_global_router(Arc::clone(&router));
-            
+
             // Return MultiTenantResolver to override DefaultContextResolver
             Some(Arc::new(MultiTenantResolver::new(router)) as Arc<dyn MessageContextResolver>)
         }
         Err(e) => {
-            error!("Failed to initialize HuanXing tenant router: {e}; falling back to single-tenant");
+            error!(
+                "Failed to initialize HuanXing tenant router: {e}; falling back to single-tenant"
+            );
             None
         }
     }

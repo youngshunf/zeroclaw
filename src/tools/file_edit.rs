@@ -61,8 +61,7 @@ impl Tool for FileEditTool {
         // Per-request security override (injected by channel message
         // processing via `with_active_security`).  Falls back to the
         // global policy baked into this tool instance.
-        let security = crate::tools::get_active_security()
-            .unwrap_or_else(|| self.security.clone());
+        let security = crate::tools::get_active_security().unwrap_or_else(|| self.security.clone());
 
         let old_string = args
             .get("old_string")
@@ -136,10 +135,7 @@ impl Tool for FileEditTool {
             return Ok(ToolResult {
                 success: false,
                 output: String::new(),
-                error: Some(
-                    security
-                        .resolved_path_violation_message(&resolved_parent),
-                ),
+                error: Some(security.resolved_path_violation_message(&resolved_parent)),
             });
         }
 
@@ -157,10 +153,7 @@ impl Tool for FileEditTool {
             return Ok(ToolResult {
                 success: false,
                 output: String::new(),
-                error: Some(
-                    security
-                        .runtime_config_violation_message(&resolved_target),
-                ),
+                error: Some(security.runtime_config_violation_message(&resolved_target)),
             });
         }
 

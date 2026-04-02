@@ -109,8 +109,7 @@ impl Tool for SopAdvanceTool {
         };
 
         // Lock engine, ensure SOPs loaded for current tenant, advance step
-        let ws = crate::tools::get_active_workspace()
-            .unwrap_or_else(|| self.workspace_dir.clone());
+        let ws = crate::tools::get_active_workspace().unwrap_or_else(|| self.workspace_dir.clone());
         let (action, step_result_ok, finished_run) = {
             let mut engine = self
                 .engine
@@ -251,7 +250,7 @@ async fn notify_hasn_owner(
     let api_key = std::fs::read_to_string(&api_key_path)?.trim().to_string();
     let identity: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&identity_path)?)?;
-        
+
     let owner_star_id = match identity["owner_star_id"].as_str() {
         Some(o) if !o.is_empty() => o.to_string(),
         _ => return Ok(()), // no owner to notify
@@ -259,7 +258,10 @@ async fn notify_hasn_owner(
 
     let duration = match (&run.completed_at, &run.started_at) {
         (Some(c), s) => {
-            if let (Ok(ct), Ok(st)) = (chrono::DateTime::parse_from_rfc3339(c), chrono::DateTime::parse_from_rfc3339(s)) {
+            if let (Ok(ct), Ok(st)) = (
+                chrono::DateTime::parse_from_rfc3339(c),
+                chrono::DateTime::parse_from_rfc3339(s),
+            ) {
                 let diff = ct - st;
                 format!("{}分{}秒", diff.num_minutes(), diff.num_seconds() % 60)
             } else {
@@ -271,10 +273,7 @@ async fn notify_hasn_owner(
 
     let summary = format!(
         "✅ 工作流已自动完成：**{}**\n\n📌 运行 ID: `{}`\n📊 总步骤数: {}\n⏱ 耗时: {}\n",
-        run.sop_name,
-        run.run_id,
-        run.total_steps,
-        duration,
+        run.sop_name, run.run_id, run.total_steps, duration,
     );
 
     let url = format!("{}/api/v1/hasn/messages/send", api_base);
@@ -285,7 +284,7 @@ async fn notify_hasn_owner(
         .json(&serde_json::json!({ "to": owner_star_id, "content": summary, "content_type": 1 }))
         .send()
         .await?;
-        
+
     if !resp.status().is_success() {
         anyhow::bail!("HASN API returned error status: {}", resp.status());
     }

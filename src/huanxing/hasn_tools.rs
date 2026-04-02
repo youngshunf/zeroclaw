@@ -39,8 +39,8 @@ fn read_hasn_creds(workspace: &std::path::Path) -> Option<(String, String, Strin
     Some((api_key, hasn_id, star_id))
 }
 
-fn resolve_workspace(agents_dir: &std::path::Path, agent_id: &str) -> PathBuf {
-    crate::tools::get_active_workspace().unwrap_or_else(|| agents_dir.join(agent_id))
+fn resolve_workspace(fallback_workspace: &std::path::Path, _agent_id: &str) -> PathBuf {
+    crate::tools::get_active_workspace().unwrap_or_else(|| fallback_workspace.to_path_buf())
 }
 
 // ═══════════════════════════════════════════════════════
@@ -51,15 +51,15 @@ fn resolve_workspace(agents_dir: &std::path::Path, agent_id: &str) -> PathBuf {
 
 pub struct HasnSend {
     api: ApiClient,
-    agents_dir: PathBuf,
+    workspace_dir: PathBuf,
     hasn_base_url: String,
 }
 
 impl HasnSend {
-    pub fn new(api: ApiClient, agents_dir: PathBuf, hasn_base_url: String) -> Self {
+    pub fn new(api: ApiClient, workspace_dir: PathBuf, hasn_base_url: String) -> Self {
         Self {
             api,
-            agents_dir,
+            workspace_dir,
             hasn_base_url,
         }
     }
@@ -89,7 +89,7 @@ impl Tool for HasnSend {
         let to = args["to"].as_str().unwrap_or_default();
         let message = args["message"].as_str().unwrap_or_default();
 
-        let workspace = resolve_workspace(&self.agents_dir, agent_id);
+        let workspace = resolve_workspace(&self.workspace_dir, agent_id);
         let (api_key, _hasn_id, _star_id) = match read_hasn_creds(&workspace) {
             Some(c) => c,
             None => {
@@ -97,7 +97,7 @@ impl Tool for HasnSend {
                     success: false,
                     output: String::new(),
                     error: Some("未找到 HASN 凭证。请先完成 HASN 身份注册。".to_string()),
-                })
+                });
             }
         };
 
@@ -147,14 +147,14 @@ impl Tool for HasnSend {
 // ── hasn_contacts ────────────────────────────────────
 
 pub struct HasnContacts {
-    agents_dir: PathBuf,
+    workspace_dir: PathBuf,
     hasn_base_url: String,
 }
 
 impl HasnContacts {
-    pub fn new(agents_dir: PathBuf, hasn_base_url: String) -> Self {
+    pub fn new(workspace_dir: PathBuf, hasn_base_url: String) -> Self {
         Self {
-            agents_dir,
+            workspace_dir,
             hasn_base_url,
         }
     }
@@ -182,7 +182,7 @@ impl Tool for HasnContacts {
         let agent_id = args["agent_id"].as_str().unwrap_or_default();
         let rt = args["relation_type"].as_str().unwrap_or("social");
 
-        let workspace = resolve_workspace(&self.agents_dir, agent_id);
+        let workspace = resolve_workspace(&self.workspace_dir, agent_id);
         let (api_key, _, _) = match read_hasn_creds(&workspace) {
             Some(c) => c,
             None => {
@@ -190,7 +190,7 @@ impl Tool for HasnContacts {
                     success: false,
                     output: String::new(),
                     error: Some("未找到 HASN 凭证。".to_string()),
-                })
+                });
             }
         };
 
@@ -224,14 +224,14 @@ impl Tool for HasnContacts {
 // ── hasn_add_friend ──────────────────────────────────
 
 pub struct HasnAddFriend {
-    agents_dir: PathBuf,
+    workspace_dir: PathBuf,
     hasn_base_url: String,
 }
 
 impl HasnAddFriend {
-    pub fn new(agents_dir: PathBuf, hasn_base_url: String) -> Self {
+    pub fn new(workspace_dir: PathBuf, hasn_base_url: String) -> Self {
         Self {
-            agents_dir,
+            workspace_dir,
             hasn_base_url,
         }
     }
@@ -261,7 +261,7 @@ impl Tool for HasnAddFriend {
         let star_id = args["star_id"].as_str().unwrap_or_default();
         let message = args["message"].as_str().unwrap_or("");
 
-        let workspace = resolve_workspace(&self.agents_dir, agent_id);
+        let workspace = resolve_workspace(&self.workspace_dir, agent_id);
         let (api_key, _, _) = match read_hasn_creds(&workspace) {
             Some(c) => c,
             None => {
@@ -269,7 +269,7 @@ impl Tool for HasnAddFriend {
                     success: false,
                     output: String::new(),
                     error: Some("未找到 HASN 凭证。".to_string()),
-                })
+                });
             }
         };
 
@@ -307,14 +307,14 @@ impl Tool for HasnAddFriend {
 // ── hasn_inbox ───────────────────────────────────────
 
 pub struct HasnInbox {
-    agents_dir: PathBuf,
+    workspace_dir: PathBuf,
     hasn_base_url: String,
 }
 
 impl HasnInbox {
-    pub fn new(agents_dir: PathBuf, hasn_base_url: String) -> Self {
+    pub fn new(workspace_dir: PathBuf, hasn_base_url: String) -> Self {
         Self {
-            agents_dir,
+            workspace_dir,
             hasn_base_url,
         }
     }
@@ -340,7 +340,7 @@ impl Tool for HasnInbox {
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         let agent_id = args["agent_id"].as_str().unwrap_or_default();
 
-        let workspace = resolve_workspace(&self.agents_dir, agent_id);
+        let workspace = resolve_workspace(&self.workspace_dir, agent_id);
         let (api_key, _, _) = match read_hasn_creds(&workspace) {
             Some(c) => c,
             None => {
@@ -348,7 +348,7 @@ impl Tool for HasnInbox {
                     success: false,
                     output: String::new(),
                     error: Some("未找到 HASN 凭证。".to_string()),
-                })
+                });
             }
         };
 
@@ -379,14 +379,14 @@ impl Tool for HasnInbox {
 // ── hasn_respond_request ─────────────────────────────
 
 pub struct HasnRespondRequest {
-    agents_dir: PathBuf,
+    workspace_dir: PathBuf,
     hasn_base_url: String,
 }
 
 impl HasnRespondRequest {
-    pub fn new(agents_dir: PathBuf, hasn_base_url: String) -> Self {
+    pub fn new(workspace_dir: PathBuf, hasn_base_url: String) -> Self {
         Self {
-            agents_dir,
+            workspace_dir,
             hasn_base_url,
         }
     }
@@ -424,7 +424,7 @@ impl Tool for HasnRespondRequest {
             });
         }
 
-        let workspace = resolve_workspace(&self.agents_dir, agent_id);
+        let workspace = resolve_workspace(&self.workspace_dir, agent_id);
         let (api_key, _, _) = match read_hasn_creds(&workspace) {
             Some(c) => c,
             None => {
@@ -432,7 +432,7 @@ impl Tool for HasnRespondRequest {
                     success: false,
                     output: String::new(),
                     error: Some("未找到 HASN 凭证。".to_string()),
-                })
+                });
             }
         };
 
@@ -467,5 +467,19 @@ impl Tool for HasnRespondRequest {
                 error: Some(format!("操作失败: {e}")),
             }),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_workspace;
+    use std::path::Path;
+
+    #[test]
+    fn resolve_workspace_uses_workspace_fallback_directly() {
+        let fallback = Path::new("/tmp/fallback-workspace");
+        let resolved = resolve_workspace(fallback, "agent-a");
+
+        assert_eq!(resolved, fallback);
     }
 }

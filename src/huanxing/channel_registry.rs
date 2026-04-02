@@ -34,13 +34,18 @@ pub fn get_live_channel(name: &str) -> Option<Arc<dyn Channel>> {
         .cloned()
 }
 
-fn inbound_message_queue() -> &'static Mutex<Option<tokio::sync::mpsc::Sender<crate::channels::traits::ChannelMessage>>> {
-    static QUEUE: OnceLock<Mutex<Option<tokio::sync::mpsc::Sender<crate::channels::traits::ChannelMessage>>>> = OnceLock::new();
+fn inbound_message_queue()
+-> &'static Mutex<Option<tokio::sync::mpsc::Sender<crate::channels::traits::ChannelMessage>>> {
+    static QUEUE: OnceLock<
+        Mutex<Option<tokio::sync::mpsc::Sender<crate::channels::traits::ChannelMessage>>>,
+    > = OnceLock::new();
     QUEUE.get_or_init(|| Mutex::new(None))
 }
 
 /// Register the global inbound message queue for Heartbeat tasks to dispatch synthetic messages.
-pub fn register_inbound_queue(tx: tokio::sync::mpsc::Sender<crate::channels::traits::ChannelMessage>) {
+pub fn register_inbound_queue(
+    tx: tokio::sync::mpsc::Sender<crate::channels::traits::ChannelMessage>,
+) {
     let mut guard = inbound_message_queue()
         .lock()
         .unwrap_or_else(|e| e.into_inner());
@@ -48,7 +53,8 @@ pub fn register_inbound_queue(tx: tokio::sync::mpsc::Sender<crate::channels::tra
 }
 
 /// Get the global inbound message queue to dispatch synthetic messages.
-pub fn get_inbound_queue() -> Option<tokio::sync::mpsc::Sender<crate::channels::traits::ChannelMessage>> {
+pub fn get_inbound_queue()
+-> Option<tokio::sync::mpsc::Sender<crate::channels::traits::ChannelMessage>> {
     inbound_message_queue()
         .lock()
         .unwrap_or_else(|e| e.into_inner())

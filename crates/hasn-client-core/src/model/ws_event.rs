@@ -53,9 +53,7 @@ pub enum WsEvent {
 
     /// 离线消息批量补推
     #[serde(rename = "OFFLINE_MESSAGES")]
-    OfflineMessages {
-        messages: Vec<serde_json::Value>,
-    },
+    OfflineMessages { messages: Vec<serde_json::Value> },
 
     /// 发送确认
     #[serde(rename = "ACK")]
@@ -84,10 +82,7 @@ pub enum WsEvent {
 
     /// 在线状态变化
     #[serde(rename = "PRESENCE")]
-    Presence {
-        hasn_id: String,
-        status: String,
-    },
+    Presence { hasn_id: String, status: String },
 
     /// 消息撤回通知
     #[serde(rename = "MESSAGE_RECALLED")]
@@ -112,16 +107,16 @@ pub enum WsEvent {
 
     /// 删除 Agent 工作区（中央节点定向下发）
     #[serde(rename = "DEPROVISION_AGENT")]
-    DeprovisionAgent {
-        agent_hasn_id: String,
-    },
+    DeprovisionAgent { agent_hasn_id: String },
 
     /// 错误
     #[serde(rename = "ERROR")]
     Error { code: i32, message: String },
 }
 
-fn default_capacity() -> i32 { 1 }
+fn default_capacity() -> i32 {
+    1
+}
 
 /// REPORT_AGENTS 失败项
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -227,12 +222,17 @@ impl WsMessagePayload {
             self.content.clone()
         };
 
-        let from_owner = self.from_owner_id.clone().unwrap_or_else(|| self.from_id.clone());
+        let from_owner = self
+            .from_owner_id
+            .clone()
+            .unwrap_or_else(|| self.from_id.clone());
         let to_id = self.to_id.clone().unwrap_or_default();
         let to_owner = self.to_owner_id.clone().unwrap_or_else(|| to_id.clone());
 
         HasnEnvelope {
-            id: self.local_id.unwrap_or_else(|| format!("msg_{}", ulid::Ulid::new())),
+            id: self
+                .local_id
+                .unwrap_or_else(|| format!("msg_{}", ulid::Ulid::new())),
             version: "1.0".to_string(),
             msg_type: MessageType::Message,
             from: EntityRef {
@@ -245,10 +245,7 @@ impl WsMessagePayload {
                 entity_type: to_entity_type,
                 owner_id: to_owner,
             },
-            content: MessageContent {
-                content_type,
-                body,
-            },
+            content: MessageContent { content_type, body },
             context: MessageContext {
                 conversation_id: self.conversation_id,
                 relation_type: None,
@@ -260,7 +257,9 @@ impl WsMessagePayload {
             },
             metadata: MessageMetadata {
                 priority: Priority::Normal,
-                created_at: self.created_time.unwrap_or_else(|| chrono::Utc::now().to_rfc3339()),
+                created_at: self
+                    .created_time
+                    .unwrap_or_else(|| chrono::Utc::now().to_rfc3339()),
                 server_received_at: None,
             },
         }
@@ -273,21 +272,15 @@ impl WsMessagePayload {
 pub enum WsCommand {
     /// 上报管理的 Agent 列表
     #[serde(rename = "REPORT_AGENTS")]
-    ReportAgents {
-        agents: Vec<AgentReport>,
-    },
+    ReportAgents { agents: Vec<AgentReport> },
 
     /// 动态新增 Agent
     #[serde(rename = "ADD_AGENT")]
-    AddAgent {
-        hasn_id: String,
-    },
+    AddAgent { hasn_id: String },
 
     /// 动态移除 Agent
     #[serde(rename = "REMOVE_AGENT")]
-    RemoveAgent {
-        hasn_id: String,
-    },
+    RemoveAgent { hasn_id: String },
 
     /// 发送消息
     #[serde(rename = "SEND")]

@@ -19,12 +19,7 @@
 //! }
 //! ```
 
-use axum::{
-    extract::State,
-    http::StatusCode,
-    response::IntoResponse,
-    Json,
-};
+use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 use serde::Deserialize;
 use tracing::{error, info};
 
@@ -62,13 +57,10 @@ pub async fn hasn_invoke(
             .into_response();
     }
 
-    // 通过 hasn_id 解析工作区路径
+    // 通过 hasn_id 解析同一套 TenantContext
     let bridge = agent_bridge::global_bridge();
-    let workspace = match bridge
-        .resolve_workspace_by_hasn_id(&state, &req.hasn_id)
-        .await
-    {
-        Some(ws) => ws,
+    let tenant = match bridge.resolve_tenant_by_hasn_id(&state, &req.hasn_id).await {
+        Some(ctx) => ctx,
         None => {
             error!(hasn_id = %req.hasn_id, "HASN invoke: 找不到 Agent 工作区");
             return (
@@ -85,13 +77,13 @@ pub async fn hasn_invoke(
         hasn_id = %req.hasn_id,
         session_id = %req.session_id,
         from_id = %req.from_id,
-        workspace = %workspace.display(),
+        workspace = %tenant.workspace_dir.display(),
         "HASN invoke: 开始处理"
     );
 
     // 调用 Agent
     match bridge
-        .invoke(&state, &workspace, &req.session_id, &req.message)
+        .invoke(&state, &tenant, &req.session_id, &req.message)
         .await
     {
         Ok(result) => {

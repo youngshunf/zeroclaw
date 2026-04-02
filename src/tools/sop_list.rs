@@ -16,7 +16,10 @@ pub struct SopListTool {
 
 impl SopListTool {
     pub fn new(engine: std::sync::Arc<Mutex<SopEngine>>, workspace_dir: PathBuf) -> Self {
-        Self { engine, workspace_dir }
+        Self {
+            engine,
+            workspace_dir,
+        }
     }
 }
 
@@ -46,8 +49,7 @@ impl Tool for SopListTool {
         let filter = args.get("filter").and_then(|v| v.as_str()).unwrap_or("");
         let filter_lower = filter.to_lowercase();
 
-        let ws = crate::tools::get_active_workspace()
-            .unwrap_or_else(|| self.workspace_dir.clone());
+        let ws = crate::tools::get_active_workspace().unwrap_or_else(|| self.workspace_dir.clone());
         let mut engine = self
             .engine
             .lock()

@@ -1764,12 +1764,13 @@ pub fn create_resilient_provider_with_options(
         // fallback endpoint can authenticate.  Named providers (deepseek, openai,
         // etc.) resolve their own credentials via provider-specific env vars and
         // must NOT inherit the primary's key to avoid key-prefix mismatches.
-        let fallback_api_key =
-            if provider_name.starts_with("custom:") || provider_name.starts_with("anthropic-custom:") {
-                api_key
-            } else {
-                None
-            };
+        let fallback_api_key = if provider_name.starts_with("custom:")
+            || provider_name.starts_with("anthropic-custom:")
+        {
+            api_key
+        } else {
+            None
+        };
 
         // When a profile override is present (e.g. "openai-codex:second"),
         // propagate it through `auth_profile_override` so the provider

@@ -191,11 +191,7 @@ impl SyncEngine {
     }
 
     /// 处理 ACK 回执
-    pub fn handle_ack(
-        &self,
-        msg_id: &str,
-        conversation_id: &str,
-    ) -> Result<(), HasnError> {
+    pub fn handle_ack(&self, msg_id: &str, conversation_id: &str) -> Result<(), HasnError> {
         self.db
             .update_message_after_send(msg_id, conversation_id, None)
             .map_err(|e| HasnError::Db(e.to_string()))?;

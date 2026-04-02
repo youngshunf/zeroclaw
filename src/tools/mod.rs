@@ -229,7 +229,7 @@ use std::sync::Arc;
 // per-tenant security policy via `with_active_security`.  Tool
 // implementations call `get_active_security()` to prefer this
 // request-scoped policy over the global one baked into the tool at
-            // request-scoped policy over the global one baked into the tool at
+// request-scoped policy over the global one baked into the tool at
 // construction time.
 
 tokio::task_local! {
@@ -878,9 +878,15 @@ pub fn all_tools_with_runtime(
             root_config.sop.clone(),
         )));
         let ws = workspace_dir.to_path_buf();
-        tool_arcs.push(Arc::new(SopListTool::new(Arc::clone(&sop_engine), ws.clone())));
-        tool_arcs.push(Arc::new(SopExecuteTool::new(Arc::clone(&sop_engine), ws.clone())));
-        
+        tool_arcs.push(Arc::new(SopListTool::new(
+            Arc::clone(&sop_engine),
+            ws.clone(),
+        )));
+        tool_arcs.push(Arc::new(SopExecuteTool::new(
+            Arc::clone(&sop_engine),
+            ws.clone(),
+        )));
+
         // Pass huanxing API base to enable HASN notifications
         #[allow(unused_mut)]
         let mut advance_tool = SopAdvanceTool::new(Arc::clone(&sop_engine), ws.clone());
@@ -891,8 +897,11 @@ pub fn all_tools_with_runtime(
             }
         }
         tool_arcs.push(Arc::new(advance_tool));
-        
-        tool_arcs.push(Arc::new(SopApproveTool::new(Arc::clone(&sop_engine), ws.clone())));
+
+        tool_arcs.push(Arc::new(SopApproveTool::new(
+            Arc::clone(&sop_engine),
+            ws.clone(),
+        )));
         tool_arcs.push(Arc::new(SopStatusTool::new(Arc::clone(&sop_engine), ws)));
     }
 

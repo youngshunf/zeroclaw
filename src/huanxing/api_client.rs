@@ -79,7 +79,10 @@ impl ApiClient {
         if let Ok(v) = reqwest::header::HeaderValue::from_str(&self.server_id) {
             h.insert("X-Server-Id", v);
         }
-        h.insert("X-App-Code", reqwest::header::HeaderValue::from_static("huanxing"));
+        h.insert(
+            "X-App-Code",
+            reqwest::header::HeaderValue::from_static("huanxing"),
+        );
 
         let resp = self
             .client

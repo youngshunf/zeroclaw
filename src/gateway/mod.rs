@@ -882,32 +882,44 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
 
     #[cfg(feature = "huanxing")]
     {
-        if config.huanxing.enabled && config.huanxing.hasn.enabled && config.huanxing.hasn.auto_connect {
-            let base_url = config.huanxing.hasn.central_url.clone()
-                .unwrap_or_else(|| {
-                    format!("{}/api/v1/hasn/ws/node", config.huanxing.hasn_url()
+        if config.huanxing.enabled
+            && config.huanxing.hasn.enabled
+            && config.huanxing.hasn.auto_connect
+        {
+            let base_url = config.huanxing.hasn.central_url.clone().unwrap_or_else(|| {
+                format!(
+                    "{}/api/v1/hasn/ws/node",
+                    config
+                        .huanxing
+                        .hasn_url()
                         .replace("https://", "wss://")
-                        .replace("http://", "ws://"))
-                });
-            
+                        .replace("http://", "ws://")
+                )
+            });
+
             let auth_param = if let Some(api_key) = &config.huanxing.hasn.api_key {
                 format!("?api_key={}", api_key)
             } else {
                 "".to_string()
             };
-            
+
             if !auth_param.is_empty() {
                 let url = format!("{}{}", base_url, auth_param);
                 let st = std::sync::Arc::new(state.clone());
                 let max_retries = config.huanxing.hasn.max_retries;
                 tokio::spawn(async move {
                     tracing::info!("[HASN] Gateway启动，触发 HASN 自动连接...");
-                    if let Err(e) = crate::huanxing::hasn_connector::global_connector().connect_with_retry(&url, max_retries, st).await {
+                    if let Err(e) = crate::huanxing::hasn_connector::global_connector()
+                        .connect_with_retry(&url, max_retries, st)
+                        .await
+                    {
                         tracing::error!("[HASN] 自动连接 HASN 中央节点失败: {}", e);
                     }
                 });
             } else {
-                tracing::warn!("[HASN] HASN 已启用 auto_connect，但未配置 API Key，无法建立认证连接");
+                tracing::warn!(
+                    "[HASN] HASN 已启用 auto_connect，但未配置 API Key，无法建立认证连接"
+                );
             }
         }
     }
@@ -1033,8 +1045,9 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
     // ── HuanXing SOP API（桌面端，requires huanxing feature）──
     #[cfg(feature = "huanxing")]
     let inner = inner.merge(
-        crate::huanxing::sop_api::sop_routes()
-            .layer(axum::Extension(Arc::new(tokio::sync::Mutex::new(crate::sop::engine::SopEngine::new(config.sop.clone())))))
+        crate::huanxing::sop_api::sop_routes().layer(axum::Extension(Arc::new(
+            tokio::sync::Mutex::new(crate::sop::engine::SopEngine::new(config.sop.clone())),
+        ))),
     );
 
     // ── HuanXing Session REST API（桌面端，requires huanxing feature）──
@@ -1043,13 +1056,22 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
     #[cfg(not(feature = "huanxing"))]
     let inner = inner
         .route("/api/sessions", get(api::handle_api_sessions_list))
-        .route("/api/sessions/running", get(api::handle_api_sessions_running))
+        .route(
+            "/api/sessions/running",
+            get(api::handle_api_sessions_running),
+        )
         .route(
             "/api/sessions/{id}/messages",
             get(api::handle_api_session_messages),
         )
-        .route("/api/sessions/{id}", delete(api::handle_api_session_delete).put(api::handle_api_session_rename))
-        .route("/api/sessions/{id}/state", get(api::handle_api_session_state));
+        .route(
+            "/api/sessions/{id}",
+            delete(api::handle_api_session_delete).put(api::handle_api_session_rename),
+        )
+        .route(
+            "/api/sessions/{id}/state",
+            get(api::handle_api_session_state),
+        );
 
     // ── HuanXing Hub 同步 API（requires huanxing feature）──
     #[cfg(feature = "huanxing")]

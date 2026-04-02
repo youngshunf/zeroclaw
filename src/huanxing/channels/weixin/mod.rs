@@ -48,11 +48,16 @@ impl Channel for WeixinChannel {
                 _ => types::UPLOAD_MEDIA_TYPE_FILE,
             };
 
-            let upload = cdn::upload_media_to_cdn(self, &attachment.data, &message.recipient, media_type).await?;
+            let upload =
+                cdn::upload_media_to_cdn(self, &attachment.data, &message.recipient, media_type)
+                    .await?;
 
             let cdn_media = types::CdnMedia {
                 encrypt_query_param: Some(upload.download_encrypted_query_param),
-                aes_key: Some(base64::engine::general_purpose::STANDARD.encode(hex::decode(&upload.aeskey_hex).unwrap_or_default())),
+                aes_key: Some(
+                    base64::engine::general_purpose::STANDARD
+                        .encode(hex::decode(&upload.aeskey_hex).unwrap_or_default()),
+                ),
                 encrypt_type: Some(1),
                 full_url: None,
             };
@@ -96,7 +101,10 @@ impl Channel for WeixinChannel {
         Ok(())
     }
 
-    async fn listen(&self, tx: tokio::sync::mpsc::Sender<crate::channels::traits::ChannelMessage>) -> anyhow::Result<()> {
+    async fn listen(
+        &self,
+        tx: tokio::sync::mpsc::Sender<crate::channels::traits::ChannelMessage>,
+    ) -> anyhow::Result<()> {
         let channel = Arc::new(self.clone());
         tokio::spawn(async move {
             api::get_updates_loop(channel, tx).await;

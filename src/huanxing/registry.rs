@@ -202,11 +202,7 @@ impl RegistryLoader {
     pub async fn skill_dir(&self, skill_id: &str) -> Option<PathBuf> {
         let entry = self.find_skill(skill_id).await?;
         let dir = self.hub_dir.join(&entry.path);
-        if dir.exists() {
-            Some(dir)
-        } else {
-            None
-        }
+        if dir.exists() { Some(dir) } else { None }
     }
 
     /// Search skills by query string (matches name, description, tags).

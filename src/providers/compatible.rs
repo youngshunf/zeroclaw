@@ -2128,8 +2128,8 @@ impl Provider for OpenAiCompatibleProvider {
                 }
             }
         }
-        let message = merged_message
-            .ok_or_else(|| anyhow::anyhow!("No response from {}", self.name))?;
+        let message =
+            merged_message.ok_or_else(|| anyhow::anyhow!("No response from {}", self.name))?;
 
         let mut result = Self::parse_native_response(message);
         result.usage = usage;

@@ -17,10 +17,10 @@
 use crate::gateway::AppState;
 use axum::{
     extract::{
-        ws::{Message, WebSocket},
         Query, State, WebSocketUpgrade,
+        ws::{Message, WebSocket},
     },
-    http::{header, HeaderMap},
+    http::{HeaderMap, header},
     response::IntoResponse,
 };
 use futures_util::{SinkExt, StreamExt};
@@ -258,7 +258,10 @@ async fn handle_socket(socket: WebSocket, state: AppState, default_session_id: O
 
                 // Persist user message — prefer per-session backend, fall back to global
                 {
-                    let backend = session.session_backend.as_ref().or(state.session_backend.as_ref());
+                    let backend = session
+                        .session_backend
+                        .as_ref()
+                        .or(state.session_backend.as_ref());
                     if let Some(b) = backend {
                         let user_msg = crate::providers::ChatMessage::user(&content);
                         let _ = b.append(&session.session_key, &user_msg);
@@ -268,7 +271,10 @@ async fn handle_socket(socket: WebSocket, state: AppState, default_session_id: O
                 process_chat_message(&state, session, &mut sender, &content, &sid).await;
             }
 
-            InboundFrame::HistoryRequest { session_id, agent: agent_name } => {
+            InboundFrame::HistoryRequest {
+                session_id,
+                agent: agent_name,
+            } => {
                 let sid = session_id.unwrap_or_else(|| conn_default_sid.clone());
                 let session_key = format!("{GW_SESSION_PREFIX}{sid}");
 
@@ -278,13 +284,19 @@ async fn handle_socket(socket: WebSocket, state: AppState, default_session_id: O
                 let messages: Vec<crate::providers::ChatMessage> = {
                     let backend = if let Some(sess) = sessions.get(&sid) {
                         // Session already initialised — reuse its backend
-                        sess.session_backend.clone().or_else(|| state.session_backend.clone())
+                        sess.session_backend
+                            .clone()
+                            .or_else(|| state.session_backend.clone())
                     } else {
-                        // No active session — try to resolve from agent workspace
-                        resolve_session_backend_for_agent(
-                            agent_name.as_deref(),
-                            &state,
-                        ).or_else(|| state.session_backend.clone())
+                        // No active session — resolve the same TenantContext path used by init
+                        let config = state.config.lock().clone();
+                        match resolve_tenant_context(agent_name.as_deref(), &config).await {
+                            Ok(Some(tenant)) => tenant
+                                .session_manager
+                                .clone()
+                                .or_else(|| state.session_backend.clone()),
+                            Ok(None) | Err(_) => state.session_backend.clone(),
+                        }
                     };
                     backend.map(|b| b.load(&session_key)).unwrap_or_default()
                 };
@@ -319,49 +331,14 @@ async fn handle_socket(socket: WebSocket, state: AppState, default_session_id: O
     }
 }
 
-fn resolve_agent_workspace(
+async fn resolve_tenant_context(
     agent_name: Option<&str>,
     config: &crate::config::Config,
-) -> Option<std::path::PathBuf> {
-    if !config.huanxing.enabled {
-        return None;
-    }
-    let agent_id = agent_name?;
-    
-    // Unified Node Architecture path resolution
-    let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
-    let db_path = config.huanxing.resolve_db_path(config_dir);
-    
-    // Try to resolve using db, fallback to default `None` for tenant_dir if not found
-    let mut tenant_dir = None;
-    if let Ok(db) = crate::huanxing::db::TenantDb::open(&db_path) {
-        // Since agent_name could be either hasn_id (from network) or agent_id (from local UI), try both
-        if let Ok(Some(record)) = tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(db.find_by_agent_id(agent_id))) {
-            tenant_dir = record.tenant_dir;
-        } else if let Ok(Some(record)) = tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(db.find_by_hasn_id(agent_id))) {
-            tenant_dir = record.tenant_dir;
-        }
-    }
-    
-    // Fallback to None if not found in db. `resolve_agent_workspace` handles `tenant_dir = None`.
-    let workspace = config.huanxing.resolve_agent_workspace(
-        config_dir,
-        tenant_dir.as_deref(),
-        agent_id,
-    );
-    
-    workspace.exists().then_some(workspace)
-}
-
-/// Resolve a per-agent session backend.  Returns `None` when multi-tenant
-/// is disabled, agent is unknown, or backend creation fails.
-fn resolve_session_backend_for_agent(
-    agent_name: Option<&str>,
-    state: &AppState,
-) -> Option<std::sync::Arc<dyn crate::channels::session_backend::SessionBackend>> {
-    let config = state.config.lock().clone();
-    let workspace = resolve_agent_workspace(agent_name, &config)?;
-    crate::huanxing::tenant::create_session_backend_for_workspace(&workspace, &config)
+) -> anyhow::Result<Option<crate::huanxing::TenantContext>> {
+    let Some(agent_name) = agent_name else {
+        return Ok(None);
+    };
+    crate::huanxing::TenantContext::load_by_agent_or_hasn(config, agent_name).await
 }
 
 /// 初始化一个新的 AgentSession，从持久化存储恢复历史。
@@ -376,22 +353,21 @@ async fn init_agent_session(
 ) -> anyhow::Result<AgentSession> {
     let config = state.config.lock().clone();
 
-    // Resolve per-agent workspace (multi-tenant) or None (single-tenant)
-    let agent_workspace = resolve_agent_workspace(agent_name, &config);
+    let tenant_context = resolve_tenant_context(agent_name, &config).await?;
 
     // Create per-agent session backend (or fall back to global)
-    let per_user_backend = if agent_workspace.is_some() {
-        resolve_session_backend_for_agent(agent_name, state)
+    let per_user_backend = if let Some(ref tenant) = tenant_context {
+        tenant
+            .session_manager
+            .clone()
             .or_else(|| state.session_backend.clone())
     } else {
         state.session_backend.clone()
     };
 
-    // Create Agent — use per-agent workspace when available
-    let mut agent = if let Some(ref workspace) = agent_workspace {
-        let mut agent_config = config.clone();
-        agent_config.workspace_dir = workspace.clone();
-        crate::agent::Agent::from_config(&agent_config).await?
+    // Create Agent — use TenantContext when available
+    let mut agent = if let Some(ref tenant) = tenant_context {
+        tenant.create_agent().await?
     } else {
         crate::agent::Agent::from_config(&config).await?
     };
@@ -422,7 +398,10 @@ async fn init_agent_session(
         session_key,
         session_backend: per_user_backend,
         ws_observer,
-        agent_id: agent_name.map(|s| s.to_string()),
+        agent_id: tenant_context
+            .as_ref()
+            .map(|tenant| tenant.agent_id.clone())
+            .or_else(|| agent_name.map(|s| s.to_string())),
     })
 }
 
@@ -452,7 +431,10 @@ async fn process_chat_message(
         Ok(response) => {
             // Persist assistant reply — prefer per-session backend, fall back to global
             {
-                let backend = session.session_backend.as_ref().or(state.session_backend.as_ref());
+                let backend = session
+                    .session_backend
+                    .as_ref()
+                    .or(state.session_backend.as_ref());
                 if let Some(b) = backend {
                     let assistant_msg = crate::providers::ChatMessage::assistant(&response);
                     let _ = b.append(&session.session_key, &assistant_msg);
@@ -465,7 +447,10 @@ async fn process_chat_message(
             // huanxing-specific `take_records()` method.
             // Emit tool_call / tool_result frames collected by WsObserver
             if let Some(ref obs) = session.ws_observer {
-                if let Some(ws_obs) = obs.as_any().downcast_ref::<crate::huanxing::ws_observer::WsObserver>() {
+                if let Some(ws_obs) = obs
+                    .as_any()
+                    .downcast_ref::<crate::huanxing::ws_observer::WsObserver>()
+                {
                     let records = ws_obs.take_records();
                     for (i, rec) in records.iter().enumerate() {
                         let call_id = format!("c{i}_{}", rec.name);
