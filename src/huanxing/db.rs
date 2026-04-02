@@ -70,6 +70,15 @@ pub struct RoutingRecord {
     pub created_at: Option<String>,
 }
 
+/// Agent record.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AgentRecord {
+    pub agent_id: String,
+    pub template: String,
+    pub star_name: Option<String>,
+    pub hasn_id: Option<String>,
+}
+
 /// Channel binding record.
 #[derive(Debug, Clone)]
 pub struct ChannelRecord {
@@ -193,20 +202,10 @@ impl TenantDb {
                 is_new_user   INTEGER DEFAULT 0,
                 created_at    TEXT DEFAULT (datetime('now'))
             );
-            CREATE TABLE IF NOT EXISTS routing (
-                id            INTEGER PRIMARY KEY AUTOINCREMENT,
-                agent_id      TEXT NOT NULL,
-                channel_type  TEXT NOT NULL,
-                peer_id       TEXT NOT NULL,
-                created_at    TEXT DEFAULT (datetime('now')),
-                UNIQUE(channel_type, peer_id)
-            );
-            CREATE INDEX IF NOT EXISTS idx_channels_lookup
-                ON channels(channel_type, peer_id);
             CREATE INDEX IF NOT EXISTS idx_users_phone ON users(phone);
-            CREATE INDEX IF NOT EXISTS idx_users_agent ON users(agent_id);
+            CREATE INDEX IF NOT EXISTS idx_agents_user ON agents(user_id);
             CREATE INDEX IF NOT EXISTS idx_routing_lookup
-                ON routing(channel_type, peer_id);
+                ON routing(channel_type, sender_id);
             ",
         )?;
 
@@ -522,13 +521,12 @@ impl TenantDb {
         Ok(rows)
     }
 
-    /// Bind a new channel to an existing user.
-    pub async fn bind_channel(
+    /// Bind a new channel to an existing user's default agent.
+    pub async fn bind_channel_default(
         &self,
         user_id: &str,
         channel_type: &str,
         peer_id: &str,
-        _peer_name: Option<&str>,
     ) -> Result<()> {
         let conn = self.conn.lock().await;
         
@@ -547,8 +545,45 @@ impl TenantDb {
              VALUES (?1, ?2, ?3, ?4)",
             rusqlite::params![channel_type, peer_id, agent_id, user_id],
         )?;
-        tracing::info!(user_id, channel_type, peer_id, "Channel bound into routing");
+        tracing::info!(user_id, channel_type, peer_id, "Channel bound into routing (default)");
         Ok(())
+    }
+
+    /// Bind a new channel to a specific agent.
+    pub async fn bind_channel_to_agent(
+        &self,
+        user_id: &str,
+        channel_type: &str,
+        peer_id: &str,
+        agent_id: &str,
+    ) -> Result<()> {
+        let conn = self.conn.lock().await;
+
+        conn.execute(
+            "INSERT OR REPLACE INTO routing (channel_type, sender_id, agent_id, user_id)
+             VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![channel_type, peer_id, agent_id, user_id],
+        )?;
+        tracing::info!(user_id, agent_id, channel_type, peer_id, "Channel bound to specific agent");
+        Ok(())
+    }
+
+    pub async fn get_user_agents(&self, user_id: &str) -> Result<Vec<AgentRecord>> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare_cached(
+            "SELECT agent_id, template, star_name, hasn_id FROM agents WHERE user_id = ?1 ORDER BY created_at"
+        )?;
+        let rows = stmt
+            .query_map(rusqlite::params![user_id], |row| {
+                Ok(AgentRecord {
+                    agent_id: row.get(0)?,
+                    template: row.get(1).unwrap_or_default(),
+                    star_name: row.get(2).unwrap_or(None),
+                    hasn_id: row.get(3).unwrap_or(None),
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 
     pub async fn update_user(
@@ -679,6 +714,20 @@ impl TenantDb {
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
         Ok((rows, total))
+    }
+
+    /// Get the default (first) tenant_dir from the database for local desktop mode API fallback.
+    pub async fn get_first_tenant_dir(&self) -> Result<Option<String>> {
+        let conn = self.conn.lock().await;
+        match conn.query_row(
+            "SELECT tenant_dir FROM users ORDER BY created_at ASC LIMIT 1",
+            [],
+            |row| row.get(0)
+        ) {
+            Ok(dir) => Ok(Some(dir)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
     }
 
     /// Get aggregate statistics.

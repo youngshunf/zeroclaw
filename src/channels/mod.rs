@@ -540,7 +540,7 @@ fn conversation_history_key(msg: &traits::ChannelMessage) -> String {
     // NapCat (QQ) sets thread_ts to the per-message ID, which is unique
     // every time — skip it so conversations persist across messages.
     match &msg.thread_ts {
-        Some(tid) if msg.channel != "napcat" && msg.channel != "wechat_pad" && msg.channel != "qqbot" => format!(
+        Some(tid) if msg.channel != "napcat" && msg.channel != "wechat_pad" && msg.channel != "qqbot" && msg.channel != "weixin" => format!(
             "{}_{}_{}_{}",
             msg.channel, msg.reply_target, tid, msg.sender
         ),
@@ -729,6 +729,13 @@ fn channel_delivery_instructions(channel_name: &str) -> Option<&'static str> {
              - For image attachments use markers: [IMAGE:<path-or-url>]\n\
              - Keep messages under 2000 characters to avoid truncation\n\
              - Keep normal text outside markers and never wrap markers in code fences.\n",
+        ),
+        "weixin" => Some(
+            "When responding on WeChat:\n\
+             - Use plain text formatting (WeChat does not support Markdown rendering)\n\
+             - Do NOT use any Markdown syntax (no **, ##, ```, etc.)\n\
+             - Be concise and direct\n\
+             - Keep messages under 2000 characters to avoid truncation\n",
         ),
         _ => None,
     }
@@ -5232,6 +5239,19 @@ fn collect_configured_channels(
         }
     }
 
+    #[cfg(feature = "huanxing")]
+    if let Some(ref weixin_cfg) = config.channels_config.weixin {
+        let channel = crate::huanxing::channels::weixin::WeixinChannel::new(
+            weixin_cfg.bot_token.clone(),
+            weixin_cfg.bot_id.clone(),
+            weixin_cfg.base_url.clone(),
+        );
+        channels.push(ConfiguredChannel {
+            display_name: "Weixin",
+            channel: Arc::new(channel),
+        });
+    }
+
     if let Some(ref ct) = config.channels_config.clawdtalk {
         channels.push(ConfiguredChannel {
             display_name: "ClawdTalk",
@@ -5729,7 +5749,6 @@ pub async fn start_channels(config: Config) -> Result<()> {
             max_backoff_secs,
         ));
     }
-    drop(tx); // Drop our copy so rx closes when all channels stop
 
     let channels_by_name = Arc::new(
         channels
@@ -5739,7 +5758,12 @@ pub async fn start_channels(config: Config) -> Result<()> {
     );
     // Register channels in global registry for plugins/heartbeats
     #[cfg(feature = "huanxing")]
-    crate::huanxing::channel_registry::register_live_channels(&channels_by_name);
+    {
+        crate::huanxing::channel_registry::register_live_channels(&channels_by_name);
+        crate::huanxing::channel_registry::register_inbound_queue(tx.clone());
+    }
+
+    drop(tx); // Drop our copy so rx closes when all channels stop
 
     // Populate the reaction tool's channel map now that channels are initialized.
     if let Some(ref handle) = reaction_handle_ch {

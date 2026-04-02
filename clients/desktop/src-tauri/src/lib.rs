@@ -9,7 +9,7 @@ mod commands;
 mod sidecar;
 mod tray;
 
-use commands::{auth, files, marketplace, zeroclaw};
+use commands::{auth, channels, files, marketplace, zeroclaw};
 use sidecar::SidecarManager;
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
@@ -122,6 +122,12 @@ pub fn run() {
             files::copy_file_to_workspace,
             files::get_workspace_dir,
             files::get_config_dir,
+            // 通道与绑定
+            channels::list_user_agents,
+            channels::bind_channel_to_agent,
+            channels::generate_weixin_qr,
+            channels::poll_weixin_auth_status,
+            channels::save_weixin_credentials,
         ])
         .build(tauri::generate_context!())
         .expect("error while building huanxing desktop");

@@ -19,7 +19,6 @@ use hasn_client_core::ws::HasnWsClient;
 use crate::gateway::AppState;
 use crate::huanxing::agent_bridge;
 use crate::huanxing::db::TenantDb;
-use crate::huanxing::templates::{TemplateEngine, UserInfo};
 
 /// HASN 事件（广播到前端 /ws/hasn-events）
 #[derive(Debug, Clone, serde::Serialize)]
@@ -475,7 +474,7 @@ async fn handle_ws_event(
             // Phase 5: 创建 Agent 工作区 + ADD_AGENT
             let hx_config = state.config.lock().huanxing.clone();
             let config_dir = state.config.lock().config_path.parent().unwrap().to_path_buf();
-            let templates_dir = hx_config.resolve_templates_dir(&config_dir);
+            let _templates_dir = hx_config.resolve_templates_dir(&config_dir);
             let hx_db_path = hx_config.resolve_db_path(&config_dir);
 
             if let Ok(db) = TenantDb::open(&hx_db_path) {
@@ -489,7 +488,7 @@ async fn handle_ws_event(
                     let local_agent_id = format!("{seq:03}-{uname}-cloud");
                     let tenant_dir = format!("{seq:03}-{uname}");
                     
-                    let owner_workspace = st.config.lock().huanxing.resolve_owner_dir(&st.config.lock().config_path.parent().unwrap(), Some(&tenant_dir));
+                    let _owner_workspace = st.config.lock().huanxing.resolve_owner_dir(&st.config.lock().config_path.parent().unwrap(), Some(&tenant_dir));
                     let agent_workspace = st.config.lock().huanxing.resolve_agent_workspace(&st.config.lock().config_path.parent().unwrap(), Some(&tenant_dir), &local_agent_id);
 
                     if let Err(e) = db.save_user_full(
@@ -501,14 +500,28 @@ async fn handle_ws_event(
                     } else {
                         let _ = db.add_routing(&local_agent_id, "hasn", &uname).await;
                         info!("[HASN] 本地 DB 保存成功，开始创建工作区: {}", local_agent_id);
-
-                        let engine = TemplateEngine::new(templates_dir);
-                        let user_info = UserInfo {
-                            nickname: "User", phone: &uname, star_name: "Assistant",
-                            user_id: &uname, agent_id: &local_agent_id, template: "assistant",
+                        let template_base = config_dir.join("hub").join("templates");
+                        let factory = huanxing_agent_factory::AgentFactory::new(config_dir.clone(), None);
+                        let params = huanxing_agent_factory::CreateAgentParams {
+                            tenant_id: tenant_dir.clone(),
+                            template_id: "assistant".to_string(),
+                            agent_name: local_agent_id.clone(),
+                            display_name: "Assistant".to_string(),
+                            is_desktop: false,
+                            user_nickname: "User".to_string(),
+                            provider: None,
+                            api_key: None,
+                            hasn_id: Some(aid.clone()),
                         };
 
-                        match engine.create_workspace(Some(&owner_workspace), &agent_workspace, &user_info, None, None).await {
+                        struct ConnProgress;
+                        impl huanxing_agent_factory::ProgressSink for ConnProgress {
+                            fn on_progress(&self, step: &str, detail: &str) {
+                                tracing::debug!("[HASN PROVISION] {} - {}", step, detail);
+                            }
+                        }
+
+                        match factory.create_local_agent(&template_base, &params, &ConnProgress).await {
                             Ok(_) => {
                                 info!("[HASN] 工作区创建成功。绑定 hasn_id: {}", aid);
                                 let config_path = agent_workspace.join("config.toml");

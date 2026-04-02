@@ -51,8 +51,9 @@ impl SidecarManager {
             .unwrap_or(false);
 
         if !health_ok {
-            eprintln!("[huanxing-desktop] No orphan sidecar found on port {port}");
-            return;
+            eprintln!("[huanxing-desktop] Sidecar health check failed, proceeding to force kill");
+        } else {
+            eprintln!("[huanxing-desktop] Found running sidecar on port {port}, killing...");
         }
 
         eprintln!("[huanxing-desktop] Found orphan sidecar on port {port}, killing...");

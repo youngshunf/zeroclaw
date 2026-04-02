@@ -24,27 +24,35 @@ export interface EntityRef {
 }
 
 export interface MessageContent {
-  type: string; // "text", "tool_call", "image", etc.
-  text?: string;
-  [key: string]: any;
+  content_type: string; // "text", "tool_call", "image", etc.
+  body: any; // E.g. { text: string } or { tool_name: string, ... }
 }
 
 export interface MessageContext {
   conversation_id: string;
   thread_id?: string;
   relation_type?: string;
+  scope?: string;
+  trade_session_id?: string;
+  reply_to?: string;
+  capability_id?: string;
+}
+
+export interface MessageMetadata {
+  priority?: "critical" | "high" | "normal" | "low";
+  created_at: string;
+  server_received_at?: string;
 }
 
 export interface HasnEnvelope {
   id: string;
-  version: "4.0";
+  version: "1.0";
   from: EntityRef;
   to: EntityRef;
-  message_type: string; // "chat", "command", "event"
-  qos: number;
+  type: string; // "message", "capability_request", etc.
   content: MessageContent;
   context: MessageContext;
-  timestamp: string;
+  metadata: MessageMetadata;
   // Legacy fields for backward compatibility during transition
   local_id?: string;
   send_status?: string;
@@ -84,13 +92,13 @@ export interface AgentInfo {
 
 // ---------- 环境检测与路径解析 ----------
 
-import { HUANXING_CONFIG } from '../config';
+import { HUANXING_CONFIG, getHuanxingSession } from '../config';
 
 const CLOUD_API_BASE = `${HUANXING_CONFIG.backendBaseUrl}/api/v1/hasn/app/hasn`;
 const SIDECAR_API_BASE = `${HUANXING_CONFIG.sidecarBaseUrl}/api/v1/hasn`;
 
 async function cloudGet<T>(path: string): Promise<T> {
-  const token = localStorage.getItem("hasn:platform_token");
+  const token = getHuanxingSession()?.accessToken;
   const resp = await fetch(`${CLOUD_API_BASE}${path}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
@@ -100,7 +108,7 @@ async function cloudGet<T>(path: string): Promise<T> {
 }
 
 async function cloudPost<T>(path: string, body: Record<string, unknown>): Promise<T> {
-  const token = localStorage.getItem("hasn:platform_token");
+  const token = getHuanxingSession()?.accessToken;
   const resp = await fetch(`${CLOUD_API_BASE}${path}`, {
     method: "POST",
     headers: {
@@ -141,7 +149,6 @@ export async function hasnConnect(platformToken: string, hasnId: string, starId:
 }
 
 export async function hasnDisconnect(): Promise<void> {
-  localStorage.removeItem("hasn:platform_token");
   await sidecarPost("/disconnect", {});
 }
 
@@ -150,21 +157,21 @@ export async function hasnStatus(): Promise<string> {
     const res = await sidecarGet<any>("/status");
     return res.status;
   } catch {
-    return localStorage.getItem("hasn:platform_token") ? "connected" : "disconnected";
+    return getHuanxingSession()?.accessToken ? "connected" : "disconnected";
   }
 }
 
 // ---------- 会话 API (呼叫 Cloud) ----------
 
 export async function getConversations(): Promise<Conversation[]> {
-  return cloudGet<Conversation[]>("/conversationss");
+  return cloudGet<Conversation[]>("/conversations");
 }
 
 // 适配器：将后端的旧版 Message 转换为 v4.0 HasnEnvelope
 function mapLegacyMessageToEnvelope(msg: any): HasnEnvelope {
   return {
     id: msg.id ? String(msg.id) : `msg_${Date.now()}`,
-    version: "4.0",
+    version: "1.0",
     from: {
       hasn_id: msg.from_id || "",
       entity_type: msg.from_type === 1 ? "human" : "agent"
@@ -173,16 +180,17 @@ function mapLegacyMessageToEnvelope(msg: any): HasnEnvelope {
       hasn_id: msg.to_id || "",
       entity_type: "human" // Defaulting to human for legacy
     },
-    message_type: "chat",
-    qos: 1,
+    type: "message",
     content: {
-      type: msg.content_type === 6 ? "tool_call" : "text",
-      text: msg.content || ""
+      content_type: msg.content_type === 6 ? "tool_call" : "text",
+      body: { text: msg.content || "" }
     },
     context: {
       conversation_id: msg.conversation_id || ""
     },
-    timestamp: msg.created_at || new Date().toISOString(),
+    metadata: {
+      created_at: msg.created_at || new Date().toISOString()
+    },
     local_id: msg.local_id,
     send_status: msg.send_status || "delivered"
   };
@@ -195,7 +203,7 @@ export async function getMessages(
 ): Promise<HasnEnvelope[]> {
   const params = new URLSearchParams({ limit: String(limit) });
   if (beforeId) params.set("before_id", String(beforeId));
-  const legacyMessages = await cloudGet<any[]>(`/conversationss/${conversationId}/messages?${params}`);
+  const legacyMessages = await cloudGet<any[]>(`/conversations/${conversationId}/messages?${params}`);
   return legacyMessages.map(mapLegacyMessageToEnvelope);
 }
 
@@ -207,46 +215,45 @@ export async function sendMessage(to: string, content: string, replyToId?: numbe
   // 乐观构建一个 v4.0 HasnEnvelope 返回给前端
   return {
     id: `temp_${Date.now()}`,
-    version: "4.0",
+    version: "1.0",
     from: { hasn_id: hasnId, entity_type: "human" },
     to: { hasn_id: to, entity_type: "human" },
-    message_type: "chat",
-    qos: 1,
-    content: { type: "text", text: content },
+    type: "message",
+    content: { content_type: "text", body: { text: content } },
     context: { conversation_id: "" }, // Will be filled by WS return
-    timestamp: new Date().toISOString(),
+    metadata: { created_at: new Date().toISOString() },
     local_id: `temp_${Date.now()}`,
     send_status: "sent"
   };
 }
 
 export async function markConversationRead(conversationId: string, lastMsgId?: number): Promise<void> {
-  await cloudPost(`/conversationss/${conversationId}/read`, { last_msg_id: lastMsgId ?? 0 });
+  await cloudPost(`/conversations/${conversationId}/read`, { last_msg_id: lastMsgId ?? 0 });
 }
 
 // ---------- 联系人 API (呼叫 Cloud) ----------
 
 export async function getContacts(relationType?: string): Promise<Contact[]> {
   const params = relationType ? `?relation_type=${relationType}` : "";
-  return cloudGet<Contact[]>(`/contactss${params}`);
+  return cloudGet<Contact[]>(`/contacts${params}`);
 }
 
 export async function sendFriendRequest(starId: string, message?: string): Promise<void> {
-  await cloudPost("/contactss/request", { target_star_id: starId, message });
+  await cloudPost("/contacts/request", { target_star_id: starId, message });
 }
 
 export async function getFriendRequests(): Promise<FriendRequest[]> {
-  return cloudGet<FriendRequest[]>("/contactss/requests");
+  return cloudGet<FriendRequest[]>("/contacts/requests");
 }
 
 export async function respondFriendRequest(requestId: number, accept: boolean): Promise<void> {
-  await cloudPost(`/contactss/requests/${requestId}/respond`, { action: accept ? "accept" : "reject" });
+  await cloudPost(`/contacts/requests/${requestId}/respond`, { action: accept ? "accept" : "reject" });
 }
 
 // ---------- Agent API (呼叫 Cloud) ----------
 
 export async function getMyAgents(): Promise<AgentInfo[]> {
-  return cloudGet<AgentInfo[]>("/agentss");
+  return cloudGet<AgentInfo[]>("/agents");
 }
 
 // ---------- Client ID 读取 ----------

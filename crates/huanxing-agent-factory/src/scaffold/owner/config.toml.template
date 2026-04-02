@@ -1,0 +1,213 @@
+# ═══════════════════════════════════════════════════════════════
+# 唤星AI - 租户级 Owner 配置模板
+# 创建租户根目录时自动生成，保存租户/全局级的共同规则
+# ═══════════════════════════════════════════════════════════════
+
+# ── LLM Provider (租户默认) ──────────────────────────────────
+default_provider = "{{default_provider}}"
+default_model = "{{default_model}}"
+default_temperature = {{default_temperature}}
+api_key = "{{api_key}}"
+
+# ── 向量记忆池 (租户共享配置) ────────────────────────────────
+[memory]
+embedding_provider = "custom:https://llm.dcfuture.cn/v1"
+embedding_model = "text-embedding-v4"
+embedding_dimensions = 1024      # 通义 text-embedding-v4 输出维度
+vector_weight = 0.7              # 向量相似度权重
+keyword_weight = 0.3             # BM25 关键词权重
+min_relevance_score = 0.4        # 最低相关性阈值
+embedding_cache_size = 2000      # 缓存大小
+chunk_max_tokens = 512           # 每块最大 token 数
+
+# ┌─────────────────────────────────────────────────────────────┐
+# │                    可靠性（LLM 重试/降级）                    │
+# └─────────────────────────────────────────────────────────────┘
+[reliability]
+provider_retries = 5                         # 单个 provider 最多重试次数
+provider_backoff_ms = 500                     # 重试退避时间
+fallback_providers = ["custom:https://llm.dcfuture.cn/v1"]  # 降级到 openai compat 格式
+# api_keys 留空 —— 代码会自动将 api_key 注入（租户级自动透传）
+api_keys = []
+channel_initial_backoff_secs = 2              # 渠道连接初始退避
+channel_max_backoff_secs = 60                 # 渠道连接最大退避
+scheduler_poll_secs = 15
+scheduler_retries = 2
+
+# ══════════════════════════════════════════════════════════════
+# 自治与安全 (租户全局)
+# ══════════════════════════════════════════════════════════════
+[autonomy]
+level = "full"                   # full = 所有工具自动批准，无需人工确认
+workspace_only = true            # ⚠️ 多租户安全：只能访问自己的工作区
+
+# ── Shell 命令白名单 ──
+allowed_commands = [
+    # 信息查询
+    "ls", "cat", "head", "tail", "wc", "grep", "find", "trash",
+    "echo", "pwd", "date",
+    # 文本处理
+    "sort", "uniq", "tr", "cut", "awk", "sed",
+    # 文件管理
+    "mkdir", "touch", "cp", "mv",
+    # 网络与脚本（公共技能需要）
+    "curl", "wget", "bash", "sh", "python3", "uv", "pip", "pip3", "node", "npm", "pnpm", "npx", "newsnow",
+]
+
+# ── 额外允许的目录（公共技能脚本）──
+allowed_roots = [
+    "/opt/huanxing/config/common-skills",
+]
+
+# ── 禁止访问的系统路径 ──
+forbidden_paths = [
+    "/etc", "/root", "/home", "/bin", "/sbin",
+    "/lib", "/opt", "/boot", "/dev", "/proc", "/sys",
+    "/var", "/tmp", "/mnt",
+    "/usr/sbin", "/usr/local/etc",
+    "~/.ssh", "~/.gnupg", "~/.aws", "~/.config", "~/.zeroclaw",
+]
+
+max_actions_per_hour = 200
+max_cost_per_day_cents = 1000
+block_high_risk_commands = true
+
+# ── 对用户 Agent 隐藏的系统工具（不在 CLI 通道对大模型可见）──
+non_cli_excluded_tools = [
+    # ═══ 服务器管理 & 用户注册（Guardian 专用）═══
+    "hx_register_user",          # 注册新用户
+    "hx_send_sms",               # 发送短信验证码
+    "hx_verify_sms",             # 验证短信
+    "hx_lookup_sender",          # 查找发送者身份
+    "hx_get_user",               # 获取用户信息
+    "hx_local_find_user",        # 本地查找用户
+    "hx_local_bind_channel",     # 绑定渠道
+    "hx_local_list_users",       # 列出所有用户
+    "hx_local_update_user",      # 更新用户信息
+    "hx_local_stats",            # 服务器统计
+    "hx_invalidate_cache",       # 缓存失效
+
+    # ═══ 系统配置工具（可修改运行时配置）═══
+    "proxy_config",              # 代理配置
+    "model_routing_config",      # 模型路由配置
+    "model_switch",              # 切换 LLM 提供商
+
+    # ═══ 高级系统工具（用户不需要）═══
+    "composio",                  # Composio 集成
+    "security_ops",              # 安全操作
+    "backup",                    # 系统备份
+    "cloud_ops",                 # 云操作
+    "cloud_patterns",            # 云模式
+    "swarm",                     # Swarm 模式
+    "data_management",           # 数据管理
+
+    # ═══ 定时任务（用户用 Heartbeat 即可，不需要 Cron）═══
+    "cron_add",                  # 添加定时任务
+    "cron_list",                 # 列出定时任务
+    "cron_remove",               # 删除定时任务
+    "cron_update",               # 更新定时任务
+    "cron_run",                  # 手动触发任务
+    "cron_runs",                 # 任务运行历史
+
+    # ═══ 会话管理（用户无需跨会话操作）═══
+    "sessions_list",             # 会话列表
+    "sessions_history",          # 会话历史
+    "sessions_send",             # 跨会话发送
+
+    # ═══ 服务器无 GUI / 低价值工具 ═══
+    "screenshot",                # 截图（服务器无 GUI）
+    "browser",                   # 浏览器自动化（重量级）
+    "browser_open",              # 打开浏览器
+    "browser_delegate",          # 浏览器委托
+    "canvas",                    # 交互式画布（非 CLI 无意义）
+
+    # ═══ 开发工具（普通用户不需要）═══
+    "git_operations",            # Git 操作
+    "process",                   # 后台进程管理
+    "project_intel",             # 项目分析
+    "claude_code",               # Claude Code 委托
+    "vi_verify",                 # 可验证意图（内部测试）
+
+    # ═══ 硬件工具（服务器场景无意义）═══
+    "hardware_board_info",       # 硬件主板信息
+    "hardware_memory_map",       # 硬件内存映射
+    "hardware_memory_read",      # 硬件内存读取
+
+    # ═══ 未部署的第三方集成 ═══
+    "pushover",                  # Pushover 推送
+    "discord_search",            # Discord 搜索
+    "google_workspace",          # Google Workspace
+    "jira",                      # Jira
+    "notion",                    # Notion
+    "linkedin",                  # LinkedIn
+    "microsoft365",              # Microsoft 365
+    "wasm_module",               # WASM 模块
+]
+
+# ── 安全机制 ──────────────────────────────────────────────────
+[security]
+canary_tokens = true
+semantic_guard = false
+
+[security.otp]
+enabled = false
+
+[security.outbound_leak_guard]
+enabled = true
+action = "redact"
+sensitivity = 0.5
+
+# ── 语音合成 (TTS) ────────────────────────────────────────────
+[tts]
+enabled = true
+default_provider = "generic_openai"
+default_voice = "Cherry"
+default_format = "wav"
+
+[tts.generic_openai]
+api_url = "https://llm.dcfuture.cn/v1/audio/speech"
+api_key = "{{api_key}}"
+model = "qwen3-tts-instruct-flash"
+
+# ── 语音识别 (STT) ────────────────────────────────────────────
+[transcription]
+enabled = true
+default_provider = "groq"
+api_url = "https://llm.dcfuture.cn/v1/audio/transcriptions"
+api_key = "{{api_key}}"
+model = "qwen3-asr-flash-2026-02-10"
+
+# ══════════════════════════════════════════════════════════════
+# 平台级功能开关
+# ══════════════════════════════════════════════════════════════
+[web_search]
+enabled = true
+
+[web_fetch]
+enabled = true
+
+[browser]
+enabled = true
+
+[http_request]
+enabled = true
+
+[proxy]
+enabled = false
+
+[composio]
+enabled = false
+
+[mcp]
+enabled = false
+
+[wasm]
+enabled = false
+
+[plugins]
+enabled = false
+
+# ── 渠道超时 ──────────────────────────────────────────────────
+[channels_config]
+cli = false
+message_timeout_secs = 300

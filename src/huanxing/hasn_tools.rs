@@ -39,9 +39,8 @@ fn read_hasn_creds(workspace: &std::path::Path) -> Option<(String, String, Strin
     Some((api_key, hasn_id, star_id))
 }
 
-/// Resolve agent workspace from agents_dir + agent_id.
 fn resolve_workspace(agents_dir: &std::path::Path, agent_id: &str) -> PathBuf {
-    agents_dir.join(agent_id)
+    crate::tools::get_active_workspace().unwrap_or_else(|| agents_dir.join(agent_id))
 }
 
 // ═══════════════════════════════════════════════════════

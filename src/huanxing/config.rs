@@ -577,3 +577,23 @@ impl Default for HubSyncConfig {
         }
     }
 }
+
+/// 微信（iLink AI）渠道配置。
+///
+/// 通过桌面端扫码登录后，凭证自动写入此配置节；
+/// ZeroClaw 启动时读取此节创建 `WeixinChannel` 实例。
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct WeixinConfig {
+    /// iLink API 的 bot_token（扫码登录后获取）。
+    pub bot_token: String,
+    /// iLink bot ID。
+    #[serde(default)]
+    pub bot_id: String,
+    /// iLink API base URL（扫码登录时由服务端返回）。
+    #[serde(default = "default_weixin_base_url")]
+    pub base_url: String,
+}
+
+fn default_weixin_base_url() -> String {
+    "https://ilinkai.weixin.qq.com".to_string()
+}

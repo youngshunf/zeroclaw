@@ -11,7 +11,6 @@ use super::registry::RegistryLoader;
 use crate::huanxing::api_client::ApiClient;
 use crate::huanxing::db::TenantDb;
 use crate::huanxing::router::TenantRouter;
-use crate::huanxing::templates::{TemplateEngine, UserInfo};
 use crate::tools::traits::{Tool, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
@@ -127,7 +126,7 @@ pub struct HxRegisterUser {
     config_dir: PathBuf,
     hx_config: crate::huanxing::config::HuanXingConfig,
     common_skills_dir: PathBuf,
-    template_engine: TemplateEngine,
+    templates_dir: PathBuf,
     default_template: String,
     default_provider: Option<String>,
     llm_base_url: Option<String>,
@@ -155,7 +154,7 @@ impl HxRegisterUser {
             config_dir,
             hx_config,
             common_skills_dir,
-            template_engine: TemplateEngine::new(templates_dir),
+            templates_dir,
             default_template,
             default_provider,
             llm_base_url,
@@ -177,7 +176,7 @@ impl HxRegisterUser {
         llm_base_url: Option<String>,
         server_id: String,
         router: Arc<TenantRouter>,
-        registry: Arc<RegistryLoader>,
+        _registry: Arc<RegistryLoader>,
     ) -> Self {
         Self {
             db,
@@ -185,7 +184,7 @@ impl HxRegisterUser {
             config_dir,
             hx_config,
             common_skills_dir,
-            template_engine: TemplateEngine::with_registry(templates_dir, registry),
+            templates_dir,
             default_template,
             default_provider,
             llm_base_url,
@@ -298,7 +297,7 @@ impl Tool for HxRegisterUser {
         let tenant_dir_name = format!("{seq:03}-{phone}");
         // Calculate isolated tenant paths
         let tenant_dir = format!("{:03}-{}", seq, phone);
-        let owner_workspace = self.hx_config.resolve_owner_dir(&self.config_dir, Some(&tenant_dir));
+        let _owner_workspace = self.hx_config.resolve_owner_dir(&self.config_dir, Some(&tenant_dir));
         let agent_workspace = self.hx_config.resolve_agent_workspace(&self.config_dir, Some(&tenant_dir), &agent_id);
 
         // Step 2: Save user to local DB with tokens + channel binding + routing
@@ -366,34 +365,33 @@ impl Tool for HxRegisterUser {
             }
         }
 
-        // Step 3: Create workspace using TemplateEngine
-        let user_info = UserInfo {
-            nickname,
-            phone,
-            star_name,
-            user_id,
-            agent_id: &agent_id,
-            template,
-        };
-
-        // LLM config: use llm_token as api_key if available
+        // Step 3: Create workspace using AgentFactory
         let provider = self.default_provider.as_deref();
-        let api_key = if llm_token.is_empty() {
-            None
-        } else {
-            Some(llm_token)
-        };
+        let api_key = if llm_token.is_empty() { None } else { Some(llm_token.to_string()) };
 
-        match self
-            .template_engine
-            .create_workspace(Some(&owner_workspace), &agent_workspace, &user_info, provider, api_key)
-            .await
-        {
-            Ok(files) => {
-                steps.push(format!(
-                    "✅ Step3: 工作区创建完成 (模板={template}, 文件={})",
-                    files.len()
-                ));
+        let factory = huanxing_agent_factory::AgentFactory::new(self.config_dir.clone(), None);
+        let params = huanxing_agent_factory::CreateAgentParams {
+            tenant_id: phone.to_string(),
+            template_id: template.to_string(),
+            agent_name: agent_id.to_string(),
+            display_name: star_name.to_string(),
+            is_desktop: false,
+            user_nickname: nickname.to_string(),
+            provider: provider.map(|s| s.to_string()),
+            api_key,
+            hasn_id: None,
+        };
+        
+        struct ToolProgress;
+        impl huanxing_agent_factory::ProgressSink for ToolProgress {
+            fn on_progress(&self, step: &str, detail: &str) {
+                tracing::debug!("Tool Agent Creation: {} - {}", step, detail);
+            }
+        }
+
+        match factory.create_local_agent(&self.templates_dir, &params, &ToolProgress).await {
+            Ok(_) => {
+                steps.push(format!("✅ Step3: 工作区生成完成 ({agent_id})"));
             }
             Err(e) => {
                 steps.push(format!("⚠️ Step3: 工作区创建失败 ({e})"));
@@ -1344,7 +1342,7 @@ impl Tool for HxLocalBindChannel {
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         let channel_type = normalize_channel(args["channel_type"].as_str().unwrap_or_default());
         let peer_id = args["peer_id"].as_str().unwrap_or_default();
-        let peer_name = args["peer_name"].as_str();
+        let _peer_name = args["peer_name"].as_str();
 
         if channel_type.is_empty() || peer_id.is_empty() {
             return Ok(ToolResult {
@@ -1380,7 +1378,7 @@ impl Tool for HxLocalBindChannel {
 
         match self
             .db
-            .bind_channel(&user.user_id, channel_type, peer_id, peer_name)
+            .bind_channel_default(&user.user_id, channel_type, peer_id)
             .await
         {
             Ok(()) => {

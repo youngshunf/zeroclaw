@@ -271,22 +271,22 @@ export default function HasnChat() {
                     </div>
                     <div className="hx-msg-content">
                       <div className="hx-msg-bubble">
-                        {msg.content.type === 'tool_call' ? (
+                        {msg.content.content_type === 'tool_call' ? (
                           <div className="font-mono text-[11px] opacity-70 p-1 bg-black/5 rounded">
-                            {`> 工具调用: ${msg.content.text || '执行中...'}`}
+                            {`> 工具调用: ${msg.content.body?.text || msg.content.body?.display_text || '执行中...'}`}
                           </div>
-                        ) : containsImageMarkers(msg.content.text || '') ? (
+                        ) : containsImageMarkers(msg.content.body?.text || '') ? (
                           <HxImageMessage
-                            content={msg.content.text || ''}
+                            content={msg.content.body?.text || ''}
                             renderText={(text) => <Markdown mode="minimal">{text}</Markdown>}
                           />
                         ) : (
-                          <Markdown mode="minimal">{msg.content.text || ''}</Markdown>
+                          <Markdown mode="minimal">{msg.content.body?.text || ''}</Markdown>
                         )}
                       </div>
                       <span className="hx-msg-time">
-                        {msg.timestamp
-                          ? new Date(msg.timestamp).toLocaleTimeString('zh-CN', {
+                        {msg.metadata?.created_at
+                          ? new Date(msg.metadata.created_at).toLocaleTimeString('zh-CN', {
                               hour: '2-digit',
                               minute: '2-digit',
                             })

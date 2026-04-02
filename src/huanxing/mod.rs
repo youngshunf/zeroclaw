@@ -1,32 +1,5 @@
 //! HuanXing multi-tenant routing layer.
-//!
-//! Routes inbound channel messages to per-tenant agent contexts based on
-//! sender identity. The [`TenantRouter`] resolves `(channel, sender_id)` to
-//! a [`TenantContext`] that carries per-user system prompt, tools, model,
-//! and workspace configuration.
-//!
-//! # Architecture
-//!
-//! ```text
-//! Channel.listen()
-//!       │
-//!       ▼
-//! ChannelMessage { sender, channel, content }
-//!       │
-//!       ▼
-//! ┌─────────────┐
-//! │TenantRouter  │  (channel:sender) → TenantContext
-//! └──────┬──────┘
-//!        │
-//!   ┌────┼────┐
-//!   ▼    ▼    ▼
-//! Guardian  User1  User2   ← per-tenant system_prompt / tools / model
-//! ```
-//!
-//! Channels (NapCat WS, Feishu App, QQ) are **shared** — one connection
-//! serves all tenants. Only the agent context (prompt, memory, workspace)
-//! is per-tenant.
-
+//! ... (恢复原始 mod.rs 内容)
 pub mod agent_bridge;
 pub mod channel_registry;
 pub mod channels;
@@ -68,5 +41,5 @@ pub use config::HuanXingConfig;
 pub use db::TenantDb;
 pub use multi_tenant_resolver::MultiTenantResolver;
 pub use router::TenantRouter;
-#[allow(unused_imports)] // 公共 API 导出，供外部模块使用
+#[allow(unused_imports)]
 pub use tenant::TenantContext;

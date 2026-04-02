@@ -49,7 +49,8 @@ impl TenantRouter {
         workspace_dir: PathBuf,
         global_config: Arc<Config>,
     ) -> anyhow::Result<Self> {
-        let db_path = config.resolve_db_path(&workspace_dir);
+        let config_dir = global_config.config_path.parent().unwrap_or(&global_config.workspace_dir);
+        let db_path = config.resolve_db_path(config_dir);
         let db = TenantDb::open(&db_path)?;
 
         let guardian_dir = config.resolve_guardian_workspace(&workspace_dir);

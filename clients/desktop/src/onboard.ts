@@ -99,6 +99,7 @@ async function tauriOnboard(session: HuanxingSession): Promise<OnboardResult> {
         agent_key: session.agentKey || null,
         api_base_url: HUANXING_CONFIG.backendBaseUrl,
         llm_gateway_url: HUANXING_CONFIG.llmGatewayV1,
+        hasn_api_key: session.hasnApiKey || null,
       },
     });
 
@@ -326,6 +327,10 @@ export async function registerHasnIdentity(session: HuanxingSession): Promise<Ha
 
   const json = await resp.json();
   const data = json.data ?? json;
+
+  if (data.human?.hasn_id) {
+    localStorage.setItem("hasn:hasn_id", data.human.hasn_id);
+  }
 
   return {
     hasn_id: data.human?.hasn_id,

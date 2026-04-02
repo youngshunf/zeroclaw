@@ -51,6 +51,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'nav.devices': 'Devices',
     'nav.config': 'Configuration',
     'nav.cost': 'Cost Tracker',
+    'nav.channels': 'Channels',
     'nav.logs': 'Logs',
     'nav.doctor': 'Doctor',
 
@@ -509,6 +510,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'nav.devices': 'Cihazlar',
     'nav.config': 'Yapilandirma',
     'nav.cost': 'Maliyet Takibi',
+    'nav.channels': 'Kanallar',
     'nav.logs': 'Kayitlar',
     'nav.doctor': 'Doktor',
 
@@ -693,6 +695,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'nav.devices': '设备',
     'nav.config': '配置',
     'nav.cost': '成本追踪',
+    'nav.channels': '联络接管',
     'nav.logs': '日志',
     'nav.doctor': '诊断',
 

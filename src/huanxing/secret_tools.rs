@@ -11,9 +11,8 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-/// Get the effective workspace dir for the current tenant.
 fn tenant_workspace(fallback: &Path) -> PathBuf {
-    fallback.to_path_buf()
+    crate::tools::get_active_workspace().unwrap_or_else(|| fallback.to_path_buf())
 }
 
 /// Read all key-value pairs from a .env file.

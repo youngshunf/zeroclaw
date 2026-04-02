@@ -11,6 +11,7 @@ import Config from './pages/settings/Config';
 import Cost from './pages/settings/Cost';
 import Logs from './pages/settings/Logs';
 import Doctor from './pages/settings/Doctor';
+const ChannelsLayout = lazy(() => import('./pages/channels/ChannelsLayout'));
 const ImageViewer = lazy(() => import('./pages/ImageViewer'));
 import { AuthProvider, useAuth } from './hooks/useAuth';
 import { coerceLocale, setLocale, type Locale } from './lib/i18n';
@@ -271,6 +272,7 @@ function AppContent() {
             <Route path="/doctor" element={<Doctor />} />
             <Route path="/devices" element={<Devices />} />
             <Route path="/engine" element={<Suspense fallback={null}><Engine /></Suspense>} />
+            <Route path="/channels" element={<Suspense fallback={null}><ChannelsLayout /></Suspense>} />
           </Route>
 
           <Route path="*" element={<Navigate to="/agent" replace />} />

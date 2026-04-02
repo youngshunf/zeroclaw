@@ -195,6 +195,7 @@ fn list_agent_sessions(
 /// GET /api/sessions — 列出所有会话，可按 agent_id 过滤
 async fn list_sessions(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Query(q): Query<ListSessionsQuery>,
 ) -> impl IntoResponse {
     let config = state.config.lock().clone();
@@ -206,10 +207,12 @@ async fn list_sessions(
             .into_response();
     }
 
+    let tenant_dir = crate::huanxing::api_agents::extract_tenant_dir(&headers, config.config_path.parent().unwrap_or(&config.workspace_dir), &config.huanxing).await;
     let agents_dir = config
         .huanxing
-        .resolve_agents_dir(config.config_path.parent().unwrap_or(&config.workspace_dir));
-
+        .resolve_tenant_root(config.config_path.parent().unwrap_or(&config.workspace_dir), tenant_dir.as_deref())
+        .join("agents");
+    
     let mut all_sessions: Vec<SessionInfo> = Vec::new();
 
     if let Some(ref agent_id) = q.agent_id {
@@ -258,6 +261,7 @@ async fn list_sessions(
 /// POST /api/sessions — 创建新会话
 async fn create_session(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Json(req): Json<CreateSessionRequest>,
 ) -> impl IntoResponse {
     let config = state.config.lock().clone();
@@ -269,9 +273,11 @@ async fn create_session(
             .into_response();
     }
 
+    let tenant_dir = crate::huanxing::api_agents::extract_tenant_dir(&headers, config.config_path.parent().unwrap_or(&config.workspace_dir), &config.huanxing).await;
     let agents_dir = config
         .huanxing
-        .resolve_agents_dir(config.config_path.parent().unwrap_or(&config.workspace_dir));
+        .resolve_tenant_root(config.config_path.parent().unwrap_or(&config.workspace_dir), tenant_dir.as_deref())
+        .join("agents");
 
     // agent_id 默认为 "default"（兼容单 agent 模式）
     let agent_id = req
@@ -340,17 +346,19 @@ async fn create_session(
 /// GET /api/sessions/{id} — 获取会话详情（含分页消息）
 async fn get_session(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Path(session_id): Path<String>,
     Query(q): Query<GetSessionQuery>,
 ) -> impl IntoResponse {
     let config = state.config.lock().clone();
     let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
+    let tenant_dir = crate::huanxing::api_agents::extract_tenant_dir(&headers, config_dir, &config.huanxing).await;
 
     let limit = q.limit.unwrap_or(50).min(200).max(1);
 
     // 找到该 session 所属的 agent workspace
     let agent_id_and_workspace = if let Some(ref aid) = q.agent_id {
-        let ws = config.huanxing.resolve_agent_workspace(config_dir, None, aid);
+        let ws = config.huanxing.resolve_agent_workspace(config_dir, tenant_dir.as_deref(), aid);
         if ws.exists() {
             Some((aid.clone(), ws))
         } else {
@@ -358,7 +366,7 @@ async fn get_session(
         }
     } else {
         // 扫描所有 agent 查找 session
-        find_session_owner(&config, config_dir, &session_id).await
+        find_session_owner(&config, config_dir, &session_id, tenant_dir.as_deref()).await
     };
 
     let Some((agent_id, workspace)) = agent_id_and_workspace else {
@@ -475,14 +483,16 @@ async fn get_session(
 /// PUT /api/sessions/{id} — 重命名会话
 async fn rename_session(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Path(session_id): Path<String>,
     Json(req): Json<RenameSessionRequest>,
 ) -> impl IntoResponse {
     let config = state.config.lock().clone();
     let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
+    let tenant_dir = crate::huanxing::api_agents::extract_tenant_dir(&headers, config_dir, &config.huanxing).await;
 
     let Some((_agent_id, workspace)) =
-        find_session_owner(&config, config_dir, &session_id).await
+        find_session_owner(&config, config_dir, &session_id, tenant_dir.as_deref()).await
     else {
         return (
             StatusCode::NOT_FOUND,
@@ -514,13 +524,15 @@ async fn rename_session(
 /// DELETE /api/sessions/{id} — 删除会话及所有消息
 async fn delete_session(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Path(session_id): Path<String>,
 ) -> impl IntoResponse {
     let config = state.config.lock().clone();
     let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
 
+    let tenant_dir = crate::huanxing::api_agents::extract_tenant_dir(&headers, config_dir, &config.huanxing).await;
     let Some((_agent_id, workspace)) =
-        find_session_owner(&config, config_dir, &session_id).await
+        find_session_owner(&config, config_dir, &session_id, tenant_dir.as_deref()).await
     else {
         return (
             StatusCode::NOT_FOUND,
@@ -559,13 +571,15 @@ async fn delete_session(
 /// DELETE /api/sessions/{id}/messages — 清空会话消息（保留元数据）
 async fn clear_messages(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Path(session_id): Path<String>,
 ) -> impl IntoResponse {
     let config = state.config.lock().clone();
     let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
 
+    let tenant_dir = crate::huanxing::api_agents::extract_tenant_dir(&headers, config_dir, &config.huanxing).await;
     let Some((_agent_id, workspace)) =
-        find_session_owner(&config, config_dir, &session_id).await
+        find_session_owner(&config, config_dir, &session_id, tenant_dir.as_deref()).await
     else {
         return (
             StatusCode::NOT_FOUND,
@@ -604,13 +618,15 @@ async fn clear_messages(
 /// 读取最近几条消息，调用 Provider 生成简短标题，更新到 desktop_sessions。
 async fn generate_title(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Path(session_id): Path<String>,
 ) -> impl IntoResponse {
     let config = state.config.lock().clone();
     let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
 
+    let tenant_dir = crate::huanxing::api_agents::extract_tenant_dir(&headers, config_dir, &config.huanxing).await;
     let Some((_agent_id, workspace)) =
-        find_session_owner(&config, config_dir, &session_id).await
+        find_session_owner(&config, config_dir, &session_id, tenant_dir.as_deref()).await
     else {
         return (
             StatusCode::NOT_FOUND,
@@ -720,8 +736,9 @@ async fn find_session_owner(
     config: &crate::config::schema::Config,
     config_dir: &FsPath,
     session_id: &str,
+    tenant_dir: Option<&str>,
 ) -> Option<(String, std::path::PathBuf)> {
-    let tenant_root = config.huanxing.resolve_tenant_root(config_dir, None);
+    let tenant_root = config.huanxing.resolve_tenant_root(config_dir, tenant_dir);
     let agents_dir = tenant_root.join("agents");
     
     let mut entries = tokio::fs::read_dir(&agents_dir).await.ok()?;
@@ -740,7 +757,7 @@ async fn find_session_owner(
         let sid_clone = sid.clone();
         
         // Find the inner workspace directly
-        let workspace = config.huanxing.resolve_agent_workspace(config_dir, None, &name);
+        let workspace = config.huanxing.resolve_agent_workspace(config_dir, tenant_dir, &name);
         if !workspace.exists() {
             continue;
         }

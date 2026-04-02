@@ -41,9 +41,15 @@ pub async fn copy_file_to_workspace(
 
 /// 获取当前 Agent 工作区目录
 #[tauri::command]
-pub fn get_workspace_dir() -> Result<String, String> {
-    let home = dirs::home_dir().ok_or("无法获取 home 目录")?;
-    let workspace = home.join(".huanxing").join("users").join("default").join("agents").join("default");
+pub fn get_workspace_dir(
+    manager: tauri::State<'_, std::sync::Arc<crate::sidecar::manager::SidecarManager>>,
+) -> Result<String, String> {
+    if !manager.has_valid_huanxing_config() {
+        return Err("HuanXing configuration is invalid or missing".into());
+    }
+
+    let config_dir = manager.config_dir();
+    let workspace = config_dir.join("agents").join("default");
 
     // 确保目录存在
     std::fs::create_dir_all(&workspace)

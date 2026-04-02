@@ -12,6 +12,7 @@ import {
   Smartphone,
   Info,
   Cpu,
+  MessageSquare,
 } from 'lucide-react';
 import { t } from '@/lib/i18n';
 import { useLocaleContext } from '@/App';
@@ -36,6 +37,7 @@ function useSettingsGroups() {
       items: [
         { to: '/config', icon: Settings, label: t('nav.config') },
         { to: '/engine', icon: Cpu, label: t('settings.engine') || 'AI 引擎' },
+        { to: '/channels', icon: MessageSquare, label: t('nav.channels') || '联络接管' },
         { to: '/cost', icon: DollarSign, label: t('nav.cost') || '账户与计费' },
         { to: '/logs', icon: Activity, label: t('nav.logs') },
         { to: '/doctor', icon: Stethoscope, label: t('nav.doctor') },

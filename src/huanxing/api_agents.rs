@@ -25,7 +25,27 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use crate::gateway::AppState;
-use crate::huanxing::templates::{TemplateEngine, UserInfo};
+
+pub async fn extract_tenant_dir(
+    headers: &axum::http::HeaderMap,
+    config_dir: &std::path::Path,
+    config: &crate::huanxing::config::HuanXingConfig,
+) -> Option<String> {
+    if let Some(tenant) = headers.get("x-tenant-dir").and_then(|v| v.to_str().ok()) {
+        return Some(tenant.to_string());
+    }
+    if let Some(tenant) = headers.get("x-tenant-id").and_then(|v| v.to_str().ok()) {
+        return Some(tenant.to_string());
+    }
+    
+    let db_path = config.resolve_db_path(config_dir);
+    if let Ok(db) = crate::huanxing::db::TenantDb::open(&db_path) {
+        if let Ok(Some(tenant)) = db.get_first_tenant_dir().await {
+            return Some(tenant);
+        }
+    }
+    None
+}
 
 // ── 数据结构 ──────────────────────────────────────────────
 
@@ -71,6 +91,8 @@ pub struct CreateAgentRequest {
     pub api_key: Option<String>,
     /// Provider base URL（仅云端多租户使用）
     pub base_url: Option<String>,
+    /// 是否使用桌面端覆盖层
+    pub is_desktop: Option<bool>,
 }
 
 /// 创建 Agent 响应
@@ -102,17 +124,19 @@ pub fn agent_routes() -> Router<AppState> {
 // ── 处理函数 ──────────────────────────────────────────────
 
 /// GET /api/agents — 扫描 agents_dir，列出所有 Agent
-async fn list_agents(State(state): State<AppState>) -> impl IntoResponse {
+async fn list_agents(State(state): State<AppState>,
+    headers: axum::http::HeaderMap,) -> impl IntoResponse {
     let config = state.config.lock().clone();
     if !config.huanxing.enabled {
         return (StatusCode::OK, Json(AgentListResponse { agents: vec![], current: String::new() })).into_response();
     }
 
     let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
+    let tenant_dir = crate::huanxing::api_agents::extract_tenant_dir(&headers, config_dir, &config.huanxing).await;
     // Desktop list: we list all agents in the desktop tenant_root.
-    // However, the physical structure for Desktop is `config_dir/agents/{agent_id}/`.
-    // We can just read `config_dir/agents/` to find them.
-    let agents_dir = config.huanxing.resolve_tenant_root(config_dir, None).join("agents");
+    // However, the physical structure for Desktop is `users/{tenant_dir}/agents/{agent_id}/`.
+    // We can just read `agents/` to find them.
+    let agents_dir = config.huanxing.resolve_tenant_root(config_dir, tenant_dir.as_deref()).join("agents");
 
     let mut agents: Vec<AgentInfo> = Vec::new();
 
@@ -173,6 +197,7 @@ async fn list_agents(State(state): State<AppState>) -> impl IntoResponse {
 /// POST /api/agents — 从 hub 模板创建桌面端 Agent
 async fn create_agent(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Json(req): Json<CreateAgentRequest>,
 ) -> impl IntoResponse {
     let config = state.config.lock().clone();
@@ -187,8 +212,9 @@ async fn create_agent(
     }
 
     let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
-    let agent_wrapper = config.huanxing.resolve_agent_wrapper_dir(config_dir, None, &req.name);
-    let workspace = config.huanxing.resolve_agent_workspace(config_dir, None, &req.name);
+    let tenant_dir = crate::huanxing::api_agents::extract_tenant_dir(&headers, config_dir, &config.huanxing).await;
+    let agent_wrapper = config.huanxing.resolve_agent_wrapper_dir(config_dir, tenant_dir.as_deref(), &req.name);
+    let _workspace = config.huanxing.resolve_agent_workspace(config_dir, None, &req.name);
 
     // 检查是否已存在
     if agent_wrapper.exists() {
@@ -207,35 +233,43 @@ async fn create_agent(
     let template_id = req.template.as_deref().unwrap_or("_base");
     let display_name = req.display_name.as_deref().unwrap_or(&req.name);
 
-    let user_info = UserInfo {
-        nickname: display_name,
-        phone: "",
-        star_name: display_name,
-        user_id: &req.name,
-        agent_id: &req.name,
-        template: template_id,
+    let factory = huanxing_agent_factory::AgentFactory::new(config_dir.to_path_buf(), None);
+    let params = huanxing_agent_factory::CreateAgentParams {
+        tenant_id: "".to_string(), // In api_agents historically it wasn't multi-tenant yet
+        template_id: template_id.to_string(),
+        agent_name: req.name.clone(),
+        display_name: display_name.to_string(),
+        is_desktop: req.is_desktop.unwrap_or(false),
+        user_nickname: display_name.to_string(),
+        provider: None,
+        api_key: req.api_key.clone(),
+        hasn_id: None,
     };
 
-    let engine = TemplateEngine::new(templates_dir);
+    struct ApiProgress;
+    impl huanxing_agent_factory::ProgressSink for ApiProgress {
+        fn on_progress(&self, step: &str, detail: &str) {
+            tracing::debug!("Agent API create progress: {} - {}", step, detail);
+        }
+        fn on_error(&self, step: &str, error: &str) {
+            tracing::warn!("Agent API create error: {} - {}", step, error);
+        }
+    }
 
-    match engine
-        .create_workspace(None, &workspace, &user_info, None, None)
-        .await
-    {
-        Ok(files) => {
+    match factory.create_local_agent(&templates_dir, &params, &ApiProgress).await {
+        Ok(res) => {
             tracing::info!(
                 name = req.name,
-                workspace = %workspace.display(),
+                workspace = %res.workspace_dir.display(),
                 template = template_id,
-                files = files.len(),
-                "桌面端 Agent 工作区创建完成"
+                "API: Agent 工作区创建完成"
             );
             (
                 StatusCode::CREATED,
                 Json(CreateAgentResponse {
                     status: "ok".to_string(),
                     name: req.name.clone(),
-                    config_dir: workspace.to_string_lossy().to_string(),
+                    config_dir: res.workspace_dir.to_string_lossy().to_string(),
                 }),
             )
                 .into_response()
@@ -255,6 +289,7 @@ async fn create_agent(
 /// DELETE /api/agents/:name — 删除 Agent 工作区
 async fn delete_agent(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Path(name): Path<String>,
 ) -> impl IntoResponse {
     let config = state.config.lock().clone();
@@ -268,7 +303,8 @@ async fn delete_agent(
     }
 
     let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
-    let agent_wrapper = config.huanxing.resolve_agent_wrapper_dir(config_dir, None, &name);
+    let tenant_dir = crate::huanxing::api_agents::extract_tenant_dir(&headers, config_dir, &config.huanxing).await;
+    let agent_wrapper = config.huanxing.resolve_agent_wrapper_dir(config_dir, tenant_dir.as_deref(), &name);
 
     if !agent_wrapper.exists() {
         return (
@@ -294,11 +330,13 @@ async fn delete_agent(
 /// GET /api/agents/:name/files — 列出工作区文件
 async fn list_files(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Path(name): Path<String>,
 ) -> impl IntoResponse {
     let config = state.config.lock().clone();
     let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
-    let workspace = config.huanxing.resolve_agent_workspace(config_dir, None, &name);
+    let tenant_dir = crate::huanxing::api_agents::extract_tenant_dir(&headers, config_dir, &config.huanxing).await;
+    let workspace = config.huanxing.resolve_agent_workspace(config_dir, tenant_dir.as_deref(), &name);
 
     if !workspace.exists() {
         return (
@@ -329,12 +367,14 @@ struct ReadFileQuery {
 /// GET /api/agents/:name/files/:filename — 读取工作区文件
 async fn read_file(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Path((name, filename)): Path<(String, String)>,
     axum::extract::Query(query): axum::extract::Query<ReadFileQuery>,
 ) -> impl IntoResponse {
     let config = state.config.lock().clone();
     let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
-    let workspace = config.huanxing.resolve_agent_workspace(config_dir, None, &name);
+    let tenant_dir = crate::huanxing::api_agents::extract_tenant_dir(&headers, config_dir, &config.huanxing).await;
+    let workspace = config.huanxing.resolve_agent_workspace(config_dir, tenant_dir.as_deref(), &name);
     let file_path = workspace.join(&filename);
 
     // 防止路径遍历
@@ -396,12 +436,14 @@ async fn read_file(
 /// PUT /api/agents/:name/files/:filename — 写入工作区文件（纯文本 body）
 async fn write_file(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Path((name, filename)): Path<(String, String)>,
     body: Bytes,
 ) -> impl IntoResponse {
     let config = state.config.lock().clone();
     let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
-    let workspace = config.huanxing.resolve_agent_workspace(config_dir, None, &name);
+    let tenant_dir = crate::huanxing::api_agents::extract_tenant_dir(&headers, config_dir, &config.huanxing).await;
+    let workspace = config.huanxing.resolve_agent_workspace(config_dir, tenant_dir.as_deref(), &name);
 
     // 防止路径遍历
     if filename.contains("..") || filename.contains('/') {
@@ -437,6 +479,7 @@ struct TranscribeResponse {
 /// 使用配置中的 `[transcription]` 提供商进行语音识别。
 async fn handle_audio_transcribe(
     State(state): State<AppState>,
+    _headers: axum::http::HeaderMap,
     mut multipart: axum::extract::Multipart,
 ) -> impl IntoResponse {
     // 1. 从 multipart 中提取音频文件
@@ -526,6 +569,7 @@ struct UploadResponse {
 /// 返回绝对路径，前端可用于 [IMAGE:path] 标记。
 async fn handle_file_upload(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     mut multipart: axum::extract::Multipart,
 ) -> impl IntoResponse {
     let mut file_data: Option<Vec<u8>> = None;
@@ -564,7 +608,8 @@ async fn handle_file_upload(
     // 确定保存目录
     let config = state.config.lock().clone();
     let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
-    let default_workspace = config.huanxing.resolve_agent_workspace(config_dir, None, "default");
+    let tenant_dir = crate::huanxing::api_agents::extract_tenant_dir(&headers, config_dir, &config.huanxing).await;
+    let default_workspace = config.huanxing.resolve_agent_workspace(config_dir, tenant_dir.as_deref(), "default");
     
     // 桌面端默认使用 default agent
     let files_dir = default_workspace.join("files");

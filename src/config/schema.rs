@@ -6284,6 +6284,10 @@ pub struct ChannelsConfig {
     #[cfg(feature = "huanxing")]
     #[serde(default)]
     pub wechat_pad: Option<crate::huanxing::config::WechatPadConfig>,
+    /// 微信（iLink AI）渠道配置（桌面端扫码接入）。
+    #[cfg(feature = "huanxing")]
+    #[serde(default)]
+    pub weixin: Option<crate::huanxing::config::WeixinConfig>,
     /// X/Twitter channel configuration.
     pub twitter: Option<TwitterConfig>,
     /// Mochat customer service channel configuration.
@@ -6494,6 +6498,8 @@ impl Default for ChannelsConfig {
             napcat: None,
             #[cfg(feature = "huanxing")]
             wechat_pad: None,
+            #[cfg(feature = "huanxing")]
+            weixin: None,
             twitter: None,
             mochat: None,
             #[cfg(feature = "channel-nostr")]
@@ -8998,12 +9004,12 @@ impl Default for Config {
     }
 }
 
-/// 唤星模式下，默认 workspace 子目录为 agents/default（对应桌面端唯一的默认 Agent）；
+/// 唤星模式下，系统守护进程（Daemon）的默认 workspace 子目录为 guardian/workspace；
 /// 上游 ZeroClaw 使用 workspace/。
 /// 通过编译时 feature flag 区分，零运行时开销。
 #[cfg(feature = "huanxing")]
 fn default_workspace_subdir() -> &'static str {
-    "agents/default"
+    "guardian/workspace"
 }
 
 #[cfg(not(feature = "huanxing"))]
@@ -12137,6 +12143,8 @@ auto_save = true
                 }),
                 #[cfg(feature = "huanxing")]
                 wechat_pad: None,
+                #[cfg(feature = "huanxing")]
+                weixin: None,
                 discord: None,
                 discord_history: None,
                 slack: None,
@@ -13170,6 +13178,8 @@ allowed_users = ["@ops:matrix.org"]
             telegram: None,
             #[cfg(feature = "huanxing")]
             wechat_pad: None,
+            #[cfg(feature = "huanxing")]
+            weixin: None,
             discord: None,
             discord_history: None,
             slack: None,
@@ -13546,6 +13556,8 @@ channel_ids = ["C123", "D456"]
             telegram: None,
             #[cfg(feature = "huanxing")]
             wechat_pad: None,
+            #[cfg(feature = "huanxing")]
+            weixin: None,
             discord: None,
             discord_history: None,
             slack: None,

@@ -84,6 +84,7 @@ pub struct OnboardRequest {
     pub api_base_url: Option<String>,
     /// LLM 网关地址（含 /v1 后缀），如 http://127.0.0.1:3180/v1
     pub llm_gateway_url: Option<String>,
+    pub hasn_api_key: Option<String>,
 }
 
 /// Onboard 结果

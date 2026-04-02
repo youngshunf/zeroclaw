@@ -166,14 +166,13 @@ export function useHasnMessages(conversationId: string | null) {
         const msg = event.data;
         const mappedEnv: HasnEnvelope = {
           id: msg.id ? String(msg.id) : `msg_${Date.now()}`,
-          version: "4.0",
+          version: "1.0",
           from: { hasn_id: msg.from_id || "", entity_type: msg.from_type === 1 ? "human" : "agent" },
           to: { hasn_id: msg.to_id || "", entity_type: "human" },
-          message_type: "chat",
-          qos: 1,
-          content: { type: msg.content_type === 6 ? "tool_call" : "text", text: msg.content || "" },
+          type: "message",
+          content: { content_type: msg.content_type === 6 ? "tool_call" : "text", body: { text: msg.content || "" } },
           context: { conversation_id: msg.conversation_id || "" },
-          timestamp: msg.created_at || new Date().toISOString(),
+          metadata: { created_at: msg.created_at || new Date().toISOString() },
           local_id: msg.local_id,
           send_status: msg.send_status || "delivered"
         };
@@ -201,14 +200,13 @@ export function useHasnMessages(conversationId: string | null) {
     // 乐观插入
     const tempMsg: HasnEnvelope = {
       id: `local_${Date.now()}`,
-      version: "4.0",
+      version: "1.0",
       from: { hasn_id: "", entity_type: "human" },
       to: { hasn_id: "", entity_type: "human" },
-      message_type: "chat",
-      qos: 1,
-      content: { type: "text", text: content },
+      type: "message",
+      content: { content_type: "text", body: { text: content } },
       context: { conversation_id: conversationId },
-      timestamp: new Date().toISOString(),
+      metadata: { created_at: new Date().toISOString() },
       local_id: `local_${Date.now()}`,
       send_status: "sending"
     };

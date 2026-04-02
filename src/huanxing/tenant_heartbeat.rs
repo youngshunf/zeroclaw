@@ -16,11 +16,9 @@ use tokio::sync::Semaphore;
 use tokio::time::{self, Duration};
 use tracing::{error, info, warn};
 
-use crate::huanxing::channel_registry::get_live_channel;
-use crate::channels::traits::SendMessage;
 use crate::config::Config;
 use crate::huanxing::config::TenantHeartbeatConfig;
-use crate::huanxing::db::{ChannelRecord, TenantDb, TenantRecord, UserFilter};
+use crate::huanxing::db::{TenantDb, TenantRecord, UserFilter};
 use crate::observability::{Observer, ObserverEvent};
 
 /// Manages heartbeat scheduling for all active tenants.
@@ -46,7 +44,8 @@ impl TenantHeartbeatManager {
         }
 
         let tenant_heartbeat_config = hx_config.tenant_heartbeat.clone();
-        let db_path = hx_config.resolve_db_path(&config.workspace_dir);
+        let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
+        let db_path = hx_config.resolve_db_path(config_dir);
         let db = Arc::new(TenantDb::open(&db_path)?);
 
         let observer: Arc<dyn Observer> =
@@ -191,10 +190,8 @@ impl TenantHeartbeatManager {
 
             // Execute tasks with concurrency control
             let permit = Arc::clone(&semaphore);
-            let config = self.config.clone();
+            // (Legacy config and timeout bindings removed for direct message dispatch)
             let user_clone = user.clone();
-            let workspace = workspace_dir.clone();
-            let timeout_secs = self.tenant_heartbeat_config.per_tenant_timeout_secs;
             let task_last_run = &self.task_last_run;
 
             // Record task execution times before spawning
@@ -223,67 +220,36 @@ impl TenantHeartbeatManager {
                 );
 
                 info!(
-                    "💓 Tenant {}: executing {} scheduled tasks",
+                    "💓 Tenant {}: executing {} scheduled tasks via inbound channel message",
                     user_clone.agent_id,
                     tasks_to_run.len()
                 );
 
-                // Build per-tenant config
-                let tenant_config = build_tenant_config(&config, &user_clone, &workspace);
+                // Construct a synthetic ChannelMessage pointing to the user's bound channel
+                // so that TenantRouter resolves the context naturally.
+                let primary_channel = channels.first().expect("Channels checked empty previously");
+                let tx_queue = crate::huanxing::channel_registry::get_inbound_queue();
 
-                // Execute with timeout
-                let result = tokio::time::timeout(
-                    Duration::from_secs(timeout_secs),
-                    crate::agent::loop_::run(
-                        tenant_config,
-                        Some(prompt),
-                        None,
-                        None,
-                        config.default_temperature,
-                        vec![],
-                        false,
-                        None,
-                        None,
-                    ),
-                )
-                .await;
+                if let Some(tx) = tx_queue {
+                    let msg = crate::channels::traits::ChannelMessage {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        sender: primary_channel.peer_id.clone(),
+                        reply_target: primary_channel.peer_id.clone(),
+                        content: prompt,
+                        channel: primary_channel.channel_type.clone(),
+                        timestamp: chrono::Utc::now().timestamp() as u64,
+                        thread_ts: None,
+                        interruption_scope_id: None,
+                        attachments: vec![],
+                    };
 
-                let output = match result {
-                    Ok(Ok(response)) => {
-                        if response.trim().is_empty()
-                            || response.trim().eq_ignore_ascii_case("HEARTBEAT_OK")
-                        {
-                            None
-                        } else {
-                            Some(response)
-                        }
-                    }
-                    Ok(Err(e)) => {
-                        error!(
-                            "💓 Tenant {}: agent execution failed: {}",
-                            user_clone.agent_id, e
-                        );
-                        None
-                    }
-                    Err(_) => {
-                        error!(
-                            "💓 Tenant {}: agent execution timed out ({}s)",
-                            user_clone.agent_id, timeout_secs
-                        );
-                        None
-                    }
-                };
-
-                // Deliver result to tenant's channel
-                if let Some(ref message) = output {
-                    if let Err(e) = deliver_to_channels(&channels, message).await {
-                        error!("💓 Tenant {}: delivery failed: {}", user_clone.agent_id, e);
+                    if let Err(e) = tx.send(msg).await {
+                        error!("💓 Tenant {}: failed to queue heartbeat message: {}", user_clone.agent_id, e);
                     } else {
-                        info!(
-                            "💓 Tenant {}: delivered heartbeat message",
-                            user_clone.agent_id
-                        );
+                        info!("💓 Tenant {}: heartbeat message dispatched to channel runtime", user_clone.agent_id);
                     }
+                } else {
+                    error!("💓 Tenant {}: global inbound queue not registered. Cannot dispatch heartbeat.", user_clone.agent_id);
                 }
             });
 
@@ -328,76 +294,7 @@ impl TenantHeartbeatManager {
     }
 }
 
-/// Build a Config suitable for running `agent::run` in a tenant's context.
-///
-/// Strategy: load the tenant's full config.toml if present, then set workspace_dir.
-/// Falls back to base config with workspace override if tenant has no config.toml.
-fn build_tenant_config(
-    base: &Config,
-    _tenant: &TenantRecord,
-    workspace_dir: &std::path::Path,
-) -> Config {
-    let tenant_config_path = workspace_dir.join("config.toml");
 
-    let mut config = if tenant_config_path.exists() {
-        // Load the tenant's full config.toml
-        match std::fs::read_to_string(&tenant_config_path) {
-            Ok(contents) => match toml::from_str::<Config>(&contents) {
-                Ok(tenant_cfg) => tenant_cfg,
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to parse tenant config at {}: {}, falling back to base",
-                        tenant_config_path.display(),
-                        e
-                    );
-                    base.clone()
-                }
-            },
-            Err(e) => {
-                tracing::warn!(
-                    "Failed to read tenant config at {}: {}, falling back to base",
-                    tenant_config_path.display(),
-                    e
-                );
-                base.clone()
-            }
-        }
-    } else {
-        base.clone()
-    };
-
-    // Always override workspace_dir to the tenant's directory
-    config.workspace_dir = workspace_dir.to_path_buf();
-
-    // Inherit HuanXing config from base (tenant configs don't have [huanxing])
-    config.huanxing = base.huanxing.clone();
-
-    config
-}
-
-/// Deliver a message to a tenant via their bound channels.
-/// Tries each channel in order until one succeeds.
-async fn deliver_to_channels(channels: &[ChannelRecord], message: &str) -> Result<()> {
-    for ch in channels {
-        if let Some(channel) = get_live_channel(&ch.channel_type) {
-            match channel.send(&SendMessage::new(message, &ch.peer_id)).await {
-                Ok(()) => return Ok(()),
-                Err(e) => {
-                    warn!(
-                        "Channel {} delivery to {} failed: {}, trying next",
-                        ch.channel_type, ch.peer_id, e
-                    );
-                    continue;
-                }
-            }
-        }
-    }
-
-    anyhow::bail!(
-        "No live channel could deliver message (tried {} channels)",
-        channels.len()
-    )
-}
 
 // ── Huanxing-owned scheduled task parsing ─────────────────────────
 // Parses HEARTBEAT.md with `schedule:cron` support without modifying

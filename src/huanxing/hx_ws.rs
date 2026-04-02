@@ -78,6 +78,8 @@ struct AgentSession {
     /// tool-call events for the frontend.  In single-tenant mode it is
     /// `None` (the default observer configured in Agent is used instead).
     ws_observer: Option<std::sync::Arc<dyn crate::observability::Observer>>,
+    /// Agent ID / Name associated with this session.
+    agent_id: Option<String>,
 }
 
 /// The sub-protocol we support for the chat WebSocket.
@@ -420,6 +422,7 @@ async fn init_agent_session(
         session_key,
         session_backend: per_user_backend,
         ws_observer,
+        agent_id: agent_name.map(|s| s.to_string()),
     })
 }
 
@@ -468,6 +471,7 @@ async fn process_chat_message(
                         let call_id = format!("c{i}_{}", rec.name);
                         let tool_call = serde_json::json!({
                             "type": "tool_call",
+                            "agent": session.agent_id,
                             "session_id": session_id,
                             "call_id": call_id,
                             "name": rec.name,
@@ -480,6 +484,7 @@ async fn process_chat_message(
 
                         let tool_result = serde_json::json!({
                             "type": "tool_result",
+                            "agent": session.agent_id,
                             "session_id": session_id,
                             "call_id": call_id,
                             "status": if rec.success { "success" } else { "error" },
@@ -494,6 +499,7 @@ async fn process_chat_message(
 
             let done = serde_json::json!({
                 "type": "done",
+                "agent": session.agent_id,
                 "session_id": session_id,
                 "full_response": response,
             });

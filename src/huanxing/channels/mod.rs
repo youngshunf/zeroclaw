@@ -6,6 +6,7 @@
 
 pub mod napcat;
 pub mod wechat_pad;
+pub mod weixin;
 
 pub use napcat::NapcatChannel;
 pub use wechat_pad::WechatPadChannel;

@@ -883,17 +883,31 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
     #[cfg(feature = "huanxing")]
     {
         if config.huanxing.enabled && config.huanxing.hasn.enabled && config.huanxing.hasn.auto_connect {
-            if let Some(ref url) = config.huanxing.hasn.central_url {
+            let base_url = config.huanxing.hasn.central_url.clone()
+                .unwrap_or_else(|| {
+                    format!("{}/api/v1/hasn/ws/node", config.huanxing.hasn_url()
+                        .replace("https://", "wss://")
+                        .replace("http://", "ws://"))
+                });
+            
+            let auth_param = if let Some(api_key) = &config.huanxing.hasn.api_key {
+                format!("?api_key={}", api_key)
+            } else {
+                "".to_string()
+            };
+            
+            if !auth_param.is_empty() {
+                let url = format!("{}{}", base_url, auth_param);
                 let st = std::sync::Arc::new(state.clone());
-                let url = url.clone();
+                let max_retries = config.huanxing.hasn.max_retries;
                 tokio::spawn(async move {
                     tracing::info!("[HASN] Gateway启动，触发 HASN 自动连接...");
-                    if let Err(e) = crate::huanxing::hasn_connector::global_connector().connect(&url, st).await {
+                    if let Err(e) = crate::huanxing::hasn_connector::global_connector().connect_with_retry(&url, max_retries, st).await {
                         tracing::error!("[HASN] 自动连接 HASN 中央节点失败: {}", e);
                     }
                 });
             } else {
-                tracing::warn!("[HASN] HASN 已启用 auto_connect，但未配置 central_url");
+                tracing::warn!("[HASN] HASN 已启用 auto_connect，但未配置 API Key，无法建立认证连接");
             }
         }
     }

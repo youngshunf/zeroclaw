@@ -21,9 +21,10 @@ pub fn huanxing_all_tools(
 ) -> Vec<Arc<dyn Tool>> {
     let mut tool_arcs: Vec<Arc<dyn Tool>> = Vec::new();
 
+    let config_dir = root_config.config_path.parent().unwrap_or(&root_config.workspace_dir);
     let hx_db_path = root_config
         .huanxing
-        .resolve_db_path(&root_config.workspace_dir);
+        .resolve_db_path(config_dir);
 
     let hx_db = match super::TenantDb::open(&hx_db_path) {
         Ok(db) => db,

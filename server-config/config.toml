@@ -488,6 +488,18 @@ hasn_base_url = "https://api.huanxing.dcfuture.cn"
 agent_key = "wNYPBNNl61kwVLWgFW7N1yFJKb4yCqJxjSKy__RtG94"
 server_id = "huanxing-local-dev"              # 服务器部署时改为 "huanxing-115-test" 等
 
+# ── HASN 统一节点网络 ──
+[huanxing.hasn]
+enabled = true
+auto_connect = true
+# central_url 留空将自动从 hasn_base_url 推导 (例如: wss://api.huanxing.dcfuture.cn/api/v1/hasn/ws/node)
+# central_url = "wss://api.huanxing.dcfuture.cn/api/v1/hasn/ws/node"
+# 节点认证密钥 (由 HASN 管理员分发的 hasn_ak_ 前缀凭证)
+# api_key = "hasn_ak_xxxxx"
+node_type = "cloud"                           # 节点类型（cloud, desktop, web, mobile）
+capacity = 100                                # 当前节点可承载的最大 Agent 并发数
+max_retries = 10                              # 掉线重试次数
+
 # ── 模板系统 ──
 [huanxing.templates]
 # 模板特定覆盖（一般不需要，从 hub 自动读取）
