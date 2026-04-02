@@ -427,6 +427,7 @@ impl AgentFactory {
     }
 
     /// 从本地 hub 目录读取并创建 Agent (主要由 Cloud Backend API 或 CLI 调用)
+    /// 幂等：如果 target_dir 已存在，只补全缺失文件（config.toml 等），不覆盖已有文件。
     pub async fn create_local_agent(
         &self,
         templates_base_path: &Path, // e.g. `<workspace_dir>/hub/templates/`
@@ -435,8 +436,12 @@ impl AgentFactory {
     ) -> Result<crate::AgentCreated> {
         let tenant_root = self.resolve_tenant_root(&params.tenant_id);
         let target_dir = tenant_root.join("agents").join(&params.agent_name);
-        if target_dir.exists() {
-            anyhow::bail!("Agent 目录已存在: {}", params.agent_name);
+        let already_exists = target_dir.exists();
+        if already_exists {
+            tracing::info!(
+                "Agent 目录已存在，将补全缺失文件: {}",
+                target_dir.display()
+            );
         }
 
         let workspace = target_dir.join("workspace");

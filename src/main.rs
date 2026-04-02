@@ -1252,61 +1252,21 @@ async fn main() -> Result<()> {
                 }
             }
 
-            // If the target agent directory already exists (re-run or post-migration),
-            // skip factory creation but ensure Owner Workspace exists.
-            let target_agent_dir = factory
-                .resolve_tenant_root(&expected_tenant_dir)
-                .join("agents")
-                .join(&agent_name);
-
-            if target_agent_dir.exists() {
-                tracing::info!(
-                    path = %target_agent_dir.display(),
-                    "Agent directory already exists, ensuring Owner Workspace"
-                );
-                // Ensure Owner Workspace exists even if agent was migrated or pre-existing
-                let owner_ws = factory
-                    .resolve_tenant_root(&expected_tenant_dir)
-                    .join("workspace");
-                std::fs::create_dir_all(owner_ws.join("memory"))?;
-                tracing::info!("Owner workspace ensured at {}", owner_ws.display());
-
-                // 修复：如果 agent config.toml 缺失（旧版迁移后遗症），从嵌入式模板补全
-                let wrapper_config = target_agent_dir.join("config.toml");
-                let ws_config = target_agent_dir.join("workspace").join("config.toml");
-                if !wrapper_config.exists() && !ws_config.exists() {
-                    tracing::info!("Agent config.toml missing, generating from embedded template");
-                    let def = huanxing_agent_factory::engine::fallback_template(&params.template_id);
-                    let now = chrono::Utc::now().format("%Y-%m-%d %H:%M").to_string();
-                    if let Some(scaffold) = huanxing_agent_factory::scaffold::agent_scaffold()
-                        .into_iter()
-                        .find(|s| s.name == "config.toml.template")
-                    {
-                        let content = huanxing_agent_factory::engine::substitute_placeholders_pub(
-                            scaffold.content,
-                            &params,
-                            &def,
-                            &now,
-                        );
-                        std::fs::write(&wrapper_config, content)?;
-                        tracing::info!("Agent config.toml generated at {}", wrapper_config.display());
-                    }
+            // Always call create_local_agent (now idempotent):
+            // - 首次创建：完整生成所有文件
+            // - 目录已存在（迁移后遗症）：补全缺失的 config.toml 等文件
+            // 与 install_from_market 使用完全相同的 process_workspace + promote 流程
+            match factory
+                .create_local_agent(&template_base, &params, &CLIProgress)
+                .await
+            {
+                Ok(res) => {
+                    tracing::info!("Agent created/repaired at {}", res.workspace_dir.display());
+                    Ok(())
                 }
-
-                Ok(())
-            } else {
-                match factory
-                    .create_local_agent(&template_base, &params, &CLIProgress)
-                    .await
-                {
-                    Ok(res) => {
-                        tracing::info!("Agent created at {}", res.workspace_dir.display());
-                        Ok(())
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to create agent: {}", e);
-                        Err(e)
-                    }
+                Err(e) => {
+                    tracing::error!("Failed to create agent: {}", e);
+                    Err(e)
                 }
             }
         }
