@@ -1270,6 +1270,29 @@ async fn main() -> Result<()> {
                     .join("workspace");
                 std::fs::create_dir_all(owner_ws.join("memory"))?;
                 tracing::info!("Owner workspace ensured at {}", owner_ws.display());
+
+                // 修复：如果 agent config.toml 缺失（旧版迁移后遗症），从嵌入式模板补全
+                let wrapper_config = target_agent_dir.join("config.toml");
+                let ws_config = target_agent_dir.join("workspace").join("config.toml");
+                if !wrapper_config.exists() && !ws_config.exists() {
+                    tracing::info!("Agent config.toml missing, generating from embedded template");
+                    let def = huanxing_agent_factory::engine::fallback_template(&params.template_id);
+                    let now = chrono::Utc::now().format("%Y-%m-%d %H:%M").to_string();
+                    if let Some(scaffold) = huanxing_agent_factory::scaffold::agent_scaffold()
+                        .into_iter()
+                        .find(|s| s.name == "config.toml.template")
+                    {
+                        let content = huanxing_agent_factory::engine::substitute_placeholders_pub(
+                            scaffold.content,
+                            &params,
+                            &def,
+                            &now,
+                        );
+                        std::fs::write(&wrapper_config, content)?;
+                        tracing::info!("Agent config.toml generated at {}", wrapper_config.display());
+                    }
+                }
+
                 Ok(())
             } else {
                 match factory

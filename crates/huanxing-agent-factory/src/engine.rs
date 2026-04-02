@@ -5,7 +5,7 @@ use crate::market_api::{download_bytes, get_download_info, unzip_buffer};
 use crate::types::TemplateDefinition;
 use crate::{AgentFactory, CreateAgentParams, ProgressSink};
 
-fn fallback_template(id: &str) -> TemplateDefinition {
+pub fn fallback_template(id: &str) -> TemplateDefinition {
     TemplateDefinition {
         id: id.to_string(),
         name: id.to_string(),
@@ -54,6 +54,16 @@ fn substitute_placeholders(
         .replace("{{template}}", &params.template_id)
         .replace("{{created_at}}", now)
         .replace("{{createdAt}}", now)
+}
+
+/// Public wrapper for substitute_placeholders — used by main.rs config repair logic
+pub fn substitute_placeholders_pub(
+    content: &str,
+    params: &CreateAgentParams,
+    def: &TemplateDefinition,
+    now: &str,
+) -> String {
+    substitute_placeholders(content, params, def, now)
 }
 
 #[cfg(test)]
