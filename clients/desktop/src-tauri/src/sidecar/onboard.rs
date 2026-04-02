@@ -146,7 +146,7 @@ impl SidecarManager {
         }
 
         // 6. 启动 sidecar
-        match self.start(app).await {
+        match self.start(app.clone()).await {
             Ok(status) => {
                 result.sidecar_started = true;
                 tracing::info!(
@@ -154,6 +154,14 @@ impl SidecarManager {
                     status.pid,
                     status.port
                 );
+
+                // 7. Onboard 完成后立即后台预热市场缓存 + 下载公共技能
+                //    首次安装时 lib.rs 的 setup 因 config_valid=false 而跳过了此步骤
+                let market_handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    crate::commands::marketplace::sync_marketplace_data(Some(market_handle))
+                        .await;
+                });
             }
             Err(e) => {
                 tracing::warn!("Sidecar start failed after onboard: {e}");
