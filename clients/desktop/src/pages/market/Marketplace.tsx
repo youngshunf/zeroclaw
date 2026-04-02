@@ -212,11 +212,18 @@ function AgentPlaza() {
   const [loading, setLoading] = useState(true);
   const [installing, setInstalling] = useState<string | null>(null);
 
-  useEffect(() => {
+  const fetchApps = () => {
     getMarketApps()
       .then((res) => setApps(res.items || []))
       .catch((err) => console.error('Failed to get market apps', err))
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    fetchApps();
+    // 监听后端同步完成事件，解决首次启动竞态问题
+    const unlisten = listen('marketplace-synced', () => { fetchApps(); });
+    return () => { unlisten.then(f => f()); };
   }, []);
 
   // Modal States
@@ -257,8 +264,18 @@ function AgentPlaza() {
     }
   };
 
-  if (loading) return <div className="p-8 text-gray-400">Loading...</div>;
-  if (!apps.length) return <div className="p-8 text-gray-400">广场空空如也。</div>;
+  if (loading) return (
+    <div className="flex flex-col items-center justify-center py-20 text-hx-text-tertiary">
+      <Loader2 className="w-6 h-6 animate-spin mb-3 text-indigo-400" />
+      <span className="text-sm">正在加载广场数据...</span>
+    </div>
+  );
+  if (!apps.length) return (
+    <div className="flex flex-col items-center justify-center py-20 text-hx-text-tertiary">
+      <Bot className="w-10 h-10 mb-3 opacity-30" />
+      <span className="text-sm">暂无上架内容，请稍后再试</span>
+    </div>
+  );
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -324,17 +341,23 @@ function SkillMarket() {
   const { showModal, setShowModal, installStatus, setInstallStatus, installSteps, setInstallSteps, installError, setInstallError, scrollRef } = useInstallManager();
   const [targetSkill, setTargetSkill] = useState<MarketSkill | null>(null);
 
-  useEffect(() => {
+  const fetchSkills = () => {
     Promise.all([getMarketSkills(), listAgents()])
       .then(([skillRes, agentsRes]) => {
         setSkills(skillRes.items || []);
         setLocalAgents(agentsRes.agents || []);
         if (agentsRes.agents?.length > 0) {
-          setSelectedAgent(agentsRes.agents[0].name);
+          setSelectedAgent(prev => prev || agentsRes.agents[0].name);
         }
       })
       .catch((err) => console.error('Failed to init skills', err))
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    fetchSkills();
+    const unlisten = listen('marketplace-synced', () => { fetchSkills(); });
+    return () => { unlisten.then(f => f()); };
   }, []);
 
   const openInstallModal = (skill: MarketSkill) => {
@@ -368,8 +391,18 @@ function SkillMarket() {
     }
   };
 
-  if (loading) return <div className="p-8 text-gray-400">Loading...</div>;
-  if (!skills.length) return <div className="p-8 text-gray-400">技能市场尚未上架内容。</div>;
+  if (loading) return (
+    <div className="flex flex-col items-center justify-center py-20 text-hx-text-tertiary">
+      <Loader2 className="w-6 h-6 animate-spin mb-3 text-emerald-400" />
+      <span className="text-sm">正在加载技能数据...</span>
+    </div>
+  );
+  if (!skills.length) return (
+    <div className="flex flex-col items-center justify-center py-20 text-hx-text-tertiary">
+      <Wrench className="w-10 h-10 mb-3 opacity-30" />
+      <span className="text-sm">暂无上架技能，请稍后再试</span>
+    </div>
+  );
 
   return (
     <div className="space-y-6">
@@ -432,17 +465,23 @@ function SopMarket() {
   const { showModal, setShowModal, installStatus, setInstallStatus, installSteps, setInstallSteps, installError, setInstallError, scrollRef } = useInstallManager();
   const [targetSop, setTargetSop] = useState<MarketSop | null>(null);
 
-  useEffect(() => {
+  const fetchSops = () => {
     Promise.all([getMarketSops(), listAgents()])
       .then(([sopRes, agentsRes]) => {
         setSops(sopRes.items || []);
         setLocalAgents(agentsRes.agents || []);
         if (agentsRes.agents?.length > 0) {
-          setSelectedAgent(agentsRes.agents[0].name);
+          setSelectedAgent(prev => prev || agentsRes.agents[0].name);
         }
       })
       .catch((err) => console.error('Failed to init sops', err))
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    fetchSops();
+    const unlisten = listen('marketplace-synced', () => { fetchSops(); });
+    return () => { unlisten.then(f => f()); };
   }, []);
 
   const openInstallModal = (sop: MarketSop) => {
@@ -486,8 +525,18 @@ function SopMarket() {
     }
   };
 
-  if (loading) return <div className="p-8 text-gray-400">Loading...</div>;
-  if (!sops.length) return <div className="p-8 text-gray-400">工作流市场尚未上架内容。</div>;
+  if (loading) return (
+    <div className="flex flex-col items-center justify-center py-20 text-hx-text-tertiary">
+      <Loader2 className="w-6 h-6 animate-spin mb-3 text-blue-400" />
+      <span className="text-sm">正在加载工作流数据...</span>
+    </div>
+  );
+  if (!sops.length) return (
+    <div className="flex flex-col items-center justify-center py-20 text-hx-text-tertiary">
+      <Workflow className="w-10 h-10 mb-3 opacity-30" />
+      <span className="text-sm">暂无上架工作流，请稍后再试</span>
+    </div>
+  );
 
   return (
     <div className="space-y-6">
