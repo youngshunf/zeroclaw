@@ -13,3 +13,44 @@
   --color-electric-700: #0f57dd;
   --color-electric-900: #031126;
 }
+
+@media print {
+  /* Hide everything in the body by default */
+  body * {
+    visibility: hidden;
+  }
+
+  /* Force all typical height-restricting containers to expand fully */
+  html, body, #root, .h-full, .overflow-y-auto, .overflow-hidden {
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  /* Only show the markdown content and its children */
+  .hx-markdown, .hx-markdown * {
+    visibility: visible;
+  }
+
+  /* Position it absolute so it takes over the printed page precisely */
+  .hx-markdown {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: white !important;
+    color: black !important;
+  }
+
+  /* Ensure Mermaid graphs fit nicely */
+  .hx-markdown svg {
+    max-width: 100% !important;
+  }
+  
+  /* Remove excessive bottom padding */
+  .pb-\[20vh\] {
+    padding-bottom: 0 !important;
+  }
+}

@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
-import { FileText, Plus, Search, Loader2, Save, Trash2, Globe, Lock, Edit3, Share2, BookOpen, X, Copy, ChevronRight, ChevronDown, Folder, FolderPlus, FilePlus, ArrowRightLeft, PanelRightClose, PanelRightOpen, Check, Clock, KeyRound, Eye, Pencil, Download, Link, Handshake } from 'lucide-react';
+import { FileText, Plus, Search, Loader2, Save, Trash2, Globe, Lock, Edit3, Share2, BookOpen, X, Copy, ChevronRight, ChevronDown, Folder, FolderPlus, FilePlus, ArrowRightLeft, PanelRightClose, PanelRightOpen, Check, Clock, KeyRound, Eye, Pencil, Download, Link, Handshake, Printer } from 'lucide-react';
 import TipTapEditor from '@/components/TipTapEditor';
 import MarkdownPreview from '@/components/MarkdownPreview';
 import { getHuanxingSession, HUANXING_CONFIG } from '@/config';
@@ -338,6 +338,13 @@ export default function Documents() {
   };
 
   // ========== 导出逻辑 ==========
+  const handlePrint = () => {
+    setIsExportMenuOpen(false);
+    requestAnimationFrame(() => {
+      window.print();
+    });
+  };
+
   const handleExport = async (format: 'markdown' | 'pdf' | 'docx') => {
     if (!selectedDoc) return;
     try {
@@ -345,17 +352,77 @@ export default function Documents() {
       if (!session?.accessToken) return;
       setIsExporting(format);
       setIsExportMenuOpen(false);
-      const { blob, filename } = await exportHuanxingDocumentApi(session.accessToken, selectedDoc.id, format);
+      const isDesktop = !!((window as any).__TAURI_INTERNALS__ || (window as any).__TAURI__);
       
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      a.click();
-      URL.revokeObjectURL(url);
+      // 前端纯原生直出 PDF (拦截后端，静默生成下载)
+      if (format === 'pdf' && isDesktop) {
+        let element = document.querySelector('.hx-markdown') as HTMLElement;
+        if (!element) {
+          alert('未能找到文档内容，请重试');
+          setIsExporting(null);
+          return;
+        }
+
+        // 动态加载确保性能
+        const html2pdf = (await import('html2pdf.js')).default;
+        
+        const opt = {
+          margin:       10,
+          filename:     `${selectedDoc.title}.pdf`,
+          image:        { type: 'jpeg' as const, quality: 0.98 },
+          html2canvas:  { scale: 2, useCORS: true, logging: false },
+          jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' as const }
+        };
+
+        const pdfBlob = await html2pdf().from(element).set(opt).output('blob');
+        
+        const { save } = await import('@tauri-apps/plugin-dialog');
+        const { writeFile } = await import('@tauri-apps/plugin-fs');
+        
+        const filePath = await save({
+          defaultPath: `${selectedDoc.title}.pdf`,
+          filters: [{ name: 'PDF', extensions: ['pdf'] }]
+        });
+        
+        if (filePath) {
+          const arrayBuffer = await pdfBlob.arrayBuffer();
+          await writeFile(filePath, new Uint8Array(arrayBuffer));
+          alert(`PDF 分享已成功保存到: ${filePath}`);
+        }
+        setIsExporting(null);
+        return;
+      }
+      
+      const { blob, filename } = await exportHuanxingDocumentApi(session.accessToken, selectedDoc.id, format);
+
+      if (isDesktop) {
+        const { save } = await import('@tauri-apps/plugin-dialog');
+        const { writeFile } = await import('@tauri-apps/plugin-fs');
+        
+        const filePath = await save({
+          defaultPath: filename,
+          filters: [{ 
+            name: format.toUpperCase(), 
+            extensions: [format === 'markdown' ? 'md' : format] 
+          }]
+        });
+        
+        if (filePath) {
+          const arrayBuffer = await blob.arrayBuffer();
+          await writeFile(filePath, new Uint8Array(arrayBuffer));
+          alert(`文件已保存到: ${filePath}`);
+        }
+      } else {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
     } catch (err: any) {
       console.error('Export failed:', err);
-      alert('导出失败: ' + err.message + '\n如果 PDF 失败请检查服务端 WeasyPrint 依赖。');
+      alert('导出失败: ' + err.message + '\n如果 PDF/DOCX 失败，请检查服务端的 WeasyPrint 和 Pandoc 依赖。');
     } finally {
       setIsExporting(null);
     }
@@ -716,6 +783,10 @@ export default function Documents() {
                              </button>
                              <button onClick={() => handleExport('docx')} className="w-full text-left px-4 py-2 text-[13px] text-hx-text-primary hover:bg-hx-bg-hover transition-colors cursor-pointer border-none bg-transparent flex items-center gap-2">
                                  <FileText size={14} className="text-blue-500/70" /> Word 文档
+                             </button>
+                             <div className="h-px bg-hx-border my-1"></div>
+                             <button onClick={handlePrint} className="w-full text-left px-4 py-2 text-[13px] text-hx-text-primary hover:bg-hx-bg-hover transition-colors cursor-pointer border-none bg-transparent flex items-center gap-2">
+                                 <Printer size={14} className="text-hx-text-tertiary" /> 打印文档
                              </button>
                            </div>
                          </>

@@ -15,6 +15,7 @@
     "core:window:allow-set-size",
     "core:window:allow-center",
     "dialog:default",
-    "fs:default"
+    "fs:default",
+    "core:webview:allow-print"
   ]
 }
