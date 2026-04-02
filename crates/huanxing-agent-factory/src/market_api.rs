@@ -9,7 +9,7 @@ pub async fn get_download_info(
     resource_id: &str,
 ) -> Result<serde_json::Value> {
     let url = format!(
-        "{}/api/v1/marketplace/client/download/{}/{}",
+        "{}/api/v1/marketplace/client/download/{}/{}/latest",
         api_base, resource_type, resource_id
     );
     let client = Client::builder()
@@ -21,8 +21,13 @@ pub async fn get_download_info(
         anyhow::bail!("Market API error: {}", resp.status());
     }
 
-    let info = resp.json::<serde_json::Value>().await?;
-    Ok(info)
+    let json = resp.json::<serde_json::Value>().await?;
+
+    // API 响应格式: { "code": 0, "data": { "package_url": "..." } }
+    // 提取 .data 返回，与 desktop marketplace.rs 的 get_download_info 保持一致
+    json.get("data")
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("API 响应缺少 data 字段"))
 }
 
 pub async fn download_bytes(url: &str) -> Result<Vec<u8>> {
