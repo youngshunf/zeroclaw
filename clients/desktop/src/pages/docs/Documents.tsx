@@ -355,39 +355,60 @@ export default function Documents() {
       const isDesktop = !!((window as any).__TAURI_INTERNALS__ || (window as any).__TAURI__);
       
       // 前端纯原生直出 PDF (拦截后端，静默生成下载)
-      if (format === 'pdf' && isDesktop) {
-        let element = document.querySelector('.hx-markdown') as HTMLElement;
-        if (!element) {
+      if (format === 'pdf') {
+        const source = document.querySelector('.hx-markdown') as HTMLElement;
+        if (!source) {
           alert('未能找到文档内容，请重试');
           setIsExporting(null);
           return;
         }
 
-        // 动态加载确保性能
-        const html2pdf = (await import('html2pdf.js')).default;
-        
-        const opt = {
-          margin:       10,
-          filename:     `${selectedDoc.title}.pdf`,
-          image:        { type: 'jpeg' as const, quality: 0.98 },
-          html2canvas:  { scale: 2, useCORS: true, logging: false },
-          jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' as const }
-        };
+        // 将 .hx-markdown 克隆到一个临时全高无滚动的离屏容器中
+        // 这样 html2canvas 才能捕获到完整的文档内容（而非仅可见区域）
+        const offscreen = document.createElement('div');
+        offscreen.style.cssText = `
+          position: fixed; left: -9999px; top: 0;
+          width: 800px; height: auto; overflow: visible;
+          background: white; color: black; z-index: -1;
+        `;
+        const clone = source.cloneNode(true) as HTMLElement;
+        clone.style.cssText = 'height: auto; overflow: visible; padding-bottom: 0;';
+        offscreen.appendChild(clone);
+        document.body.appendChild(offscreen);
 
-        const pdfBlob = await html2pdf().from(element).set(opt).output('blob');
-        
-        const { save } = await import('@tauri-apps/plugin-dialog');
-        const { writeFile } = await import('@tauri-apps/plugin-fs');
-        
-        const filePath = await save({
-          defaultPath: `${selectedDoc.title}.pdf`,
-          filters: [{ name: 'PDF', extensions: ['pdf'] }]
-        });
-        
-        if (filePath) {
-          const arrayBuffer = await pdfBlob.arrayBuffer();
-          await writeFile(filePath, new Uint8Array(arrayBuffer));
-          alert(`PDF 分享已成功保存到: ${filePath}`);
+        try {
+          const html2pdf = (await import('html2pdf.js')).default;
+          
+          const opt = {
+            margin:       10,
+            filename:     `${selectedDoc.title}.pdf`,
+            image:        { type: 'jpeg' as const, quality: 0.98 },
+            html2canvas:  { scale: 2, useCORS: true, logging: false, scrollY: 0 },
+            jsPDF:        { unit: 'mm' as const, format: 'a4' as const, orientation: 'portrait' as const }
+          };
+
+          const pdfBlob: Blob = await html2pdf().from(clone).set(opt).output('blob');
+          
+          if (isDesktop) {
+            const { save } = await import('@tauri-apps/plugin-dialog');
+            const { writeFile } = await import('@tauri-apps/plugin-fs');
+            const filePath = await save({
+              defaultPath: `${selectedDoc.title}.pdf`,
+              filters: [{ name: 'PDF', extensions: ['pdf'] }]
+            });
+            if (filePath) {
+              const arrayBuffer = await pdfBlob.arrayBuffer();
+              await writeFile(filePath, new Uint8Array(arrayBuffer));
+              alert(`PDF 已保存到: ${filePath}`);
+            }
+          } else {
+            const url = URL.createObjectURL(pdfBlob);
+            const a = document.createElement('a');
+            a.href = url; a.download = `${selectedDoc.title}.pdf`; a.click();
+            URL.revokeObjectURL(url);
+          }
+        } finally {
+          document.body.removeChild(offscreen);
         }
         setIsExporting(null);
         return;
