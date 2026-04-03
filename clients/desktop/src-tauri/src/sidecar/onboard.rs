@@ -112,6 +112,11 @@ impl SidecarManager {
         // llm_gateway 用于 TTS/STT api_url 占位符
         create_cmd.arg("--llm-gateway").arg(&llm_gateway);
 
+        // 传递 llm_token → api_key，写入用户级 config.toml
+        if !req.llm_token.is_empty() {
+            create_cmd.arg("--api-key").arg(&req.llm_token);
+        }
+
         create_cmd.env("ZEROCLAW_BUILD_VERSION", "huanxing-desktop");
 
         tracing::info!("Running zeroClaw agent-create: {:?}", create_cmd);

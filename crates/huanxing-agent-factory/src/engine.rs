@@ -436,6 +436,12 @@ impl AgentFactory {
     ) -> Result<crate::AgentCreated> {
         let tenant_root = self.resolve_tenant_root(&params.tenant_id);
         let target_dir = tenant_root.join("agents").join(&params.agent_name);
+        tracing::info!(
+            agent_name = %params.agent_name,
+            target_dir = %target_dir.display(),
+            tenant_root = %tenant_root.display(),
+            "create_local_agent: resolved paths"
+        );
         let already_exists = target_dir.exists();
         if already_exists {
             tracing::info!(
@@ -478,8 +484,18 @@ impl AgentFactory {
         // ZeroClaw 运行时期望 config 在 agents/{name}/config.toml，而非 workspace/ 内
         let ws_config = workspace.join("config.toml");
         let wrapper_config = target_dir.join("config.toml");
+        tracing::warn!(
+            ws_config_exists = ws_config.exists(),
+            wrapper_config_exists = wrapper_config.exists(),
+            ws_config_path = %ws_config.display(),
+            wrapper_config_path = %wrapper_config.display(),
+            target_dir = %target_dir.display(),
+            workspace = %workspace.display(),
+            "PROMOTE DIAGNOSTIC: about to promote config.toml"
+        );
         if ws_config.exists() && !wrapper_config.exists() {
             tokio::fs::rename(&ws_config, &wrapper_config).await?;
+            tracing::info!("Promoted config.toml to {}", wrapper_config.display());
         }
 
         // Promote icon.svg/icon.png to wrapper layer

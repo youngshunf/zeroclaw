@@ -277,6 +277,9 @@ Examples:
         /// LLM gateway V1 URL for TTS/STT api_url
         #[arg(long)]
         llm_gateway: Option<String>,
+        /// LLM API key (from login llm_token) — written to user config.toml
+        #[arg(long)]
+        api_key: Option<String>,
     },
 
     /// Start/manage the gateway server (webhooks, websockets)
@@ -1097,6 +1100,7 @@ async fn main() -> Result<()> {
             fallback_provider,
             embedding_provider,
             llm_gateway,
+            api_key,
         } => {
             let config_dir = config
                 .config_path
@@ -1235,7 +1239,7 @@ async fn main() -> Result<()> {
                 user_nickname: user_nickname.unwrap_or_default(),
                 provider,
                 model: None,
-                api_key: None,
+                api_key,
                 hasn_id,
                 fallback_provider,
                 embedding_provider,

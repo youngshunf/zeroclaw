@@ -208,7 +208,7 @@ async fn list_agents(
                     continue;
                 }
 
-                let ws_cfg = load_workspace_config(&path).await;
+                let ws_cfg = load_workspace_config(&path.join("workspace")).await;
                 let icon_url = if path.join("icon.svg").exists() {
                     Some(format!(
                         "/api/agents/{}/files/icon.svg?raw=true",
