@@ -1013,3 +1013,96 @@
   @apply border-hx-border;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.2);
 }
+
+/* ── 移动端聊天适配 ── */
+@media (max-width: 768px) {
+  /* Chat header 更紧凑 */
+  .hx-chat-header {
+    padding: 8px 12px;
+  }
+
+  .hx-chat-header-avatar {
+    width: 32px;
+    height: 32px;
+    font-size: 13px;
+  }
+
+  .hx-chat-header-info h3 {
+    font-size: 14px;
+  }
+
+  /* 消息气泡 */
+  .hx-msg {
+    padding: 6px 12px;
+    gap: 8px;
+  }
+
+  .hx-msg-avatar {
+    width: 28px;
+    height: 28px;
+    font-size: 11px;
+  }
+
+  .hx-msg-bubble {
+    max-width: 85%;
+    padding: 8px 12px;
+    font-size: 14px;
+  }
+
+  /* 消息列表滚动触摸优化 */
+  .hx-messages {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
+    padding-bottom: 8px;
+  }
+
+  /* 输入区域 safe area */
+  .hx-chat-input-wrap {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  /* 输入框增高以方便触摸 */
+  .hx-chat-input-area textarea {
+    min-height: 40px;
+    font-size: 16px; /* 防止 iOS 自动放大 */
+  }
+
+  /* 空状态适配 */
+  .hx-empty-state .icon {
+    font-size: 40px;
+  }
+
+  .hx-empty-state h3 {
+    font-size: 16px;
+  }
+
+  .hx-empty-state p {
+    font-size: 13px;
+    padding: 0 20px;
+  }
+
+  /* 会话列表面板 */
+  .hx-panel {
+    border-right: none;
+  }
+
+  .hx-panel-header {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+
+  /* 会话项触控热区 */
+  .hx-conv-item {
+    min-height: 64px;
+    padding: 10px 12px;
+  }
+
+  /* 斜杠菜单 / @提及菜单移动端适配 */
+  .hx-slash-menu,
+  .hx-mention-menu {
+    max-width: calc(100vw - 24px);
+    max-height: 50vh;
+    left: 12px !important;
+    right: 12px !important;
+    width: auto !important;
+  }
+}

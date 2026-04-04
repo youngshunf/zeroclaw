@@ -84,7 +84,10 @@ pub struct OnboardRequest {
     pub api_base_url: Option<String>,
     /// LLM 网关地址（含 /v1 后缀），如 http://127.0.0.1:3180/v1
     pub llm_gateway_url: Option<String>,
-    pub hasn_api_key: Option<String>,
+    /// HASN Node Key (hasn_nk_ 前缀)
+    /// 前端通过 hasn_node_key 传入
+    #[serde(alias = "hasn_api_key")]
+    pub hasn_node_key: Option<String>,
     /// 默认 LLM provider (e.g. "custom:http://127.0.0.1:3180/v1")
     pub default_provider: Option<String>,
     /// 降级 fallback provider (e.g. "custom:https://llm.dcfuture.cn/v1")

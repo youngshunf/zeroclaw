@@ -27,6 +27,25 @@
      to { transform: rotate(360deg); }
    }
    
+   /* ---------- Mobile Layout Overrides ---------- */
+   @media (max-width: 768px) {
+     .hx-app {
+       @apply flex-col;
+     }
+
+     .hx-app-mobile {
+       padding-top: env(safe-area-inset-top, 0px);
+     }
+
+     .hx-content {
+       @apply flex-1 flex flex-col;
+     }
+
+     .hx-panel {
+       @apply w-full min-w-0 border-r-0 border-b border-hx-border;
+     }
+   }
+   
    /* ---------- Nav Rail ---------- */
    .hx-nav-rail {
      @apply w-[var(--hx-rail-width)] min-w-[var(--hx-rail-width)] bg-hx-bg-rail border-r border-hx-border flex flex-col items-center pt-[44px] pb-5 gap-2 z-10;

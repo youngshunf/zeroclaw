@@ -37,22 +37,28 @@ impl AuthState {
     }
 }
 
-/// 客户端认证状态 (对齐 29/30 文档)
+/// 节点认证状态（v5.0 统一节点模型）
+///
+/// 对齐协议: Node Key (hasn_nk_) 认证，取代旧 Client JWT
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ClientAuth {
-    /// 客户端 ID (c_{uuid_short})
-    pub client_id: String,
+pub struct NodeAuth {
+    /// 节点 ID (n_{uuid_short})
+    pub node_id: String,
 
-    /// Client JWT (用于 WebSocket 连接)
-    pub client_jwt: String,
+    /// Node Key (hasn_nk_ 前缀)
+    pub node_key: String,
 
-    /// 客户端类型
-    pub client_type: String,
+    /// 节点类型 (desktop / mobile / web / cloud)
+    pub node_type: String,
 
     /// 设备名称
     #[serde(skip_serializing_if = "Option::is_none")]
     pub device_name: Option<String>,
 }
+
+/// 兼容别名（过渡期）
+#[deprecated(note = "使用 NodeAuth 代替")]
+pub type ClientAuth = NodeAuth;
 
 /// 登录响应 (平台 /auth/phone-login)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -90,25 +96,36 @@ pub struct HasnAgentOut {
     pub hasn_id: String,
     pub star_id: String,
     pub name: String,
+    /// Agent Key (hasn_ak_ 前缀)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub api_key: Option<String>,
+    pub agent_key: Option<String>,
 }
 
-/// 客户端注册响应
+/// 节点注册响应（v5.0）
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RegisterClientResponse {
-    pub client_id: String,
-    pub client_type: String,
+pub struct RegisterNodeResponse {
+    pub node_id: String,
+    pub node_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub device_name: Option<String>,
 }
 
-/// Client JWT 签发响应
+/// 兼容别名
+#[deprecated(note = "使用 RegisterNodeResponse 代替")]
+pub type RegisterClientResponse = RegisterNodeResponse;
+
+/// Node Key 签发响应
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ClientTokenResponse {
-    pub client_jwt: String,
-    pub client_id: String,
+pub struct NodeKeyResponse {
+    pub node_key: String,
+    pub node_id: String,
 }
+
+/// 兼容别名
+#[deprecated(note = "使用 NodeKeyResponse 代替")]
+pub type ClientTokenResponse = NodeKeyResponse;
 
 /// Agent 信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -119,8 +136,12 @@ pub struct AgentInfo {
     pub agent_name: String,
     #[serde(rename = "type")]
     pub agent_type: String,
+    #[serde(default)]
+    pub role: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub server_id: Option<String>,
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<serde_json::Value>,
     pub online: bool,
     pub created_via: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -134,8 +155,9 @@ pub struct RegisterAgentResponse {
     pub star_id: String,
     pub name: String,
     pub agent_name: String,
+    /// Agent Key (首次创建时返回明文)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub api_key: Option<String>,
+    pub agent_key: Option<String>,
     #[serde(default)]
     pub already_exists: bool,
 }

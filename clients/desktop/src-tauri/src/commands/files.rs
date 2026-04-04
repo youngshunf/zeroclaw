@@ -41,6 +41,7 @@ pub async fn copy_file_to_workspace(
 }
 
 /// 获取当前 Agent 工作区目录
+#[cfg(not(mobile))]
 #[tauri::command]
 pub fn get_workspace_dir(
     manager: tauri::State<'_, std::sync::Arc<crate::sidecar::manager::SidecarManager>>,

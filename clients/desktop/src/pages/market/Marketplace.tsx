@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Bot, Wrench, Workflow, Download, Loader2, CheckCircle, XCircle } from 'lucide-react';
 import { listen } from '@tauri-apps/api/event';
+import { usePlatform } from '@/hooks/usePlatform';
 import {
   getMarketApps,
   getMarketSkills,
@@ -770,27 +771,28 @@ function AgentSelector({ agents, selected, onChange, label }: { agents: AgentInf
 
 export default function Marketplace() {
   const [tab, setTab] = useState<'agents' | 'skills' | 'sops'>('agents');
+  const { isMobile } = usePlatform();
 
   const tabs = [
-    { key: 'agents' as const, label: 'Agent 广场', icon: Bot, color: '#7c3aed' },
-    { key: 'skills' as const, label: '技能资源', icon: Wrench, color: '#10b981' },
-    { key: 'sops' as const, label: '工作流市场', icon: Workflow, color: '#3b82f6' },
+    { key: 'agents' as const, label: isMobile ? 'Agent' : 'Agent 广场', icon: Bot, color: '#7c3aed' },
+    { key: 'skills' as const, label: isMobile ? '技能' : '技能资源', icon: Wrench, color: '#10b981' },
+    { key: 'sops' as const, label: isMobile ? '工作流' : '工作流市场', icon: Workflow, color: '#3b82f6' },
   ];
 
   return (
     <div className="flex h-full w-full flex-col bg-hx-bg-main min-w-0 text-hx-text-primary">
       <div 
-        className="shrink-0 border-b border-hx-border bg-hx-bg-panel pt-5 px-6 pb-3 relative z-10"
-        style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
-        data-tauri-drag-region
+        className={`shrink-0 border-b border-hx-border bg-hx-bg-panel ${isMobile ? 'pt-2 px-3 pb-2' : 'pt-5 px-6 pb-3'} relative z-10`}
+        style={isMobile ? undefined : { WebkitAppRegion: 'drag' } as React.CSSProperties}
+        data-tauri-drag-region={!isMobile}
       >
-        <div className="flex items-center justify-center w-full" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-          <div className="flex gap-1.5 bg-hx-bg-input p-1.5 rounded-hx-radius-md">
+        <div className="flex items-center justify-center w-full" style={isMobile ? undefined : { WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+          <div className={`flex gap-1.5 bg-hx-bg-input p-1.5 rounded-hx-radius-md ${isMobile ? 'w-full overflow-x-auto' : ''}`}>
             {tabs.map(t => (
               <button
                 key={t.key}
                 onClick={() => setTab(t.key)}
-                className={`flex items-center px-4 py-1.5 text-[13px] font-medium rounded-hx-radius-sm transition-all duration-150 border-none cursor-pointer ${
+                className={`flex items-center ${isMobile ? 'flex-1 justify-center px-2 py-2' : 'px-4 py-1.5'} text-[13px] font-medium rounded-hx-radius-sm transition-all duration-150 border-none cursor-pointer ${
                   tab === t.key 
                     ? 'bg-hx-bg-main text-hx-text-primary shadow-hx-shadow-sm' 
                     : 'bg-transparent text-hx-text-tertiary hover:text-hx-text-secondary'
@@ -803,7 +805,7 @@ export default function Marketplace() {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-6 min-h-0">
+      <div className={`flex-1 overflow-y-auto ${isMobile ? 'p-3' : 'p-6'} min-h-0`}>
         {tab === 'agents' && <AgentPlaza />}
         {tab === 'skills' && <SkillMarket />}
         {tab === 'sops' && <SopMarket />}

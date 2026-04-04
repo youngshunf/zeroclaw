@@ -153,6 +153,7 @@ pub fn agent_routes() -> Router<AppState> {
         .route("/api/agents", get(list_agents).post(create_agent))
         .route("/api/agents/{name}", delete(delete_agent))
         .route("/api/agents/{name}/hasn-id", post(update_agent_hasn_id))
+        .route("/api/agents/{name}/icon", get(serve_agent_icon))
         .route("/api/agents/{name}/files", get(list_files))
         .route(
             "/api/agents/{name}/files/{filename}",
@@ -209,14 +210,9 @@ async fn list_agents(
                 }
 
                 let ws_cfg = load_workspace_config(&path.join("workspace")).await;
-                let icon_url = if path.join("icon.svg").exists() {
+                let icon_url = if path.join("icon.svg").exists() || path.join("icon.png").exists() {
                     Some(format!(
-                        "/api/agents/{}/files/icon.svg?raw=true",
-                        urlencoding::encode(&name)
-                    ))
-                } else if path.join("icon.png").exists() {
-                    Some(format!(
-                        "/api/agents/{}/files/icon.png?raw=true",
+                        "/api/agents/{}/icon",
                         urlencoding::encode(&name)
                     ))
                 } else {
@@ -499,6 +495,47 @@ async fn update_agent_hasn_id(
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": format!("更新 users.db 失败: {e}")})),
+        )
+            .into_response(),
+    }
+}
+
+/// GET /api/agents/:name/icon — 返回 Agent 图标文件（从 wrapper 目录读取）
+async fn serve_agent_icon(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Path(name): Path<String>,
+) -> impl IntoResponse {
+    let config = state.config.lock().clone();
+    let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
+    let tenant_dir =
+        crate::huanxing::api_agents::extract_tenant_dir(&headers, config_dir, &config.huanxing)
+            .await;
+    let wrapper_dir =
+        config
+            .huanxing
+            .resolve_agent_wrapper_dir(config_dir, tenant_dir.as_deref(), &name);
+
+    // 按优先级查找: icon.svg > icon.png
+    let (icon_path, content_type) = if wrapper_dir.join("icon.svg").exists() {
+        (wrapper_dir.join("icon.svg"), "image/svg+xml")
+    } else if wrapper_dir.join("icon.png").exists() {
+        (wrapper_dir.join("icon.png"), "image/png")
+    } else {
+        return (StatusCode::NOT_FOUND, "图标不存在").into_response();
+    };
+
+    match tokio::fs::read(&icon_path).await {
+        Ok(bytes) => (
+            StatusCode::OK,
+            [(axum::http::header::CONTENT_TYPE, content_type),
+             (axum::http::header::CACHE_CONTROL, "public, max-age=86400")],
+            bytes,
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("读取图标失败: {e}"),
         )
             .into_response(),
     }

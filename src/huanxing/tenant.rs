@@ -407,6 +407,17 @@ impl TenantContext {
             .api_key
             .clone()
             .or_else(|| global_config.api_key.clone());
+        tracing::info!(
+            "[tenant] api_key cascade for agent={}: \
+             overrides.api_key={}, global_config.api_key={}, \
+             effective_api_key={}, provider={:?}, model={:?}",
+            agent_id,
+            overrides.api_key.is_some(),
+            global_config.api_key.is_some(),
+            effective_api_key.is_some(),
+            effective_provider,
+            effective_model,
+        );
         let effective_temperature = overrides.default_temperature;
         let agent_override_table = overrides.agent.as_partial_table();
         let effective_agent_config =

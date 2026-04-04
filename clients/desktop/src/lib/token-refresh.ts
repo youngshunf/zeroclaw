@@ -59,20 +59,31 @@ export async function refreshTokenNow(): Promise<boolean> {
 
 function scheduleRefresh(): void {
   const session = getHuanxingSession();
-  if (!session?.accessTokenExpireTime) return;
+  if (!session?.accessTokenExpireTime) {
+    console.log('[token-refresh] 无 accessTokenExpireTime，跳过调度');
+    return;
+  }
 
   const expireTime = new Date(session.accessTokenExpireTime).getTime();
   const now = Date.now();
-  const delay = Math.max(expireTime - now - REFRESH_BEFORE_MS, 1000); // 最少 1 秒
 
-  console.log(`[token-refresh] 下次刷新: ${Math.round(delay / 1000)}s 后`);
+  // 防御：如果过期时间解析失败（NaN），不调度刷新，避免误 logout
+  if (isNaN(expireTime)) {
+    console.warn('[token-refresh] accessTokenExpireTime 解析失败:', session.accessTokenExpireTime);
+    return;
+  }
+
+  // 最少 30s 延迟，避免登录后立即触发 refresh → 失败 → logout 的竞态
+  const delay = Math.max(expireTime - now - REFRESH_BEFORE_MS, 30_000);
+
+  console.log(`[token-refresh] 下次刷新: ${Math.round(delay / 1000)}s 后 (expireTime=${session.accessTokenExpireTime})`);
 
   refreshTimer = setTimeout(async () => {
     const success = await refreshTokenNow();
     if (success) {
       scheduleRefresh(); // 刷新成功，安排下一次
     } else {
-      console.warn('[token-refresh] 刷新失败，需要重新登录');
+      console.error('[token-refresh] ⚠️ 刷新失败，触发 logout');
       handleLogout();
     }
   }, delay);
@@ -137,6 +148,8 @@ async function doRefresh(): Promise<boolean> {
 }
 
 function handleLogout(): void {
+  console.error('[token-refresh] ⚠️ handleLogout 触发 zeroclaw-unauthorized');
+  console.trace('[token-refresh] stack');
   stopTokenRefresh();
   clearHuanxingSession();
   clearToken();

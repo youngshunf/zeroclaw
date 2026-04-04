@@ -7,7 +7,7 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tracing::{error, info, warn};
 
 use crate::error::HasnError;
-use crate::model::{WsCommand, WsEvent};
+use crate::model::{HasnFrame, build_ping};
 
 /// WebSocket 连接状态
 #[derive(Debug, Clone, PartialEq)]
@@ -18,7 +18,9 @@ pub enum WsStatus {
     Reconnecting { attempt: u32 },
 }
 
-/// HASN 原生 WebSocket 客户端
+/// HASN 原生 WebSocket 客户端 (v2.0)
+///
+/// 帧格式: { "hasn": "hasn/2.0", "method": "hasn.xxx.yyy", "params": {...} }
 pub struct HasnWsClient {
     status: Arc<RwLock<WsStatus>>,
     /// 发送通道: 往这里写会通过WS发给服务端
@@ -43,11 +45,11 @@ impl HasnWsClient {
 
     /// 连接 WebSocket
     ///
-    /// `url`: wss://api.huanxing.dcfuture.cn/api/v1/hasn/ws/native?token=xxx
-    /// `on_event`: 收到服务端消息时回调
+    /// `url`: wss://{server}/api/v1/hasn/ws/node?node_key=hasn_nk_xxx
+    /// `on_event`: 收到服务端帧时回调（HasnFrame）
     pub async fn connect<F>(&self, url: &str, on_event: F) -> Result<(), HasnError>
     where
-        F: Fn(WsEvent) + Send + Sync + 'static,
+        F: Fn(HasnFrame) + Send + Sync + 'static,
     {
         // 先断开旧连接
         self.disconnect().await;
@@ -85,10 +87,10 @@ impl HasnWsClient {
                     Some(msg) = read.next() => {
                         match msg {
                             Ok(Message::Text(text)) => {
-                                match serde_json::from_str::<WsEvent>(&text) {
-                                    Ok(event) => on_event(event),
+                                match serde_json::from_str::<HasnFrame>(&text) {
+                                    Ok(frame) => on_event(frame),
                                     Err(e) => {
-                                        warn!("[HasnWS] 解析失败: {} text={}", e, &text[..text.len().min(100)]);
+                                        warn!("[HasnWS] 帧解析失败: {} text={}", e, &text[..text.len().min(200)]);
                                     }
                                 }
                             }
@@ -125,6 +127,32 @@ impl HasnWsClient {
             info!("[HasnWS] 连接已关闭");
         });
 
+        // 启动心跳定时器（协议 §3.11: 30s 间隔）
+        let heartbeat_sender = self.sender.clone();
+        let heartbeat_status = self.status.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(30));
+            interval.tick().await; // 跳过第一次立即触发
+            loop {
+                interval.tick().await;
+                // 如果不再 Connected，停止心跳
+                if *heartbeat_status.read().await != WsStatus::Connected {
+                    break;
+                }
+                let ping = build_ping(chrono::Utc::now().timestamp_millis());
+                if let Ok(json) = serde_json::to_string(&ping) {
+                    let sender = heartbeat_sender.lock().await;
+                    if let Some(tx) = sender.as_ref() {
+                        if tx.send(json).await.is_err() {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+            }
+        });
+
         Ok(())
     }
 
@@ -137,9 +165,9 @@ impl HasnWsClient {
         *self.status.write().await = WsStatus::Disconnected;
     }
 
-    /// 发送上行命令
-    pub async fn send_command(&self, cmd: &WsCommand) -> Result<(), HasnError> {
-        let json = serde_json::to_string(cmd).map_err(|e| HasnError::Parse(e.to_string()))?;
+    /// 发送上行帧
+    pub async fn send_frame(&self, frame: &HasnFrame) -> Result<(), HasnError> {
+        let json = serde_json::to_string(frame).map_err(|e| HasnError::Parse(e.to_string()))?;
 
         let sender = self.sender.lock().await;
         if let Some(tx) = sender.as_ref() {
@@ -160,7 +188,7 @@ impl HasnWsClient {
         max_retries: u32,
     ) -> Result<(), HasnError>
     where
-        F: Fn(WsEvent) + Send + Sync + Clone + 'static,
+        F: Fn(HasnFrame) + Send + Sync + Clone + 'static,
     {
         let mut delay = Duration::from_secs(1);
         let max_delay = Duration::from_secs(30);

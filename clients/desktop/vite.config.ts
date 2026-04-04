@@ -5,9 +5,13 @@ import path from "path";
 
 // Tauri expects a fixed port during dev
 const TAURI_DEV_HOST = process.env.TAURI_DEV_HOST;
+const TAURI_PLATFORM = process.env.TAURI_ENV_PLATFORM || '';
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  define: {
+    __TAURI_PLATFORM__: JSON.stringify(TAURI_PLATFORM),
+  },
   resolve: {
     alias: {
       // 指向桌面端自身 src，不再依赖 web/src
@@ -25,12 +29,38 @@ export default defineConfig({
     strictPort: true,
     // Proxy API requests
     proxy: {
-      // 唤星后端 API → 生产服务器（浏览器开发模式用，Tauri 模式直连）
+      // Sidecar HASN 端点（必须在 /api/v1 之前，否则会被后端代理捕获）
+      "/api/v1/hasn/connect": {
+        target: "http://localhost:42620",
+        changeOrigin: true,
+      },
+      "/api/v1/hasn/disconnect": {
+        target: "http://localhost:42620",
+        changeOrigin: true,
+      },
+      "/api/v1/hasn/status": {
+        target: "http://localhost:42620",
+        changeOrigin: true,
+      },
+      "/api/v1/hasn/send": {
+        target: "http://localhost:42620",
+        changeOrigin: true,
+      },
+      "/api/v1/hasn/report": {
+        target: "http://localhost:42620",
+        changeOrigin: true,
+      },
+      "/api/v1/agent/hasn-invoke": {
+        target: "http://localhost:42620",
+        changeOrigin: true,
+      },
+      // 唤星后端 API → 云端服务器
       "/api/v1": {
         target: "http://127.0.0.1:8020",
         changeOrigin: true,
+        secure: true,
       },
-      // ZeroClaw sidecar
+      // ZeroClaw sidecar（通用 /api 路由）
       "/pair": {
         target: "http://localhost:42620",
         changeOrigin: true,

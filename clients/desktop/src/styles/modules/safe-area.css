@@ -1,0 +1,332 @@
+/* ==========================================================================
+   Safe Area Insets — iOS 刘海屏 + Android 状态栏适配
+   ==========================================================================
+   使用 env() 函数获取系统安全区域，确保内容不被刘海、
+   Home Indicator、状态栏等遮挡。
+   ========================================================================== */
+
+/* ── CSS 变量：暴露 safe-area 给 JS ── */
+:root {
+  --sat: env(safe-area-inset-top, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px);
+  --sar: env(safe-area-inset-right, 0px);
+}
+
+/* ── 移动端底部 Tab 栏 ── */
+.hx-bottom-tab {
+  display: none;  /* 桌面端隐藏 */
+}
+
+@media (max-width: 768px) {
+  .hx-bottom-tab {
+    display: flex;
+    align-items: center;
+    justify-content: space-around;
+    height: 56px;
+    background: var(--hx-bg-rail);
+    border-top: 1px solid var(--hx-border);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    flex-shrink: 0;
+    z-index: 50;
+    /* 微妙毛玻璃效果 */
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+
+  .hx-bottom-tab-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    flex: 1;
+    padding: 6px 0;
+    border: none;
+    background: transparent;
+    color: var(--hx-text-tertiary);
+    cursor: pointer;
+    transition: color 0.15s ease;
+    -webkit-tap-highlight-color: transparent;
+    min-height: 44px;  /* Apple HIG 最小触控目标 */
+  }
+
+  .hx-bottom-tab-item:active {
+    color: var(--hx-purple);
+    transform: scale(0.95);
+  }
+
+  .hx-bottom-tab-item.active {
+    color: var(--hx-purple);
+  }
+
+  .hx-bottom-tab-icon-wrap {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+  }
+
+  .hx-bottom-tab-badge {
+    position: absolute;
+    top: -4px;
+    right: -8px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    border-radius: 999px;
+    background: var(--hx-red);
+    color: white;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 16px;
+    text-align: center;
+  }
+
+  .hx-bottom-tab-label {
+    font-size: 10px;
+    font-weight: 500;
+    line-height: 1;
+    letter-spacing: 0.01em;
+  }
+}
+
+/* ── 移动端顶部导航栏 ── */
+.hx-mobile-header {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .hx-mobile-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 48px;
+    padding: 0 4px;
+    padding-top: env(safe-area-inset-top, 0px);
+    background: var(--hx-bg-panel);
+    border-bottom: 1px solid var(--hx-border);
+    flex-shrink: 0;
+    z-index: 40;
+  }
+
+  .hx-mobile-header.transparent {
+    background: transparent;
+    border-bottom: none;
+  }
+
+  .hx-mobile-header-left,
+  .hx-mobile-header-right {
+    display: flex;
+    align-items: center;
+    min-width: 48px;
+  }
+
+  .hx-mobile-header-right {
+    justify-content: flex-end;
+  }
+
+  .hx-mobile-header-back {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    border: none;
+    background: transparent;
+    color: var(--hx-purple);
+    cursor: pointer;
+    border-radius: var(--hx-radius-sm);
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .hx-mobile-header-back:active {
+    background: var(--hx-bg-hover);
+  }
+
+  .hx-mobile-header-center {
+    flex: 1;
+    text-align: center;
+    min-width: 0;
+  }
+
+  .hx-mobile-header-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--hx-text-primary);
+    margin: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .hx-mobile-header-subtitle {
+    font-size: 11px;
+    color: var(--hx-text-tertiary);
+    margin: 0;
+  }
+}
+
+/* ── 全局移动端触摸优化 ── */
+@media (hover: none) {
+  /* 移动端无 hover，改用 active */
+  .hx-nav-item:active {
+    @apply bg-hx-bg-hover text-hx-purple;
+    transform: scale(0.95);
+    transition: transform 0.1s ease;
+  }
+
+  /* 扩大触控目标到 44px */
+  .hx-chat-header-actions button,
+  .hx-input-tool-btn,
+  .hx-avatar-menu-item {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+/* ── 移动端 hover 保护 ── */
+@media (hover: hover) {
+  /* 仅桌面端展示 hover 效果（已有逻辑不变） */
+}
+
+/* ── BottomSheet 底部抽屉 ── */
+.hx-bottom-sheet-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0);
+  z-index: 100;
+  transition: background 0.3s ease;
+}
+
+.hx-bottom-sheet-overlay.open {
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.hx-bottom-sheet {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: var(--hx-bg-panel);
+  border-radius: 16px 16px 0 0;
+  transform: translateY(100%);
+  transition: transform 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.hx-bottom-sheet.open {
+  transform: translateY(0);
+}
+
+.hx-bottom-sheet-handle {
+  display: flex;
+  justify-content: center;
+  padding: 8px 0 4px;
+}
+
+.hx-bottom-sheet-handle-bar {
+  width: 36px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--hx-text-tertiary);
+  opacity: 0.4;
+}
+
+.hx-bottom-sheet-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--hx-border);
+}
+
+.hx-bottom-sheet-header h3 {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--hx-text-primary);
+  margin: 0;
+}
+
+.hx-bottom-sheet-close {
+  width: 36px;
+  height: 36px;
+  border: none;
+  background: transparent;
+  color: var(--hx-text-tertiary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  border-radius: 999px;
+}
+
+.hx-bottom-sheet-close:active {
+  background: var(--hx-bg-hover);
+}
+
+.hx-bottom-sheet-content {
+  padding: 16px;
+}
+
+/* ── 移动端双栏 → 单栏导航栈 ── */
+@media (max-width: 768px) {
+  /* 聊天布局：移动端显示列表或详情时使用这些类 */
+  .hx-mobile-show-panel .hx-chat {
+    display: none;
+  }
+
+  .hx-mobile-show-chat .hx-panel {
+    display: none;
+  }
+
+  .hx-mobile-show-chat .hx-chat {
+    flex: 1;
+  }
+
+  /* 会话列表面板在移动端占满宽度 */
+  .hx-mobile-show-panel .hx-panel {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+    border-right: none;
+  }
+
+  /* 联系人详情面板移动端全屏 */
+  .hx-mobile-contact-detail {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    background: var(--hx-bg-main);
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+
+  /* 设置页移动端：隐藏侧边菜单栏 */
+  .hx-mobile-settings .hx-sidebar {
+    display: none;
+  }
+
+  .hx-mobile-settings .hx-settings-content {
+    width: 100%;
+    padding: 16px;
+  }
+
+  /* 聊天输入框移动端适配：输入法弹起时自适应 */
+  .hx-chat-input-area {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  /* NavRail 在移动端隐藏 */
+  .hx-nav-rail {
+    display: none !important;
+  }
+
+  /* Sidebar 在移动端隐藏（用 BottomTabBar 代替） */
+  .hx-sidebar {
+    display: none;
+  }
+}

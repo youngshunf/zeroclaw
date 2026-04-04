@@ -336,9 +336,39 @@ async fn resolve_tenant_context(
     config: &crate::config::Config,
 ) -> anyhow::Result<Option<crate::huanxing::TenantContext>> {
     let Some(agent_name) = agent_name else {
+        tracing::warn!(
+            "[hx_ws] resolve_tenant_context: agent_name is None, \
+             global config api_key present={}",
+            config.api_key.is_some()
+        );
         return Ok(None);
     };
-    crate::huanxing::TenantContext::load_by_agent_or_hasn(config, agent_name).await
+    tracing::info!(
+        "[hx_ws] resolve_tenant_context: looking up agent_name={:?}, \
+         huanxing.enabled={}",
+        agent_name,
+        config.huanxing.enabled
+    );
+    let result = crate::huanxing::TenantContext::load_by_agent_or_hasn(config, agent_name).await;
+    match &result {
+        Ok(Some(ctx)) => tracing::info!(
+            "[hx_ws] resolve_tenant_context: found tenant, \
+             agent_id={}, has_api_key={}, provider={:?}, model={:?}",
+            ctx.agent_id,
+            ctx.api_key.is_some(),
+            ctx.provider,
+            ctx.model,
+        ),
+        Ok(None) => tracing::warn!(
+            "[hx_ws] resolve_tenant_context: NO tenant found for {:?}",
+            agent_name
+        ),
+        Err(e) => tracing::error!(
+            "[hx_ws] resolve_tenant_context: error loading tenant {:?}: {}",
+            agent_name, e
+        ),
+    }
+    result
 }
 
 /// 初始化一个新的 AgentSession，从持久化存储恢复历史。
@@ -367,8 +397,19 @@ async fn init_agent_session(
 
     // Create Agent — use TenantContext when available
     let mut agent = if let Some(ref tenant) = tenant_context {
+        tracing::info!(
+            "[hx_ws] Creating agent from TenantContext: api_key={}, \
+             resolved_config.api_key={}",
+            tenant.api_key.is_some(),
+            tenant.runtime_config().api_key.is_some(),
+        );
         tenant.create_agent().await?
     } else {
+        tracing::warn!(
+            "[hx_ws] Creating agent from GLOBAL config (no tenant): \
+             api_key={}",
+            config.api_key.is_some(),
+        );
         crate::agent::Agent::from_config(&config).await?
     };
     agent.set_memory_session_id(Some(session_id.to_string()));

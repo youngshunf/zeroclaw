@@ -42,6 +42,7 @@ export interface HasnIdentity {
   name: string;
   agent_hasn_id?: string;
   agent_star_id?: string;
+  node_key?: string;
   already_exists: boolean;
 }
 
@@ -105,7 +106,7 @@ async function tauriOnboard(session: HuanxingSession): Promise<OnboardResult> {
         agent_key: session.agentKey || null,
         api_base_url: HUANXING_CONFIG.backendBaseUrl,
         llm_gateway_url: HUANXING_CONFIG.llmGatewayV1,
-        hasn_api_key: session.hasnApiKey || null,
+        hasn_node_key: session.hasnNodeKey || null,
         default_provider: HUANXING_CONFIG.defaultProvider,
         fallback_provider: HUANXING_CONFIG.fallbackProvider,
         embedding_provider: HUANXING_CONFIG.embeddingProvider,
@@ -347,12 +348,27 @@ export async function registerHasnIdentity(session: HuanxingSession): Promise<Ha
     localStorage.setItem("hasn:hasn_id", data.human.hasn_id);
   }
 
+  // 后端返回了 node_key → 更新 session（供后续使用）
+  const nodeKey = data.node_key as string | undefined;
+  if (nodeKey) {
+    try {
+      const raw = localStorage.getItem('huanxing_session');
+      if (raw) {
+        const s = JSON.parse(raw);
+        s.hasnNodeKey = nodeKey;
+        localStorage.setItem('huanxing_session', JSON.stringify(s));
+        console.log('[onboard] session.hasnNodeKey 已更新');
+      }
+    } catch { /* ignore */ }
+  }
+
   return {
     hasn_id: data.human?.hasn_id,
     star_id: data.human?.star_id,
     name: data.human?.name,
     agent_hasn_id: data.agent?.hasn_id,
     agent_star_id: data.agent?.star_id,
+    node_key: nodeKey,
     already_exists: data.already_exists ?? false,
   };
 }
@@ -364,7 +380,7 @@ export interface AgentHasnIdentity {
   star_id: string;
   name: string;
   agent_name: string;
-  api_key?: string;
+  agent_key?: string;
   already_exists: boolean;
 }
 
@@ -476,7 +492,7 @@ export async function registerHasnAgent(
     star_id: data.star_id,
     name: data.name,
     agent_name: data.agent_name,
-    api_key: data.api_key,
+    agent_key: data.agent_key,
     already_exists: data.already_exists ?? false,
   };
 
@@ -497,8 +513,10 @@ export async function registerHasnAgent(
  * 通过 Sidecar REST API 原子更新本地绑定状态。
  */
 async function writeAgentHasnBinding(agentName: string, hasnId: string): Promise<void> {
+  // Dev 模式走 Vite 代理（避免 CORS），生产 Tauri 直连 sidecar
+  const sidecarBase = import.meta.env.DEV ? '' : HUANXING_CONFIG.sidecarBaseUrl;
   const resp = await fetch(
-    `${HUANXING_CONFIG.sidecarBaseUrl}/api/agents/${encodeURIComponent(agentName)}/hasn-id`,
+    `${sidecarBase}/api/agents/${encodeURIComponent(agentName)}/hasn-id`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

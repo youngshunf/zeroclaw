@@ -10,6 +10,7 @@ import {
   X,
   Loader2,
   MessageSquare,
+  ChevronLeft,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Input } from '@/components/ui/Input';
@@ -17,6 +18,8 @@ import { Textarea } from '@/components/ui/Textarea';
 import { useHasnContacts } from '@/hooks/useHasn';
 import * as hasnApi from '@/lib/hasn-api';
 import type { Contact } from '@/lib/hasn-api';
+import { usePlatform } from '@/hooks/usePlatform';
+import BottomSheet from '@/components/ui/BottomSheet';
 
 function getInitial(name: string): string {
   return name.charAt(0) || '?';
@@ -90,8 +93,52 @@ export default function Contacts() {
       )
     : contacts;
 
+  // ── 移动端导航栈 ──────────────────────────────────────────
+  const { isMobile } = usePlatform();
+  const mobileView = isMobile ? (selectedContact ? 'detail' : 'list') : 'both';
+  // 添加好友表单内容（BottomSheet 和 Dialog 复用）
+  const addFriendForm = (
+    <div className="flex flex-col gap-3">
+      <Input
+        type="text"
+        placeholder="输入对方 Star ID"
+        value={addStarId}
+        onChange={(e) => setAddStarId(e.target.value)}
+        className="w-full"
+      />
+      <Textarea
+        placeholder="附言（可选）"
+        value={addMessage}
+        onChange={(e) => setAddMessage(e.target.value)}
+        rows={2}
+        className="w-full resize-none"
+      />
+      <div className="flex gap-2 justify-end mt-1">
+        <button
+          onClick={() => setShowAddDialog(false)}
+          className="px-4 py-1.5 rounded-hx-radius-sm border border-hx-border bg-transparent text-hx-text-secondary text-[13px] cursor-pointer hover:bg-hx-bg-hover transition-colors"
+        >
+          取消
+        </button>
+        <button
+          onClick={handleAddFriend}
+          disabled={!addStarId.trim() || addLoading}
+          className={`px-4 py-1.5 rounded-hx-radius-sm border-none bg-hx-purple text-white text-[13px] cursor-pointer flex items-center gap-1.5 hover:bg-hx-purple-hover transition-colors ${
+            !addStarId.trim() || addLoading ? 'opacity-50 !cursor-not-allowed' : ''
+          }`}
+        >
+          {addLoading && <Loader2 size={14} className="animate-spin" />}
+          发送请求
+        </button>
+      </div>
+    </div>
+  );
+
   return (
-    <div className="flex flex-1 h-full">
+    <div
+      className={isMobile ? (mobileView === 'list' ? 'hx-mobile-show-panel' : '') : ''}
+      style={{ display: 'flex', flex: 1, minWidth: 0, height: '100%' }}
+    >
       {/* 左侧面板 */}
       <div className="hx-panel">
         <div className="hx-panel-header">
@@ -238,98 +285,87 @@ export default function Contacts() {
       </div>
 
       {/* 右侧详情 */}
-      <div className="hx-chat flex-1 bg-hx-bg-main relative">
-        {selectedContact ? (
-          <div className="flex flex-col items-center justify-center h-full gap-4">
-            <div
-              className={`w-[72px] h-[72px] rounded-full text-white font-bold text-[28px] flex items-center justify-center ${
-                selectedContact.peer_type === 'agent'
-                  ? 'bg-gradient-to-br from-[#6366F1] to-[#7C3AED]'
-                  : 'bg-gradient-to-br from-[#7C3AED] to-[#6366F1]'
-              }`}
-            >
-              {getInitial(selectedContact.name)}
-            </div>
-            <div className="text-center">
-              <h3 className="text-lg font-semibold text-hx-text-primary m-0">
-                {selectedContact.name}
-              </h3>
-              <p className="text-[13px] text-hx-text-secondary my-1">
-                @{selectedContact.star_id}
-              </p>
-              <div className="flex gap-2 justify-center mt-1 items-center">
-                <TrustBadge level={selectedContact.trust_level} />
-                <span className="text-[11px] text-hx-text-tertiary">
-                  {selectedContact.relation_type} · {selectedContact.peer_type}
-                </span>
-              </div>
-            </div>
-            <button
-              onClick={() => handleStartChat(selectedContact)}
-              className="mt-2 px-6 py-2 rounded-hx-radius-md border-none bg-hx-purple text-white text-[13px] font-medium cursor-pointer flex items-center gap-1.5 transition-opacity hover:opacity-90"
-            >
-              <MessageSquare size={16} />
-              发消息
-            </button>
-          </div>
-        ) : (
-          <div className="hx-empty-state h-full">
-            <div className="icon">👥</div>
-            <h3 className="text-[15px] font-semibold text-hx-text-primary mt-0 mb-1">通讯录</h3>
-            <p className="text-[13px] text-hx-text-secondary">选择好友查看详情，或点击 + 添加新好友</p>
-          </div>
-        )}
-      </div>
-
-      {/* 添加好友弹窗 */}
-      {showAddDialog && (
-        <div
-          className="fixed inset-0 bg-black/40 flex items-center justify-center z-[1000]"
-          onClick={() => setShowAddDialog(false)}
-        >
-          <div
-            className="bg-hx-bg-panel rounded-hx-radius-lg p-6 w-[360px] shadow-[0_20px_60px_rgba(0,0,0,0.2)]"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 className="text-base font-semibold text-hx-text-primary mb-4 mt-0">
-              添加好友
-            </h3>
-            <div className="flex flex-col gap-3">
-              <Input
-                type="text"
-                placeholder="输入对方 Star ID"
-                value={addStarId}
-                onChange={(e) => setAddStarId(e.target.value)}
-                className="w-full"
-              />
-              <Textarea
-                placeholder="附言（可选）"
-                value={addMessage}
-                onChange={(e) => setAddMessage(e.target.value)}
-                rows={2}
-                className="w-full resize-none"
-              />
-              <div className="flex gap-2 justify-end mt-1">
+      {(!isMobile || mobileView === 'detail') && (
+        <div className="hx-chat flex-1 bg-hx-bg-main relative">
+          {selectedContact ? (
+            <div className="flex flex-col items-center justify-center h-full gap-4">
+              {/* 移动端返回按钮 */}
+              {isMobile && (
                 <button
-                  onClick={() => setShowAddDialog(false)}
-                  className="px-4 py-1.5 rounded-hx-radius-sm border border-hx-border bg-transparent text-hx-text-secondary text-[13px] cursor-pointer hover:bg-hx-bg-hover transition-colors"
+                  className="hx-mobile-header-back"
+                  onClick={() => setSelectedContact(null)}
+                  style={{ position: 'absolute', top: 8, left: 8 }}
                 >
-                  取消
+                  <ChevronLeft size={22} />
                 </button>
-                <button
-                  onClick={handleAddFriend}
-                  disabled={!addStarId.trim() || addLoading}
-                  className={`px-4 py-1.5 rounded-hx-radius-sm border-none bg-hx-purple text-white text-[13px] cursor-pointer flex items-center gap-1.5 hover:bg-hx-purple-hover transition-colors ${
-                    !addStarId.trim() || addLoading ? 'opacity-50 !cursor-not-allowed' : ''
-                  }`}
-                >
-                  {addLoading && <Loader2 size={14} className="animate-spin" />}
-                  发送请求
-                </button>
+              )}
+              <div
+                className={`w-[72px] h-[72px] rounded-full text-white font-bold text-[28px] flex items-center justify-center ${
+                  selectedContact.peer_type === 'agent'
+                    ? 'bg-gradient-to-br from-[#6366F1] to-[#7C3AED]'
+                    : 'bg-gradient-to-br from-[#7C3AED] to-[#6366F1]'
+                }`}
+              >
+                {getInitial(selectedContact.name)}
               </div>
+              <div className="text-center">
+                <h3 className="text-lg font-semibold text-hx-text-primary m-0">
+                  {selectedContact.name}
+                </h3>
+                <p className="text-[13px] text-hx-text-secondary my-1">
+                  @{selectedContact.star_id}
+                </p>
+                <div className="flex gap-2 justify-center mt-1 items-center">
+                  <TrustBadge level={selectedContact.trust_level} />
+                  <span className="text-[11px] text-hx-text-tertiary">
+                    {selectedContact.relation_type} · {selectedContact.peer_type}
+                  </span>
+                </div>
+              </div>
+              <button
+                onClick={() => handleStartChat(selectedContact)}
+                className="mt-2 px-6 py-2 rounded-hx-radius-md border-none bg-hx-purple text-white text-[13px] font-medium cursor-pointer flex items-center gap-1.5 transition-opacity hover:opacity-90"
+              >
+                <MessageSquare size={16} />
+                发消息
+              </button>
             </div>
-          </div>
+          ) : (
+            <div className="hx-empty-state h-full">
+              <div className="icon">👥</div>
+              <h3 className="text-[15px] font-semibold text-hx-text-primary mt-0 mb-1">通讯录</h3>
+              <p className="text-[13px] text-hx-text-secondary">选择好友查看详情，或点击 + 添加新好友</p>
+            </div>
+          )}
         </div>
+      )}
+
+      {/* 添加好友 — 移动端用 BottomSheet，桌面端用 Dialog */}
+      {isMobile ? (
+        <BottomSheet
+          isOpen={showAddDialog}
+          onClose={() => setShowAddDialog(false)}
+          title="添加好友"
+        >
+          {addFriendForm}
+        </BottomSheet>
+      ) : (
+        showAddDialog && (
+          <div
+            className="fixed inset-0 bg-black/40 flex items-center justify-center z-[1000]"
+            onClick={() => setShowAddDialog(false)}
+          >
+            <div
+              className="bg-hx-bg-panel rounded-hx-radius-lg p-6 w-[360px] shadow-[0_20px_60px_rgba(0,0,0,0.2)]"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 className="text-base font-semibold text-hx-text-primary mb-4 mt-0">
+                添加好友
+              </h3>
+              {addFriendForm}
+            </div>
+          </div>
+        )
       )}
     </div>
   );

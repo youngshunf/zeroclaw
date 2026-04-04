@@ -1544,3 +1544,143 @@
 .hx-btn-secondary:hover {
   @apply bg-hx-bg-hover;
 }
+
+/* ==========================================================================
+   移动端适配 — Settings / Dashboard / 触控目标
+   ========================================================================== */
+@media (max-width: 768px) {
+  /* ── Settings 布局：隐藏侧边菜单，内容区全屏 ── */
+  .hx-settings {
+    flex-direction: column;
+  }
+
+  .hx-settings-nav {
+    display: none;
+  }
+
+  .hx-settings-content {
+    padding: 16px;
+    width: 100%;
+  }
+
+  /* ── Dashboard Hero 紧凑化 ── */
+  .hx-page-hero {
+    padding: 16px;
+    margin-bottom: 12px;
+  }
+
+  .hx-page-hero h1 {
+    font-size: 18px;
+  }
+
+  .hx-page-hero p {
+    font-size: 13px;
+  }
+
+  .hx-page-hero .hx-badge {
+    font-size: 11px;
+    padding: 3px 10px;
+  }
+
+  /* ── Metrics 网格：2 列 ── */
+  .hx-metrics-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  .hx-metric-card {
+    padding: 12px;
+  }
+
+  .hx-metric-value {
+    font-size: 18px;
+  }
+
+  .hx-metric-head {
+    font-size: 10px;
+  }
+
+  .hx-metric-sub {
+    font-size: 11px;
+  }
+
+  /* ── Card 紧凑化 ── */
+  .hx-card {
+    padding: 14px;
+    margin-bottom: 10px;
+  }
+
+  .hx-card-header h2 {
+    font-size: 14px;
+  }
+
+  .hx-card-header .hx-card-icon {
+    width: 32px;
+    height: 32px;
+  }
+
+  /* ── Item / Health 网格单列 ── */
+  .hx-item-grid,
+  .hx-health-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* ── Stat pills 堆叠 ── */
+  .hx-stat-pill {
+    padding: 10px 12px;
+  }
+
+  .hx-stat-pill strong {
+    font-size: 16px;
+  }
+
+  /* ── 通用触控目标 44px（Apple HIG） ── */
+  .hx-btn-primary,
+  .hx-btn-secondary {
+    min-height: 44px;
+    padding: 10px 20px;
+    font-size: 14px;
+  }
+
+  .hx-settings-item {
+    min-height: 44px;
+    padding: 10px 12px;
+  }
+
+  .hx-select-trigger {
+    min-height: 44px;
+  }
+
+  .hx-select-item {
+    min-height: 44px;
+    height: auto;
+    padding: 10px 32px 10px 24px;
+  }
+
+  /* 输入框增高 + 防 iOS 缩放 */
+  .hx-input,
+  .hx-textarea {
+    min-height: 44px;
+    font-size: 16px; /* >= 16px 防止 iOS 自动缩放 */
+    padding: 10px 12px;
+  }
+
+  /* 卡片 header 触控热区 */
+  .hx-card-header {
+    min-height: 44px;
+    padding-bottom: 8px;
+  }
+
+  /* Empty state 按钮 */
+  .hx-empty-state button {
+    min-height: 44px;
+    padding: 12px 28px;
+    font-size: 15px;
+  }
+
+  /* 错误提示 */
+  .hx-error-card {
+    padding: 16px;
+  }
+}

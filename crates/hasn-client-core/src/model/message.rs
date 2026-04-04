@@ -355,7 +355,7 @@ pub struct HasnEnvelope {
 }
 
 fn default_version() -> String {
-    "1.0".to_string()
+    "2.0".to_string()
 }
 
 impl HasnEnvelope {
@@ -363,7 +363,7 @@ impl HasnEnvelope {
     pub fn new_text(from: EntityRef, to: EntityRef, conversation_id: &str, text: &str) -> Self {
         Self {
             id: format!("msg_{}", ulid::Ulid::new()),
-            version: "1.0".to_string(),
+            version: "2.0".to_string(),
             msg_type: MessageType::Message,
             from,
             to,
@@ -511,7 +511,7 @@ impl HasnMessageRecord {
 
         HasnEnvelope {
             id: self.id.clone(),
-            version: "1.0".to_string(),
+            version: "2.0".to_string(),
             msg_type: MessageType::Message,
             from: EntityRef {
                 hasn_id: self.from_hasn_id.clone(),

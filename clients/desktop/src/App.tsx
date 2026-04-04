@@ -16,6 +16,7 @@ const ImageViewer = lazy(() => import('./pages/ImageViewer'));
 import { AuthProvider, useAuth } from './hooks/useAuth';
 import { coerceLocale, setLocale, type Locale } from './lib/i18n';
 import { startTokenRefresh, stopTokenRefresh } from './lib/token-refresh';
+import { isTauriMobile } from './lib/platform';
 
 // --- 唤星页面 ---
 const HuanxingLogin = lazy(() => import('./pages/auth/Login'));
@@ -69,6 +70,8 @@ function AppContent() {
   // Listen for 401 events to force logout
   useEffect(() => {
     const handler = () => {
+      console.error('[huanxing-debug] ⚠️ zeroclaw-unauthorized event → logout');
+      console.trace('[huanxing-debug] stack trace');
       stopTokenRefresh();
       logout();
     };
@@ -84,13 +87,13 @@ function AppContent() {
     }
   }, [isAuthenticated]);
 
-  // HASN 本地 Agent 注册登记（仅用于确保本地身份创建，不再手动建立 WS 连接）
+  // HASN 身份注册 + 连接建立
   useEffect(() => {
     if (!isAuthenticated) return;
 
     let cancelled = false;
 
-    const registerLocalAgent = async () => {
+    const registerAndConnect = async () => {
       if (cancelled) return;
       try {
         const { getHuanxingSession } = await import('./config');
@@ -109,12 +112,29 @@ function AppContent() {
         } catch (agentErr) {
           console.warn('[App] Agent HASN 注册（非致命）:', agentErr);
         }
+
+        // 建立 HASN WebSocket 连接
+        if (!cancelled && identity.hasn_id) {
+          try {
+            const { hasnConnect } = await import('./lib/hasn-api');
+            // 优先用 session.hasnNodeKey，其次用 identity 注册时返回的 node_key
+            const nodeKey = session.hasnNodeKey || identity.node_key;
+            if (nodeKey) {
+              await hasnConnect(nodeKey, identity.hasn_id, identity.star_id || '');
+              console.log('[App] HASN 连接已建立, hasn_id:', identity.hasn_id);
+            } else {
+              console.warn('[App] 缺少 hasn_node_key，无法建立 HASN 连接');
+            }
+          } catch (wsErr) {
+            console.warn('[App] HASN 连接失败（非致命）:', wsErr);
+          }
+        }
       } catch (err) {
         console.warn('[App] HASN 注册阶段失败:', err);
       }
     };
 
-    registerLocalAgent();
+    registerAndConnect();
 
     return () => {
       cancelled = true;
@@ -127,9 +147,10 @@ function AppContent() {
   const [configChecked, setConfigChecked] = useState(false);
 
   useEffect(() => {
-    // 非 Tauri 环境或未登录：跳过检查
+    // 非 Tauri 环境、未登录、或移动端：跳过配置检查
+    // 移动端没有注册 check_huanxing_config 命令（它依赖 SidecarManager）
     const internals = (window as any).__TAURI_INTERNALS__;
-    if (!internals?.invoke || !isAuthenticated) {
+    if (!internals?.invoke || !isAuthenticated || isTauriMobile()) {
       setConfigChecked(true);
       return;
     }
@@ -149,7 +170,7 @@ function AppContent() {
         }
 
         // 配置无效 → 强制退出登录
-        console.log('[huanxing] 配置无效，强制退出登录',
+        console.error('[huanxing-debug] ⚠️ check_huanxing_config → config invalid → logout',
           `(exists=${result?.config_exists}, valid=${result?.config_valid})`);
         localStorage.removeItem('huanxing_session');
         logout();
@@ -165,15 +186,16 @@ function AppContent() {
 
   // 监听 Tauri setup hook 发来的配置无效事件（二重保险）
   useEffect(() => {
+    // 移动端跳过 config-invalid 事件监听（嵌入式引擎自己管理配置）
     const internals = (window as any).__TAURI_INTERNALS__;
-    if (!internals) return;
+    if (!internals || isTauriMobile()) return;
 
     let unlisten: (() => void) | null = null;
 
     // Tauri v2 listen API
     import('@tauri-apps/api/event').then(({ listen }) => {
       listen('huanxing:config-invalid', () => {
-        console.log('[huanxing] Received config-invalid event, forcing logout');
+        console.error('[huanxing-debug] ⚠️ config-invalid event from Tauri → logout');
         localStorage.removeItem('huanxing_session');
         logout();
       }).then(fn => { unlisten = fn; });

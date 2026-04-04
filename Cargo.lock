@@ -4176,6 +4176,7 @@ dependencies = [
  "tracing",
  "uuid",
  "which 7.0.3",
+ "zeroclawlabs",
  "zip 0.6.6",
 ]
 

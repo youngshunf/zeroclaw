@@ -55,7 +55,7 @@ impl SidecarManager {
             llm_gateway
         };
 
-        let hasn_api_key = req.hasn_api_key.as_deref().unwrap_or("");
+        let hasn_api_key = req.hasn_node_key.as_deref().unwrap_or("");
         let llm_gateway_base = llm_gateway.trim_end_matches("/v1");
 
         let factory = huanxing_agent_factory::AgentFactory::new(self.config_dir.clone(), None);

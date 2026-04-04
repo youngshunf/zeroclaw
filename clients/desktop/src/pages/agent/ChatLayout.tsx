@@ -13,7 +13,7 @@ import type { WsMessage } from '@/types/api';
 import { useActiveAgent } from '@/hooks/useActiveAgent';
 import { listAgents, switchAgent, type AgentInfo } from '@/lib/agent-api';
 import { listSessions, getSessionMessages, generateSessionTitle, type SessionInfo } from '@/lib/session-api';
-import { Search, Plus, Bot } from 'lucide-react';
+import { Search, Plus, Bot, ChevronLeft } from 'lucide-react';
 import { HxChatInput } from '@/components/chat/input';
 import { HUANXING_SLASH_SECTIONS } from '@/components/chat/input/HxSlashMenu';
 import { useHasnContacts } from '@/hooks/useHasnContacts';
@@ -22,6 +22,7 @@ import { Markdown } from '@/components/markdown';
 import { HxImageMessage, containsImageMarkers } from '@/components/chat/HxImageMessage';
 import { StreamingBubble } from '@/components/chat/StreamingBubble';
 import { getHuanxingSession, resolveApiUrl } from '@/config';
+import { usePlatform } from '@/hooks/usePlatform';
 
 const SessionList = lazy(() => import('@/components/chat/SessionList'));
 
@@ -575,8 +576,16 @@ export default function ChatLayout() {
   const userAvatarUrl = session?.user?.avatar || '';
   const userAvatarChar = userName.charAt(0);
 
+  // ── 移动端导航栈逻辑 ──────────────────────────────────────
+  const { isMobile } = usePlatform();
+  const mobileView = isMobile ? (activeSessionId ? 'chat' : 'panel') : 'both';
+  const handleMobileBack = useCallback(() => {
+    setActiveSessionId(null);
+  }, []);
+
   return (
-    <>
+    <div className={isMobile ? (mobileView === 'panel' ? 'hx-mobile-show-panel' : 'hx-mobile-show-chat') : ''}
+         style={{ display: 'flex', flex: 1, minWidth: 0, height: '100%' }}>
       {/* 会话列表 Panel */}
       <Suspense fallback={<div className="hx-panel" />}>
         <SessionList
@@ -596,10 +605,19 @@ export default function ChatLayout() {
 
       {/* 聊天区 */}
       <div className="hx-chat">
-        {/* Chat header */}
+        {/* Chat header — 移动端含返回按钮 */}
         {activeSessionId && activeAgent && (
           <div className="hx-chat-header">
             <div className="hx-chat-header-left">
+              {isMobile && (
+                <button
+                  className="hx-mobile-header-back"
+                  onClick={handleMobileBack}
+                  style={{ marginRight: 4, flexShrink: 0 }}
+                >
+                  <ChevronLeft size={22} />
+                </button>
+              )}
               <div className="hx-chat-header-avatar" style={{ overflow: 'hidden' }}>
                 {activeAgentInfo?.icon_url ? (
                   <img src={resolveApiUrl(activeAgentInfo.icon_url)} alt="agent" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'inherit' }} />
@@ -631,7 +649,7 @@ export default function ChatLayout() {
             <div className="hx-empty-state">
               <div className="icon">💬</div>
               <h3>选择或创建一个对话</h3>
-              <p>点击左侧 "+" 开始新对话，与 AI Agent 进行交互</p>
+              <p>{isMobile ? '点击 "+" 开始新对话' : '点击左侧 "+" 开始新对话，与 AI Agent 进行交互'}</p>
             </div>
           ) : currentMessages.length === 0 && !currentTyping ? (
             <div className="hx-empty-state">
@@ -719,6 +737,6 @@ export default function ChatLayout() {
           slashSections={slashSections}
         />
       </div>
-    </>
+    </div>
   );
 }

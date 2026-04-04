@@ -2,8 +2,12 @@
 name = "huanxing-desktop"
 version = "0.1.0"
 edition = "2021"
-description = "唤星AI桌面客户端 — 基于 ZeroClaw 的 AI Agent + HASN IM"
+description = "唤星AI客户端 — 基于 ZeroClaw 的 AI Agent + HASN IM（桌面端 + 移动端）"
 rust-version = "1.77"
+
+[lib]
+name = "huanxing_desktop"
+crate-type = ["staticlib", "cdylib", "lib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -37,4 +41,14 @@ tempfile = "3"
 huanxing-agent-factory = { version = "0.1.0", path = "../../../crates/huanxing-agent-factory" }
 qrcode = { version = "0.14.1", features = ["svg"] }
 
-# removed hasn-client-core
+# ── 移动端嵌入 ZeroClaw 引擎 ──
+# 裁剪 features：仅启用 huanxing（含 HASN），排除 hardware/matrix/wasm/peripherals
+# 桌面端不需要（使用 sidecar 进程）
+# 注意：package = "zeroclawlabs" 是根 crate 的 package name，lib name = "zeroclaw"
+zeroclaw = { package = "zeroclawlabs", path = "../../..", default-features = false, features = ["huanxing"], optional = true }
+
+[features]
+default = []
+# Tauri 在编译移动端时自动设置 `mobile` cfg flag
+# 此 feature 引入 ZeroClaw 库用于 in-process 引擎
+mobile = ["zeroclaw"]

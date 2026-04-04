@@ -4,7 +4,24 @@ use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Manager};
 
+#[cfg(not(mobile))]
 use crate::sidecar::manager::SidecarManager;
+
+/// 获取配置目录（桌面端从 SidecarManager，移动端从 home_dir）
+fn get_config_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    #[cfg(not(mobile))]
+    {
+        let manager = app.state::<Arc<SidecarManager>>();
+        Ok(manager.config_dir().clone())
+    }
+    #[cfg(mobile)]
+    {
+        let _ = app;
+        Ok(dirs::home_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join(".huanxing"))
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AgentRecord {
@@ -31,8 +48,8 @@ pub struct AuthStatusResponse {
 
 #[tauri::command]
 pub async fn list_user_agents(app: AppHandle) -> Result<Vec<AgentRecord>, String> {
-    let manager = app.state::<Arc<SidecarManager>>();
-    let db_path = manager.config_dir().join("tenant.db");
+    let config_dir = get_config_dir(&app)?;
+    let db_path = config_dir.join("tenant.db");
 
     let conn =
         rusqlite::Connection::open(&db_path).map_err(|e| format!("Failed to open DB: {}", e))?;
@@ -67,8 +84,8 @@ pub async fn bind_channel_to_agent(
     sender_id: String,
     agent_id: String,
 ) -> Result<(), String> {
-    let manager = app.state::<Arc<SidecarManager>>();
-    let db_path = manager.config_dir().join("tenant.db");
+    let config_dir = get_config_dir(&app)?;
+    let db_path = config_dir.join("tenant.db");
 
     let conn =
         rusqlite::Connection::open(&db_path).map_err(|e| format!("Failed to open DB: {}", e))?;
@@ -195,8 +212,8 @@ pub async fn save_weixin_credentials(
     bot_id: String,
     base_url: Option<String>,
 ) -> Result<(), String> {
-    let manager = app.state::<Arc<SidecarManager>>();
-    let config_path = manager.config_dir().join("config.toml");
+    let config_dir = get_config_dir(&app)?;
+    let config_path = config_dir.join("config.toml");
 
     let content = std::fs::read_to_string(&config_path)
         .map_err(|e| format!("Failed to read config.toml: {}", e))?;

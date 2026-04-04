@@ -35,6 +35,18 @@ class HasnWebSocket {
     return this._connected;
   }
 
+  /** 外部通知连接已建立（如 REST API hasnConnect 成功后） */
+  emitConnected(): void {
+    this._connected = true;
+    this.emit({ type: "connected", data: {} });
+  }
+
+  /** 外部通知连接断开 */
+  emitDisconnected(): void {
+    this._connected = false;
+    this.emit({ type: "disconnected", data: {} });
+  }
+
   subscribe(handler: HasnEventHandler): () => void {
     this.handlers.add(handler);
     return () => this.handlers.delete(handler);

@@ -5,6 +5,7 @@
 @import "./styles/modules/chat.css";
 @import "./styles/modules/components.css";
 @import "./styles/modules/markdown.css";
+@import "./styles/modules/safe-area.css";
 
 /* Tailwind CSS v4 class-based dark mode configuration */
 @custom-variant dark (&:where(.dark, .dark *, [data-theme="dark"], [data-theme="dark"] *));

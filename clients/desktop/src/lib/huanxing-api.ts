@@ -13,10 +13,14 @@ import { HUANXING_CONFIG, type HuanxingLoginData } from '../config';
 
 /**
  * 获取后端基地址
- * - Tauri 桌面端：直连 backendBaseUrl（无跨域限制）
- * - 浏览器开发环境：返回空字符串，走 Vite proxy（避免跨域）
+ * - 开发模式（import.meta.env.DEV）: 返回空字符串，走 Vite proxy
+ *   这对 iOS 模拟器至关重要，因为模拟器中 127.0.0.1 指向自身而不是 Mac 宿主
+ * - 生产构建: Tauri 桌面端直连 backendBaseUrl
  */
 function baseUrl(): string {
+  // 开发模式统一走 Vite proxy
+  if (import.meta.env.DEV) return '';
+  // 生产构建的 Tauri 桌面端直连
   const isDesktop =
     typeof window !== 'undefined' &&
     (!!((window as any).__TAURI_INTERNALS__) || !!((window as any).__TAURI__));
@@ -36,6 +40,45 @@ async function request<T = unknown>(
       ...options.headers,
     },
   });
+
+  // 401 处理：尝试刷新 token，失败则触发全局登出
+  if (resp.status === 401) {
+    let refreshed = false;
+    try {
+      const { refreshTokenNow } = await import('./token-refresh');
+      refreshed = await refreshTokenNow();
+    } catch {
+      // token-refresh 模块不可用
+    }
+
+    if (refreshed) {
+      // 用新 token 重试原请求
+      const { getHuanxingSession } = await import('../config');
+      const session = getHuanxingSession();
+      if (session?.accessToken) {
+        const retryHeaders = {
+          'Content-Type': 'application/json',
+          ...options.headers,
+          'Authorization': `Bearer ${session.accessToken}`,
+        };
+        const retryResp = await fetch(url, { ...options, headers: retryHeaders });
+        if (retryResp.ok) {
+          return retryResp.json() as Promise<T>;
+        }
+      }
+    }
+
+    // 刷新失败或重试失败 → 触发全局登出
+    const { clearHuanxingSession } = await import('../config');
+    const { clearToken } = await import('./auth');
+    clearHuanxingSession();
+    clearToken();
+    window.dispatchEvent(new Event('zeroclaw-unauthorized'));
+
+    const body = await resp.json().catch(() => ({}));
+    const msg = (body as any)?.msg || (body as any)?.detail || 'Token 已过期';
+    throw new Error(msg);
+  }
 
   if (!resp.ok) {
     const body = await resp.json().catch(() => ({}));

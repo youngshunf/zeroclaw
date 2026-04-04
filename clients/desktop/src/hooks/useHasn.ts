@@ -15,11 +15,18 @@ export function useHasnConnection() {
   const [connected, setConnected] = useState(false);
   const [status, setStatus] = useState<string>("disconnected");
 
-  // 初始化：查询 Tauri 后端当前连接状态
+  // 初始化：查询当前连接状态
   useEffect(() => {
     const invoke = (window as any).__TAURI_INTERNALS__?.invoke;
     if (invoke) {
+      // Tauri 桌面端
       invoke("hasn_status").then((s: string) => {
+        setConnected(s === "connected");
+        setStatus(s);
+      }).catch(() => {});
+    } else {
+      // Web 浏览器模式：通过 REST API 查询
+      hasnApi.hasnStatus().then((s) => {
         setConnected(s === "connected");
         setStatus(s);
       }).catch(() => {});
@@ -122,7 +129,7 @@ export function useHasnConversations() {
     return unsub;
   }, [refresh]);
 
-  const totalUnread = conversations.reduce((sum, c) => sum + c.unread_count, 0);
+  const totalUnread = (Array.isArray(conversations) ? conversations : []).reduce((sum, c) => sum + (c.unread_count || 0), 0);
 
   return { conversations, totalUnread, loading, error, refresh, setConversations };
 }

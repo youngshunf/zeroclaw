@@ -898,7 +898,7 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
             });
 
             let auth_param = if let Some(api_key) = &config.huanxing.hasn.api_key {
-                format!("?api_key={}", api_key)
+                format!("?node_key={}", api_key)
             } else {
                 "".to_string()
             };
@@ -918,7 +918,7 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
                 });
             } else {
                 tracing::warn!(
-                    "[HASN] HASN 已启用 auto_connect，但未配置 API Key，无法建立认证连接"
+                    "[HASN] HASN 已启用 auto_connect，但未配置 Node Key，无法建立认证连接"
                 );
             }
         }
@@ -1106,6 +1106,10 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         .route(
             "/api/v1/hasn/report",
             axum::routing::post(crate::huanxing::hasn_api::hasn_report_agents),
+        )
+        .route(
+            "/api/v1/hasn/report-entities",
+            axum::routing::post(crate::huanxing::hasn_api::hasn_report_entities),
         )
         .route(
             "/ws/hasn-events",

@@ -24,7 +24,7 @@ use tracing::{error, info};
 
 use crate::gateway::AppState;
 use crate::huanxing::hasn_connector;
-use hasn_client_core::model::AgentReport;
+use hasn_client_core::model::{AgentReport, EntityReport};
 
 // ─── Request/Response 类型 ───
 
@@ -46,6 +46,22 @@ pub struct SendRequest {
     pub local_id: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ReportEntitiesRequest {
+    pub entities: Vec<EntityReportItem>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EntityReportItem {
+    pub hasn_id: String,
+    pub entity_type: String,
+    #[serde(default)]
+    pub auth_token: Option<String>,
+    #[serde(default)]
+    pub owner_id: Option<String>,
+}
+
+/// 兼容旧格式
 #[derive(Debug, Deserialize)]
 pub struct ReportAgentsRequest {
     pub agents: Vec<AgentReportItem>,
@@ -83,24 +99,27 @@ pub async fn hasn_connect(
             )
         });
 
-    // 认证参数
+    // 认证参数：优先 node_key，兼容旧 api_key
     let auth_param = if let Some(token) = &req.token {
-        if token.starts_with("hasn_ak_") {
-            format!("?api_key={}", token)
+        if token.starts_with("hasn_nk_") {
+            format!("?node_key={}", token)
+        } else if token.starts_with("hasn_ak_") {
+            format!("?node_key={}", token)  // 旧前缀兼容
         } else {
             format!("?token={}", token)
         }
     } else if let Some(api_key) = &hasn_config.api_key {
-        format!("?api_key={}", api_key)
+        // config 中的 api_key 字段（过渡期），将来统一为 node_key
+        format!("?node_key={}", api_key)
     } else {
         return (
             StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({"error": "缺少认证凭据 (token 或 api_key)"})),
+            Json(serde_json::json!({"error": "缺少认证凭据 (node_key)"})),
         )
             .into_response();
     };
 
-    let url = format!("{}{}", base_url, auth_param);
+    let url = format!("{}{}&&protocol=hasn/2.0", base_url, auth_param);
 
     let connector = hasn_connector::global_connector();
     let max_retries = hasn_config.max_retries;
@@ -167,7 +186,36 @@ pub async fn hasn_send(Json(req): Json<SendRequest>) -> impl IntoResponse {
     }
 }
 
-/// POST /api/v1/hasn/report
+/// POST /api/v1/hasn/report — 统一实体上报
+pub async fn hasn_report_entities(Json(req): Json<ReportEntitiesRequest>) -> impl IntoResponse {
+    let connector = hasn_connector::global_connector();
+
+    let entities: Vec<EntityReport> = req
+        .entities
+        .into_iter()
+        .map(|e| EntityReport {
+            hasn_id: e.hasn_id,
+            entity_type: e.entity_type,
+            auth_token: e.auth_token,
+            owner_id: e.owner_id,
+        })
+        .collect();
+
+    match connector.report_entities(entities).await {
+        Ok(()) => (
+            StatusCode::OK,
+            Json(serde_json::json!({"status": "reported"})),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": format!("{e}")})),
+        )
+            .into_response(),
+    }
+}
+
+/// POST /api/v1/hasn/report (兼容旧 Agent-only 格式)
 pub async fn hasn_report_agents(Json(req): Json<ReportAgentsRequest>) -> impl IntoResponse {
     let connector = hasn_connector::global_connector();
 

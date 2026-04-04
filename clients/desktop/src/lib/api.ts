@@ -61,26 +61,33 @@ export async function apiFetch<T = unknown>(
   const response = await fetch(path, { ...options, headers });
 
   if (response.status === 401) {
-    // 尝试刷新 token
-    const refreshFn = await getRefreshFn();
-    if (refreshFn) {
-      const refreshed = await refreshFn();
-      if (refreshed) {
-        // 用新 token 重试原请求
-        const newToken = getToken();
-        if (newToken) {
-          headers.set('Authorization', `Bearer ${newToken}`);
+    // 区分来源：sidecar API (/api/..., 不含 /api/v1) 的 401 不触发全局登出
+    // 因为 sidecar 有自己的 pairing 认证，与唤星云端认证是独立的
+    const isSidecarApi = path.startsWith('/api/') && !path.startsWith('/api/v1/');
+
+    if (!isSidecarApi) {
+      // 唤星后端 401：尝试刷新 token
+      const refreshFn = await getRefreshFn();
+      if (refreshFn) {
+        const refreshed = await refreshFn();
+        if (refreshed) {
+          // 用新 token 重试原请求
+          const newToken = getToken();
+          if (newToken) {
+            headers.set('Authorization', `Bearer ${newToken}`);
+          }
+          const retryResponse = await fetch(path, { ...options, headers });
+          if (retryResponse.ok) {
+            if (retryResponse.status === 204) return undefined as unknown as T;
+            return retryResponse.json() as Promise<T>;
+          }
+          // 重试也失败，走下面的登出流程
         }
-        const retryResponse = await fetch(path, { ...options, headers });
-        if (retryResponse.ok) {
-          if (retryResponse.status === 204) return undefined as unknown as T;
-          return retryResponse.json() as Promise<T>;
-        }
-        // 重试也失败，走下面的登出流程
       }
+      clearToken();
+      window.dispatchEvent(new Event('zeroclaw-unauthorized'));
     }
-    clearToken();
-    window.dispatchEvent(new Event('zeroclaw-unauthorized'));
+    // sidecar 401: 不清除 token，不触发登出，只抛错误
     throw new UnauthorizedError();
   }
 

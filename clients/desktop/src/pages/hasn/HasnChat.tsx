@@ -12,6 +12,7 @@ import {
   Users,
   Loader2,
   ChevronUp,
+  ChevronLeft,
 } from 'lucide-react';
 import { Markdown } from '@/components/markdown';
 import { HxImageMessage, containsImageMarkers } from '@/components/chat/HxImageMessage';
@@ -26,6 +27,7 @@ import { useAgentSkills } from '@/hooks/useAgentSkills';
 import { HxChatInput } from '@/components/chat/input';
 import { HUANXING_SLASH_SECTIONS } from '@/components/chat/input/HxSlashMenu';
 import * as hasnApi from '@/lib/hasn-api';
+import { usePlatform } from '@/hooks/usePlatform';
 
 function getInitial(name: string): string {
   return name.charAt(0) || '?';
@@ -119,8 +121,13 @@ export default function HasnChat() {
       )
     : conversations;
 
+  // ── 移动端导航栈 ────────────────────────────────────────────
+  const { isMobile } = usePlatform();
+  const mobileView = isMobile ? (activeConvId ? 'chat' : 'panel') : 'both';
+
   return (
-    <>
+    <div className={isMobile ? (mobileView === 'panel' ? 'hx-mobile-show-panel' : 'hx-mobile-show-chat') : ''}
+         style={{ display: 'flex', flex: 1, minWidth: 0, height: '100%' }}>
       {/* ===== 左侧会话列表 ===== */}
       <div className="hx-panel">
         <div className="hx-panel-header">
@@ -208,6 +215,15 @@ export default function HasnChat() {
         {activeConvId && activeConv && (
           <div className="hx-chat-header">
             <div className="hx-chat-header-left">
+              {isMobile && (
+                <button
+                  className="hx-mobile-header-back"
+                  onClick={() => setActiveConvId(null)}
+                  style={{ marginRight: 4, flexShrink: 0 }}
+                >
+                  <ChevronLeft size={22} />
+                </button>
+              )}
               <div
                 className="hx-chat-header-avatar bg-gradient-to-br from-hx-purple to-hx-blue text-white font-semibold text-sm"
               >
@@ -229,7 +245,7 @@ export default function HasnChat() {
             <div className="hx-empty-state">
               <div className="icon">💬</div>
               <h3>HASN 社交聊天</h3>
-              <p>选择一个会话开始聊天，或点击 "+" 发起新对话</p>
+              <p>{isMobile ? '选择一个会话开始聊天' : '选择一个会话开始聊天，或点击 "+" 发起新对话'}</p>
             </div>
           ) : msgsLoading && messages.length === 0 ? (
             <div className="hx-empty-state">
@@ -318,6 +334,6 @@ export default function HasnChat() {
           slashSections={slashSections}
         />
       </div>
-    </>
+    </div>
   );
 }

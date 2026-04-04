@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { AlertCircle, CheckCircle2, ChevronDown } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Bot } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -9,13 +9,9 @@ import {
   DialogDescription,
   DialogFooter,
 } from '@/components/ui/Dialog';
-
-interface AgentRecord {
-  agent_id: string;
-  template: string;
-  star_name?: string | null;
-  hasn_id?: string | null;
-}
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/Select';
+import { listAgents, type AgentInfo } from '@/lib/agent-api';
+import { resolveApiUrl } from '@/config';
 
 export default function WeixinAuthModal({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const [qrState, setQrState] = useState<'loading' | 'waiting' | 'confirmed' | 'error'>('loading');
@@ -26,7 +22,7 @@ export default function WeixinAuthModal({ open, onOpenChange }: { open: boolean;
   const [botToken, setBotToken] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string>('');
 
-  const [agents, setAgents] = useState<AgentRecord[]>([]);
+  const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [selectedAgent, setSelectedAgent] = useState<string>('');
   const [isBinding, setIsBinding] = useState(false);
 
@@ -88,12 +84,13 @@ export default function WeixinAuthModal({ open, onOpenChange }: { open: boolean;
     return () => { canceled = true; clearTimeout(timer); };
   }, [qrState, qrcodeId, sessionKey]);
 
-  // 3. 获取本地代理
+  // 3. 获取本地代理 — 使用公共 agent-api
   const loadAgents = async () => {
     try {
-      const res: AgentRecord[] = await invoke('list_user_agents');
-      setAgents(res);
-      if (res.length > 0) setSelectedAgent(res[0].agent_id);
+      const data = await listAgents();
+      const list = data.agents || [];
+      setAgents(list);
+      if (list.length > 0) setSelectedAgent(list[0].name);
     } catch (e: any) {
       console.error(e);
       setErrorMsg('获取助手列表失败: ' + e);
@@ -157,7 +154,7 @@ export default function WeixinAuthModal({ open, onOpenChange }: { open: boolean;
           </>
         )}
 
-        {/* Confirmed */}
+        {/* Confirmed — 使用公共 AgentSelector (Radix Select) */}
         {qrState === 'confirmed' && (
           <>
             <DialogHeader>
@@ -177,22 +174,28 @@ export default function WeixinAuthModal({ open, onOpenChange }: { open: boolean;
                 <label className="block text-xs font-medium text-hx-text-tertiary tracking-wide mb-1.5">
                   分配接管助手
                 </label>
-                <div className="relative">
-                  <select
-                    className="w-full appearance-none bg-hx-bg-input border border-hx-border text-hx-text-primary rounded-lg px-3 py-2.5 pr-9 text-sm outline-none focus:ring-2 focus:ring-hx-purple transition-all"
-                    value={selectedAgent}
-                    onChange={(e) => setSelectedAgent(e.target.value)}
-                    disabled={isBinding}
-                  >
+                <Select value={selectedAgent} onValueChange={setSelectedAgent} disabled={isBinding}>
+                  <SelectTrigger className="w-full bg-hx-bg-input text-hx-text-primary border-hx-border">
+                    <SelectValue placeholder="选择目标 Agent" />
+                  </SelectTrigger>
+                  <SelectContent>
                     {agents.map(a => (
-                      <option key={a.agent_id} value={a.agent_id}>
-                        {a.star_name || a.agent_id} ({a.template})
-                      </option>
+                      <SelectItem key={a.name} value={a.name}>
+                        <div className="flex items-center gap-2">
+                          {a.icon_url ? (
+                            <img src={resolveApiUrl(a.icon_url)} alt={a.name} className="w-4 h-4 rounded object-cover" />
+                          ) : (
+                            <Bot className="w-4 h-4" />
+                          )}
+                          <span>{a.display_name || a.name}</span>
+                        </div>
+                      </SelectItem>
                     ))}
-                    {agents.length === 0 && <option value="">暂无助手，请先创建一个</option>}
-                  </select>
-                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-hx-text-tertiary pointer-events-none" />
-                </div>
+                  </SelectContent>
+                </Select>
+                {agents.length === 0 && (
+                  <p className="text-xs text-hx-text-tertiary mt-2">暂无助手，请先前往管理页面创建一个。</p>
+                )}
               </div>
             </div>
 

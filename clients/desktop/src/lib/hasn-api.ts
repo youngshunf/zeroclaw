@@ -93,9 +93,12 @@ export interface AgentInfo {
 // ---------- 环境检测与路径解析 ----------
 
 import { HUANXING_CONFIG, getHuanxingSession } from '../config';
+import { hasnWs } from './hasn-ws';
 
-const CLOUD_API_BASE = `${HUANXING_CONFIG.backendBaseUrl}/api/v1/hasn/app/hasn`;
-const SIDECAR_API_BASE = `${HUANXING_CONFIG.sidecarBaseUrl}/api/v1/hasn`;
+const isDesktop = typeof window !== 'undefined' && (!!((window as any).__TAURI_INTERNALS__) || !!((window as any).__TAURI__));
+const CLOUD_API_BASE = `${import.meta.env.DEV ? '' : (isDesktop ? HUANXING_CONFIG.backendBaseUrl : '')}/api/v1/hasn/app`;
+// Dev 模式走 Vite 代理（避免 CORS），生产 Tauri 直连 sidecar
+const SIDECAR_API_BASE = `${import.meta.env.DEV ? '' : HUANXING_CONFIG.sidecarBaseUrl}/api/v1/hasn`;
 
 async function cloudGet<T>(path: string): Promise<T> {
   const token = getHuanxingSession()?.accessToken;
@@ -104,7 +107,19 @@ async function cloudGet<T>(path: string): Promise<T> {
   });
   if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
   const json = await resp.json();
-  return json.data ?? json;
+  let data = json.data ?? json;
+  
+  // Extract paginated arrays automatically for array-based APIs
+  if (data && typeof data === 'object' && !Array.isArray(data)) {
+    if (Array.isArray(data.items)) data = data.items;
+    else if (Array.isArray(data.list)) data = data.list;
+    else if (Array.isArray(data.records)) data = data.records;
+    else if (Array.isArray(data.contacts)) data = data.contacts;
+    else if (Array.isArray(data.agents)) data = data.agents;
+    else if (Array.isArray(data.requests)) data = data.requests;
+  }
+  
+  return data;
 }
 
 async function cloudPost<T>(path: string, body: Record<string, unknown>): Promise<T> {
@@ -142,22 +157,31 @@ async function sidecarPost<T>(path: string, body: Record<string, unknown>): Prom
 
 // ---------- 连接管理 (呼叫 Sidecar) ----------
 
-export async function hasnConnect(platformToken: string, hasnId: string, starId: string): Promise<any> {
-  localStorage.setItem("hasn:platform_token", platformToken);
+export async function hasnConnect(nodeKeyOrToken: string, hasnId: string, starId: string): Promise<any> {
   localStorage.setItem("hasn:hasn_id", hasnId);
-  return sidecarPost("/connect", { platform_token: platformToken, hasn_id: hasnId, star_id: starId });
+  localStorage.setItem("hasn:star_id", starId);
+  // Sidecar ConnectRequest: { url?: string, token?: string }
+  // 传入 node_key (hasn_nk_...) 或 JWT token 作为认证凭据
+  const result = await sidecarPost("/connect", { token: nodeKeyOrToken });
+  // 通知 UI 连接已建立
+  hasnWs.emitConnected();
+  return result;
 }
 
 export async function hasnDisconnect(): Promise<void> {
   await sidecarPost("/disconnect", {});
+  hasnWs.emitDisconnected();
 }
 
 export async function hasnStatus(): Promise<string> {
   try {
     const res = await sidecarGet<any>("/status");
-    return res.status;
+    // sidecar 返回 {connected: boolean, node_id: string}
+    if (res.connected === true) return "connected";
+    if (res.status) return res.status;
+    return "disconnected";
   } catch {
-    return getHuanxingSession()?.accessToken ? "connected" : "disconnected";
+    return "disconnected";
   }
 }
 

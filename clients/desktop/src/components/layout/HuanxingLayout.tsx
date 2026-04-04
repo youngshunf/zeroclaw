@@ -2,7 +2,9 @@ import React from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useState, useEffect, Suspense } from 'react';
 import NavRail, { type TabKey } from './NavRail';
+import BottomTabBar, { type MobileTabKey } from './BottomTabBar';
 import { useHasnConversations, useHasnContacts } from '@/hooks/useHasn';
+import { usePlatform } from '@/hooks/usePlatform';
 
 // Settings-related paths
 const settingsPaths = ['/dashboard', '/config', '/cost', '/logs', '/doctor', '/devices', '/integrations', '/tools', '/cron', '/memory', '/about'];
@@ -38,9 +40,27 @@ const tabRoutes: Record<TabKey, string> = {
   settings: '/dashboard',
 };
 
+// Map mobile tabs to desktop tabs
+const mobileToDesktop: Record<MobileTabKey, TabKey> = {
+  agent: 'agent',
+  hasn: 'hasn',
+  contacts: 'contacts',
+  market: 'market',
+  settings: 'settings',
+};
+
+const desktopToMobile: Partial<Record<TabKey, MobileTabKey>> = {
+  agent: 'agent',
+  hasn: 'hasn',
+  contacts: 'contacts',
+  market: 'market',
+  settings: 'settings',
+};
+
 export default function HuanxingLayout() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { isMobile } = usePlatform();
   const [activeTab, setActiveTab] = useState<TabKey>(() => routeToTab(location.pathname) ?? 'agent');
   const { totalUnread } = useHasnConversations();
   const { friendRequests } = useHasnContacts();
@@ -58,19 +78,35 @@ export default function HuanxingLayout() {
     navigate(tabRoutes[tab]);
   };
 
+  const handleMobileTabChange = (tab: MobileTabKey) => {
+    const desktopTab = mobileToDesktop[tab];
+    setActiveTab(desktopTab);
+    navigate(tabRoutes[desktopTab]);
+  };
+
+  const activeMobileTab: MobileTabKey = desktopToMobile[activeTab] ?? 'agent';
+  const pendingRequests = friendRequests.filter((r) => r.status === 'pending').length;
+
   return (
-    <div className="hx-app">
-      {/* 全局拖拽条 — 铺底，低 z-index，不阻挡交互 */}
-      <div
-        className="fixed left-0 right-0 top-0 h-8 z-[1] cursor-move select-none"
-        style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
-        data-tauri-drag-region
-      />
-      <NavRail
-        activeTab={activeTab}
-        onTabChange={handleTabChange}
-        badges={{ hasn: totalUnread, contacts: friendRequests.filter((r) => r.status === 'pending').length }}
-      />
+    <div className={`hx-app${isMobile ? ' hx-app-mobile' : ''}`}>
+      {/* 全局拖拽条 — 仅桌面端 */}
+      {!isMobile && (
+        <div
+          className="fixed left-0 right-0 top-0 h-8 z-[1] cursor-move select-none"
+          style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
+          data-tauri-drag-region
+        />
+      )}
+
+      {/* 桌面端：左侧导航栏 */}
+      {!isMobile && (
+        <NavRail
+          activeTab={activeTab}
+          onTabChange={handleTabChange}
+          badges={{ hasn: totalUnread, contacts: pendingRequests }}
+        />
+      )}
+
       <div className="hx-content">
         <Suspense
           fallback={
@@ -82,6 +118,15 @@ export default function HuanxingLayout() {
           <Outlet />
         </Suspense>
       </div>
+
+      {/* 移动端：底部 Tab 栏 */}
+      {isMobile && (
+        <BottomTabBar
+          activeTab={activeMobileTab}
+          onTabChange={handleMobileTabChange}
+          badges={{ hasn: totalUnread, contacts: pendingRequests }}
+        />
+      )}
     </div>
   );
 }
