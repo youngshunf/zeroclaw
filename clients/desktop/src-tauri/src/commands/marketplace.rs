@@ -503,7 +503,7 @@ pub async fn download_and_install_agent(
     );
 
     let params = huanxing_agent_factory::CreateAgentParams {
-        tenant_id: tenant_dir,
+        tenant_id: tenant_dir.clone(),
         template_id: _app_id.clone(),
         agent_name: agent_name.clone(),
         display_name: display_name.clone(),
@@ -536,6 +536,63 @@ pub async fn download_and_install_agent(
         .await
     {
         Ok(_) => {
+            // ── Register agent in users.db so TenantContext can resolve it ──
+            // Without this record, load_by_agent_id() returns None and the
+            // runtime falls back to the global config (which has no api_key),
+            // causing "API key not set" errors.
+            emit_progress(&app, "正在注册 Agent 到本地数据库...");
+            let db_path = dirs::home_dir()
+                .unwrap_or_default()
+                .join(".huanxing")
+                .join("data")
+                .join("users.db");
+
+            match Connection::open(&db_path) {
+                Ok(conn) => {
+                    // Resolve user_id from tenant_dir
+                    let user_id_result: Result<String, _> = conn.query_row(
+                        "SELECT user_id FROM users WHERE tenant_dir = ?1 LIMIT 1",
+                        rusqlite::params![&tenant_dir],
+                        |row| row.get(0),
+                    );
+
+                    match user_id_result {
+                        Ok(user_id) => {
+                            match conn.execute(
+                                "INSERT OR IGNORE INTO agents (agent_id, user_id, template, star_name, status)
+                                 VALUES (?1, ?2, ?3, ?4, 'active')",
+                                rusqlite::params![&agent_name, &user_id, &_app_id, &display_name],
+                            ) {
+                                Ok(_) => {
+                                    eprintln!(
+                                        "[huanxing-desktop] Agent '{}' registered in DB (user={})",
+                                        agent_name, user_id
+                                    );
+                                }
+                                Err(e) => {
+                                    eprintln!(
+                                        "[huanxing-desktop] ⚠ Failed to register agent in DB: {}",
+                                        e
+                                    );
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "[huanxing-desktop] ⚠ Could not resolve user_id for tenant_dir '{}': {}",
+                                tenant_dir, e
+                            );
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!(
+                        "[huanxing-desktop] ⚠ Could not open users.db for agent registration: {}",
+                        e
+                    );
+                }
+            }
+
             eprintln!(
                 "[huanxing-desktop] Agent '{}' installed successfully",
                 agent_name
