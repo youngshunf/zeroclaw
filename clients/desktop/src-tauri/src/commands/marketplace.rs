@@ -508,7 +508,17 @@ pub async fn download_and_install_agent(
         agent_name: agent_name.clone(),
         display_name: display_name.clone(),
         is_desktop: true, // 触发 Layer2: _base_desktop 特殊覆盖
-        user_nickname: display_name.clone(),
+        user_nickname: String::new(), // 市场安装不需要用户昵称
+        user_phone: String::new(),    // 市场安装不涉及手机号模板替换
+        owner_dir: {
+            let huanxing_dir = dirs::home_dir().unwrap_or_default().join(".huanxing");
+            huanxing_dir
+                .join("users")
+                .join(&tenant_dir)
+                .join("workspace")
+                .to_string_lossy()
+                .to_string()
+        },
         provider: None,
         model: None,
         api_key: None,

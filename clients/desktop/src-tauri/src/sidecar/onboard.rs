@@ -35,6 +35,9 @@ impl SidecarManager {
         let user_uuid = req.user_uuid.as_deref().unwrap_or("unknown");
         let user_phone = req.user_phone.as_deref().unwrap_or("（未提供）");
         let agent_key = req.agent_key.as_deref().unwrap_or("");
+        // display_name 是 Agent 自己的名字，默认模板叫"唤星AI"
+        // 不能用用户昵称（star_name），那是主人的称呼
+        let agent_display_name = "唤星AI";
 
         // 1. 创建全局配置目录结构
         std::fs::create_dir_all(&self.config_dir).map_err(|e| format!("创建配置目录失败: {e}"))?;
@@ -95,7 +98,7 @@ impl SidecarManager {
             .arg("assistant") // template
             .arg("--is-desktop")
             .arg("--display-name")
-            .arg(star_name)
+            .arg(agent_display_name)
             .arg("--user-nickname")
             .arg(nickname);
 

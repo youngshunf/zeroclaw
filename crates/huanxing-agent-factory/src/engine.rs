@@ -38,6 +38,8 @@ fn substitute_placeholders(
     content
         .replace("{{star_name}}", &params.display_name)
         .replace("{{nickname}}", &params.user_nickname)
+        .replace("{{phone}}", &params.user_phone)
+        .replace("{{owner_dir}}", &params.owner_dir)
         .replace("{{default_model}}", final_model)
         .replace("{{default_provider}}", final_provider)
         .replace("{{fallback_provider}}", final_fallback)
@@ -81,6 +83,8 @@ mod tests {
             display_name: "Star".to_string(),
             is_desktop: true,
             user_nickname: "Nick".to_string(),
+            user_phone: "18611348367".to_string(),
+            owner_dir: "/tmp/test/workspace".to_string(),
             provider: Some("custom:https://llm.example.com/v1".to_string()),
             model: Some("qwen3-32b".to_string()),
             api_key: None,

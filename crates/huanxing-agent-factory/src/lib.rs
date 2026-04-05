@@ -34,6 +34,10 @@ pub struct CreateAgentParams {
     pub is_desktop: bool,
     /// 用户姓名/昵称 (用于 {{nickname}} 替换)
     pub user_nickname: String,
+    /// 用户手机号 (用于 {{phone}} 替换)
+    pub user_phone: String,
+    /// 用户全局目录的绝对路径 (用于 {{owner_dir}} 替换，让 BOOTSTRAP 中的指令指向正确位置)
+    pub owner_dir: String,
 
     // 以下为给大模型的覆写选项
     pub provider: Option<String>,

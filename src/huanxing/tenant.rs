@@ -654,10 +654,19 @@ impl TenantContext {
         // 以全局 autonomy 为基础，用 workspace config.toml 中的 [autonomy] 节覆盖。
         // 若 workspace 没有 [autonomy] 节，则 tenant_security = None（工具回落到全局策略）。
         let tenant_security: Option<Arc<SecurityPolicy>> = overrides.autonomy.as_ref().map(|_| {
-            Arc::new(SecurityPolicy::from_config(
+            let mut policy = SecurityPolicy::from_config(
                 &effective_autonomy,
                 &workspace_dir,
-            ))
+            );
+            // 自动将 owner_dir（用户全局目录）加入 allowed_roots。
+            // 这使得 Agent 能通过 BOOTSTRAP.md 中的绝对路径写入 owner_dir/USER.md 等全局文件，
+            // 同时保持 workspace_only=true 的整体安全约束不被放松。
+            // 仅在 Desktop 模式下生效（owner_dir != workspace_dir）；
+            // 云端模式下两者相同，条件不触发。
+            if owner_dir != workspace_dir && !policy.allowed_roots.iter().any(|r| *r == owner_dir) {
+                policy.allowed_roots.push(owner_dir.clone());
+            }
+            Arc::new(policy)
         });
 
         // ── F. Resolve remaining per-tenant config overrides ─────────
