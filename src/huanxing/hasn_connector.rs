@@ -3,7 +3,7 @@
 //! 所有节点（桌面端/云端）共用同一套代码。
 //! 负责：
 //! - 管理到 HASN 中央节点的 WS 长连接
-//! - report_entities 上报本地实体（Human + Agent）
+//! - add_owner / renew_owner / add_agent 等控制平面命令
 //! - 处理入站消息：to_id ∈ local_agents → 进程内 agent_bridge.invoke()
 //! - 事件广播到订阅者（供前端 /ws/hasn-events 消费）
 //!
@@ -16,13 +16,15 @@ use tokio::sync::{RwLock, broadcast};
 use tracing::{error, info, warn};
 
 use hasn_client_core::model::{
-    AgentReport, EntityReport, HasnFrame, WsMessagePayload,
-    ConnectedParams, ReportEntitiesAckParams, AddEntityAckParams,
+    HasnFrame,
+    ConnectedParams,
+    AddOwnerAckParams, RemoveOwnerAckParams, RenewOwnerAckParams, ListOwnersAckParams,
     AgentRegisterAckParams,
     MessageReceivedParams, OfflineMessagesParams, MessageAckParams,
     TypingParams, ErrorParams, ProvisionAgentParams, DeprovisionAgentParams,
     ReadReceiptParams, RecalledParams, EditedParams, PresenceParams,
-    build_report_entities, build_send,
+    build_send, build_add_owner, build_remove_owner,
+    build_renew_owner, build_list_owners, build_add_agent, build_remove_agent,
 };
 use hasn_client_core::ws::HasnWsClient;
 
@@ -100,6 +102,14 @@ pub enum HasnEvent {
         hasn_id: String,
         status: String,
     },
+    #[serde(rename = "owner_bound")]
+    OwnerBound { owner_id: String, binding_id: String },
+    #[serde(rename = "owner_removed")]
+    OwnerRemoved { owner_id: String, accepted: bool },
+    #[serde(rename = "owner_renewed")]
+    OwnerRenewed { owner_id: String, binding_id: String, expires_at: Option<String> },
+    #[serde(rename = "owners_list")]
+    OwnersList { owners: Vec<serde_json::Value> },
 }
 
 /// HASN Agent 专属多路复用会话状态
@@ -140,7 +150,12 @@ impl HasnConnector {
     }
 
     /// 连接 HASN 中央节点
-    pub async fn connect(&self, central_url: &str, state: Arc<AppState>) -> anyhow::Result<()> {
+    pub async fn connect(
+        &self,
+        central_url: &str,
+        auth_headers: Vec<(String, String)>,
+        state: Arc<AppState>,
+    ) -> anyhow::Result<()> {
         info!(
             "[HASN] 连接中央节点: {}",
             &central_url[..central_url.find('?').unwrap_or(central_url.len())]
@@ -154,7 +169,7 @@ impl HasnConnector {
         let sessions = self.sessions.clone();
 
         self.ws
-            .connect(central_url, move |frame| {
+            .connect_with_headers(central_url, &auth_headers, move |frame| {
                 let event_tx = event_tx.clone();
                 let node_id = node_id.clone();
                 let local_entities = local_entities.clone();
@@ -187,6 +202,7 @@ impl HasnConnector {
     pub async fn connect_with_retry(
         &self,
         central_url: &str,
+        auth_headers: Vec<(String, String)>,
         max_retries: u32,
         state: Arc<AppState>,
     ) -> anyhow::Result<()> {
@@ -198,8 +214,9 @@ impl HasnConnector {
         let sessions = self.sessions.clone();
 
         self.ws
-            .connect_with_retry(
+            .connect_with_retry_headers(
                 central_url,
+                &auth_headers,
                 move |frame| {
                     let event_tx = event_tx.clone();
                     let node_id = node_id.clone();
@@ -263,36 +280,70 @@ impl HasnConnector {
             .map_err(|e| anyhow::anyhow!("HASN 发送失败: {}", e))
     }
 
-    /// 上报实体列表（Human + Agent 统一）
-    pub async fn report_entities(&self, entities: Vec<EntityReport>) -> anyhow::Result<()> {
-        // 记录到本地集合
-        {
-            let mut local = self.local_entities.write().await;
-            local.clear();
-            for e in &entities {
-                local.insert(e.hasn_id.clone());
-            }
-        }
-
-        let frame = build_report_entities(entities);
+    pub async fn add_owner(
+        &self,
+        owner_id: &str,
+        proof_type: &str,
+        credential: &str,
+    ) -> anyhow::Result<()> {
+        let frame = build_add_owner(owner_id, proof_type, credential);
         self.ws
             .send_frame(&frame)
             .await
-            .map_err(|e| anyhow::anyhow!("HASN 上报实体失败: {}", e))
+            .map_err(|e| anyhow::anyhow!("HASN add_owner 失败: {}", e))
     }
 
-    /// 兼容旧接口：上报 Agent 列表（自动包装为 EntityReport）
-    pub async fn report_agents(&self, agents: Vec<AgentReport>) -> anyhow::Result<()> {
-        let entities: Vec<EntityReport> = agents
-            .into_iter()
-            .map(|a| EntityReport {
-                hasn_id: a.hasn_id,
-                entity_type: "agent".to_string(),
-                auth_token: None,
-                owner_id: a.owner_id,
-            })
-            .collect();
-        self.report_entities(entities).await
+    pub async fn renew_owner(
+        &self,
+        owner_id: &str,
+        proof_type: &str,
+        credential: &str,
+    ) -> anyhow::Result<()> {
+        let frame = build_renew_owner(owner_id, proof_type, credential);
+        self.ws
+            .send_frame(&frame)
+            .await
+            .map_err(|e| anyhow::anyhow!("HASN renew_owner 失败: {}", e))
+    }
+
+    pub async fn remove_owner(&self, owner_id: &str) -> anyhow::Result<()> {
+        let frame = build_remove_owner(owner_id);
+        self.ws
+            .send_frame(&frame)
+            .await
+            .map_err(|e| anyhow::anyhow!("HASN remove_owner 失败: {}", e))
+    }
+
+    pub async fn list_owners(&self) -> anyhow::Result<()> {
+        let frame = build_list_owners();
+        self.ws
+            .send_frame(&frame)
+            .await
+            .map_err(|e| anyhow::anyhow!("HASN list_owners 失败: {}", e))
+    }
+
+    pub async fn add_agent_presence(&self, agent_id: &str, owner_id: &str) -> anyhow::Result<()> {
+        {
+            let mut local = self.local_entities.write().await;
+            local.insert(agent_id.to_string());
+        }
+        let frame = build_add_agent(agent_id, owner_id);
+        self.ws
+            .send_frame(&frame)
+            .await
+            .map_err(|e| anyhow::anyhow!("HASN add_agent 失败: {}", e))
+    }
+
+    pub async fn remove_agent_presence(&self, agent_id: &str) -> anyhow::Result<()> {
+        {
+            let mut local = self.local_entities.write().await;
+            local.remove(agent_id);
+        }
+        let frame = build_remove_agent(agent_id);
+        self.ws
+            .send_frame(&frame)
+            .await
+            .map_err(|e| anyhow::anyhow!("HASN remove_agent 失败: {}", e))
     }
 
     /// 订阅事件流
@@ -340,34 +391,39 @@ async fn handle_ws_frame(
             }
         }
 
-        "hasn.node.report_entities_ack" => {
-            if let Ok(params) = serde_json::from_value::<ReportEntitiesAckParams>(frame.params) {
-                info!(
-                    "[HASN] 实体上报: accepted={}, failed={}",
-                    params.accepted.len(),
-                    params.failed.len()
-                );
-                let failed_json: Vec<serde_json::Value> = params
-                    .failed
-                    .iter()
-                    .map(|f| serde_json::json!({"hasn_id": f.hasn_id, "reason": f.reason}))
-                    .collect();
-                let _ = event_tx.send(HasnEvent::ReportAck {
-                    accepted: params.accepted,
-                    failed: failed_json,
+        "hasn.node.add_owner_ack" => {
+            if let Ok(params) = serde_json::from_value::<AddOwnerAckParams>(frame.params) {
+                local_entities.write().await.insert(params.owner_id.clone());
+                let _ = event_tx.send(HasnEvent::OwnerBound {
+                    owner_id: params.owner_id,
+                    binding_id: params.binding_id,
                 });
             }
         }
 
-        "hasn.node.add_entity_ack" => {
-            if let Ok(params) = serde_json::from_value::<AddEntityAckParams>(frame.params) {
-                info!(
-                    "[HASN] 新增实体: hasn_id={}, accepted={}",
-                    params.hasn_id, params.accepted
-                );
-                if params.accepted {
-                    local_entities.write().await.insert(params.hasn_id.clone());
-                }
+        "hasn.node.remove_owner_ack" => {
+            if let Ok(params) = serde_json::from_value::<RemoveOwnerAckParams>(frame.params) {
+                local_entities.write().await.remove(&params.owner_id);
+                let _ = event_tx.send(HasnEvent::OwnerRemoved {
+                    owner_id: params.owner_id,
+                    accepted: params.accepted,
+                });
+            }
+        }
+
+        "hasn.node.renew_owner_ack" => {
+            if let Ok(params) = serde_json::from_value::<RenewOwnerAckParams>(frame.params) {
+                let _ = event_tx.send(HasnEvent::OwnerRenewed {
+                    owner_id: params.owner_id,
+                    binding_id: params.binding_id,
+                    expires_at: params.expires_at,
+                });
+            }
+        }
+
+        "hasn.node.list_owners_ack" => {
+            if let Ok(params) = serde_json::from_value::<ListOwnersAckParams>(frame.params) {
+                let _ = event_tx.send(HasnEvent::OwnersList { owners: params.owners });
             }
         }
 
@@ -667,8 +723,8 @@ async fn handle_ws_frame(
                                         }
                                     }
                                     // 上报新加入的实体 (Agent)
-                                    let add_frame = hasn_client_core::model::build_add_entity(
-                                        &aid, "agent", None, None,
+                                    let add_frame = hasn_client_core::model::build_add_agent(
+                                        &aid, &uname,
                                     );
                                     let _ = ws_client.send_frame(&add_frame).await;
                                 }

@@ -2,7 +2,7 @@
  * HASN WebSocket 事件适配层
  *
  * Tauri 桌面端：监听 Tauri emit 事件（hasn:message, hasn:ack, hasn:typing 等）
- * Web 浏览器：直接连接 /ws/client WebSocket
+ * Web 浏览器：连接 sidecar 的 /ws/hasn-events 推流
  *
  * 对齐 Tauri hasn.rs 的 handle_ws_event 中 emit 的事件名。
  */
@@ -14,6 +14,10 @@ export type HasnEventType =
   | "typing"
   | "presence"
   | "message_recalled"
+  | "owner_bound"
+  | "owner_removed"
+  | "owner_renewed"
+  | "owners_list"
   | "agents_reported"
   | "error"
   | "disconnected";
@@ -89,28 +93,36 @@ class HasnWebSocket {
     this.ws.onmessage = (ev) => {
       try {
         const msg = JSON.parse(ev.data);
-        const cmd = msg.cmd?.toLowerCase();
+        const eventType = msg.type;
 
-        if (cmd === "connected") {
+        if (eventType === "connected") {
           this.emit({ type: "connected", data: msg });
-        } else if (cmd === "message") {
-          this.emit({ type: "message", data: msg.message || msg });
-        } else if (cmd === "ack") {
+        } else if (eventType === "message") {
+          this.emit({ type: "message", data: msg.payload || msg.message || msg });
+        } else if (eventType === "ack") {
           this.emit({ type: "ack", data: msg });
-        } else if (cmd === "typing") {
+        } else if (eventType === "typing") {
           this.emit({ type: "typing", data: msg });
-        } else if (cmd === "presence") {
+        } else if (eventType === "presence") {
           this.emit({ type: "presence", data: msg });
-        } else if (cmd === "message_recalled") {
+        } else if (eventType === "message_recalled") {
           this.emit({ type: "message_recalled", data: msg });
-        } else if (cmd === "offline_messages") {
+        } else if (eventType === "owner_bound") {
+          this.emit({ type: "owner_bound", data: msg });
+        } else if (eventType === "owner_removed") {
+          this.emit({ type: "owner_removed", data: msg });
+        } else if (eventType === "owner_renewed") {
+          this.emit({ type: "owner_renewed", data: msg });
+        } else if (eventType === "owners_list") {
+          this.emit({ type: "owners_list", data: msg });
+        } else if (eventType === "offline_messages") {
           // 逐条分发
-          for (const m of msg.messages || []) {
+          for (const m of msg.messages || msg.data?.messages || []) {
             this.emit({ type: "message", data: { ...m, offline: true } });
           }
-        } else if (cmd === "error") {
+        } else if (eventType === "error") {
           this.emit({ type: "error", data: msg });
-        } else if (cmd === "pong") {
+        } else if (eventType === "pong") {
           // 静默
         }
       } catch {

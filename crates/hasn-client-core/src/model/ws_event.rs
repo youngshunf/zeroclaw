@@ -92,7 +92,7 @@ fn default_capacity() -> i32 {
     1
 }
 
-/// hasn.node.report_entities_ack params
+/// 旧实体上报 ACK params（保留类型定义仅供历史数据解析）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReportEntitiesAckParams {
     pub accepted: Vec<String>,
@@ -106,7 +106,42 @@ pub struct ReportEntityFailed {
     pub reason: String,
 }
 
-/// hasn.node.add_entity_ack params
+/// hasn.node.add_owner_ack params
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AddOwnerAckParams {
+    pub binding_id: String,
+    pub owner_id: String,
+    pub accepted: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scopes: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
+}
+
+/// hasn.node.remove_owner_ack params
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoveOwnerAckParams {
+    pub owner_id: String,
+    pub accepted: bool,
+}
+
+/// hasn.node.renew_owner_ack params
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RenewOwnerAckParams {
+    pub binding_id: String,
+    pub owner_id: String,
+    pub accepted: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
+}
+
+/// hasn.node.list_owners_ack params
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListOwnersAckParams {
+    pub owners: Vec<serde_json::Value>,
+}
+
+/// 旧动态实体新增 ACK params（保留类型定义仅供历史数据解析）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AddEntityAckParams {
     pub hasn_id: String,
@@ -339,63 +374,70 @@ impl WsMessagePayload {
 
 // ─── 上行命令构造辅助 ───
 
-/// 实体上报项（Human 或 Agent）
+/// Owner proof
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EntityReport {
-    pub hasn_id: String,
-    pub entity_type: String,
-    /// Human 实体需要的 auth_token
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub auth_token: Option<String>,
-    /// Agent 实体需要的 owner_id
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub owner_id: Option<String>,
+pub struct OwnerProof {
+    pub r#type: String,
+    pub credential: String,
 }
 
-/// 兼容旧代码的 Agent 上报项
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AgentReport {
-    pub hasn_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub owner_id: Option<String>,
-}
-
-/// 构造 hasn.node.report_entities 请求帧
-pub fn build_report_entities(entities: Vec<EntityReport>) -> HasnFrame {
+/// 构造 hasn.node.add_owner 请求帧
+pub fn build_add_owner(owner_id: &str, proof_type: &str, credential: &str) -> HasnFrame {
     HasnFrame::request(
-        "hasn.node.report_entities",
-        serde_json::json!({ "entities": entities }),
+        "hasn.node.add_owner",
+        serde_json::json!({
+            "owner_id": owner_id,
+            "owner_proof": {
+                "type": proof_type,
+                "credential": credential,
+            }
+        }),
     )
 }
 
-/// 构造 hasn.node.add_entity 请求帧
-pub fn build_add_entity(
-    hasn_id: &str,
-    entity_type: &str,
-    auth_token: Option<&str>,
-    owner_id: Option<&str>,
-) -> HasnFrame {
-    let mut params = serde_json::json!({
-        "hasn_id": hasn_id,
-        "entity_type": entity_type,
-    });
-    if let Some(token) = auth_token {
-        params["auth_token"] = serde_json::Value::String(token.to_string());
-    }
-    if let Some(oid) = owner_id {
-        params["owner_id"] = serde_json::Value::String(oid.to_string());
-    }
-    HasnFrame::request("hasn.node.add_entity", params)
+/// 构造 hasn.node.renew_owner 请求帧
+pub fn build_renew_owner(owner_id: &str, proof_type: &str, credential: &str) -> HasnFrame {
+    HasnFrame::request(
+        "hasn.node.renew_owner",
+        serde_json::json!({
+            "owner_id": owner_id,
+            "owner_proof": {
+                "type": proof_type,
+                "credential": credential,
+            }
+        }),
+    )
 }
 
-/// 构造 hasn.node.remove_entity 请求帧
-pub fn build_remove_entity(hasn_id: &str, entity_type: &str) -> HasnFrame {
+/// 构造 hasn.node.remove_owner 请求帧
+pub fn build_remove_owner(owner_id: &str) -> HasnFrame {
     HasnFrame::request(
-        "hasn.node.remove_entity",
+        "hasn.node.remove_owner",
+        serde_json::json!({ "owner_id": owner_id }),
+    )
+}
+
+/// 构造 hasn.node.list_owners 请求帧
+pub fn build_list_owners() -> HasnFrame {
+    HasnFrame::request("hasn.node.list_owners", serde_json::json!({}))
+}
+
+/// 构造 hasn.node.add_agent 请求帧
+pub fn build_add_agent(agent_id: &str, owner_id: &str) -> HasnFrame {
+    HasnFrame::request(
+        "hasn.node.add_agent",
         serde_json::json!({
-            "hasn_id": hasn_id,
-            "entity_type": entity_type,
+            "agent_id": agent_id,
+            "owner_id": owner_id,
         }),
+    )
+}
+
+/// 构造 hasn.node.remove_agent 请求帧
+pub fn build_remove_agent(agent_id: &str) -> HasnFrame {
+    HasnFrame::request(
+        "hasn.node.remove_agent",
+        serde_json::json!({ "agent_id": agent_id }),
     )
 }
 

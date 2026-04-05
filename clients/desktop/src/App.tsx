@@ -17,6 +17,7 @@ import { AuthProvider, useAuth } from './hooks/useAuth';
 import { coerceLocale, setLocale, type Locale } from './lib/i18n';
 import { startTokenRefresh, stopTokenRefresh } from './lib/token-refresh';
 import { isTauriMobile } from './lib/platform';
+import { getHuanxingSession } from './config';
 
 // --- 唤星页面 ---
 const HuanxingLogin = lazy(() => import('./pages/auth/Login'));
@@ -116,12 +117,21 @@ function AppContent() {
         // 建立 HASN WebSocket 连接
         if (!cancelled && identity.hasn_id) {
           try {
-            const { hasnConnect } = await import('./lib/hasn-api');
+            const { hasnConnect, hasnAddOwner, hasnAddAgent } = await import('./lib/hasn-api');
             // 优先用 session.hasnNodeKey，其次用 identity 注册时返回的 node_key
             const nodeKey = session.hasnNodeKey || identity.node_key;
             if (nodeKey) {
               await hasnConnect(nodeKey, identity.hasn_id, identity.star_id || '');
-              console.log('[App] HASN 连接已建立, hasn_id:', identity.hasn_id);
+              await hasnAddOwner(identity.hasn_id, session.accessToken);
+
+              // 本地默认 Agent 已完成 HASN 注册时，自动上线 Presence
+              const agentDisplayName = `${session.user.nickname || '唤星用户'}的星灵`;
+              const agentIdentity = await registerHasnAgent(session, 'default', agentDisplayName, 'local');
+              if (agentIdentity?.hasn_id) {
+                await hasnAddAgent(agentIdentity.hasn_id, identity.hasn_id);
+              }
+
+              console.log('[App] HASN 连接与 Owner/Agent 绑定已建立, hasn_id:', identity.hasn_id);
             } else {
               console.warn('[App] 缺少 hasn_node_key，无法建立 HASN 连接');
             }
@@ -141,6 +151,30 @@ function AppContent() {
     };
   }, [isAuthenticated]);
 
+  // Owner Binding 自动续期（轻量定时续租）
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const interval = window.setInterval(() => {
+      const session = getHuanxingSession();
+      const hasnId = localStorage.getItem('hasn:hasn_id');
+      if (!session?.accessToken || !hasnId) return;
+
+      import('./lib/hasn-api')
+        .then(({ hasnStatus, hasnRenewOwner }) => hasnStatus().then((status) => ({ status, hasnRenewOwner })))
+        .then(async ({ status, hasnRenewOwner }) => {
+          if (status === 'connected') {
+            await hasnRenewOwner(hasnId, session.accessToken);
+          }
+        })
+        .catch((err) => {
+          console.warn('[App] HASN owner renew failed:', err);
+        });
+    }, 5 * 60 * 1000);
+
+    return () => window.clearInterval(interval);
+  }, [isAuthenticated]);
+
   // 唤星桌面端：主动检查配置有效性
   // config.toml 存在且有效 → 放行（sidecar 由 setup hook 管理）
   // config.toml 不存在或无效 → 强制退出登录
@@ -157,28 +191,48 @@ function AppContent() {
 
     let cancelled = false;
 
-    (async () => {
+    const doCheck = async (): Promise<boolean> => {
       try {
-        // 返回 { config_exists: boolean, config_valid: boolean }
         const result = await internals.invoke('check_huanxing_config');
-        if (cancelled) return;
-
-        if (result?.config_valid) {
-          console.log('[huanxing] 配置有效');
-          setConfigChecked(true);
-          return;
-        }
-
-        // 配置无效 → 强制退出登录
-        console.error('[huanxing-debug] ⚠️ check_huanxing_config → config invalid → logout',
-          `(exists=${result?.config_exists}, valid=${result?.config_valid})`);
-        localStorage.removeItem('huanxing_session');
-        logout();
-      } catch (err) {
-        console.warn('[huanxing] 配置检查失败:', err);
-        // 检查失败不阻塞，让用户继续使用
+        return result?.config_valid === true;
+      } catch {
+        return true; // 检查失败不阻塞
       }
-      if (!cancelled) setConfigChecked(true);
+    };
+
+    (async () => {
+      // 延迟 3 秒，等 onboard 有机会完成（首次登录时 config.toml 需要 onboard 创建）
+      await new Promise(r => setTimeout(r, 3000));
+      if (cancelled) return;
+
+      const firstCheck = await doCheck();
+      if (cancelled) return;
+
+      if (firstCheck) {
+        console.log('[huanxing] 配置有效');
+        setConfigChecked(true);
+        return;
+      }
+
+      // 首次检查失败（可能 onboard 仍在进行中），再等 3 秒重试一次
+      console.warn('[huanxing] 配置检查首次未通过，等待重试...');
+      await new Promise(r => setTimeout(r, 3000));
+      if (cancelled) return;
+
+      const retryCheck = await doCheck();
+      if (cancelled) return;
+
+      if (retryCheck) {
+        console.log('[huanxing] 配置重试通过');
+        setConfigChecked(true);
+        return;
+      }
+
+      // 两次检查都失败：配置确实无效
+      console.error('[huanxing-debug] ⚠️ check_huanxing_config → config invalid → logout (after retry)');
+      localStorage.removeItem('huanxing_session');
+      logout();
+      setConfigChecked(true);
     })();
 
     return () => { cancelled = true; };

@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::{mpsc, Mutex, RwLock};
-use tokio_tungstenite::{connect_async, tungstenite::Message};
+use tokio_tungstenite::{connect_async, tungstenite::Message, tungstenite::client::IntoClientRequest};
 use tracing::{error, info, warn};
 
 use crate::error::HasnError;
@@ -45,9 +45,22 @@ impl HasnWsClient {
 
     /// 连接 WebSocket
     ///
-    /// `url`: wss://{server}/api/v1/hasn/ws/node?node_key=hasn_nk_xxx
+    /// `url`: wss://{server}/api/v1/hasn/ws/node?protocol=hasn/2.0
     /// `on_event`: 收到服务端帧时回调（HasnFrame）
     pub async fn connect<F>(&self, url: &str, on_event: F) -> Result<(), HasnError>
+    where
+        F: Fn(HasnFrame) + Send + Sync + 'static,
+    {
+        self.connect_with_headers(url, &[], on_event).await
+    }
+
+    /// 连接 WebSocket（支持自定义握手头）
+    pub async fn connect_with_headers<F>(
+        &self,
+        url: &str,
+        headers: &[(String, String)],
+        on_event: F,
+    ) -> Result<(), HasnError>
     where
         F: Fn(HasnFrame) + Send + Sync + 'static,
     {
@@ -60,7 +73,18 @@ impl HasnWsClient {
             &url[..url.find('?').unwrap_or(url.len())]
         );
 
-        let (ws_stream, _) = connect_async(url)
+        let mut request = url
+            .into_client_request()
+            .map_err(|e| HasnError::Ws(format!("WS请求构造失败: {}", e)))?;
+        for (k, v) in headers {
+            let header_name = tokio_tungstenite::tungstenite::http::header::HeaderName::from_bytes(k.as_bytes())
+                .map_err(|e| HasnError::Ws(format!("无效请求头名: {}", e)))?;
+            let header_value = tokio_tungstenite::tungstenite::http::HeaderValue::from_str(v)
+                .map_err(|e| HasnError::Ws(format!("无效请求头值: {}", e)))?;
+            request.headers_mut().insert(header_name, header_value);
+        }
+
+        let (ws_stream, _) = connect_async(request)
             .await
             .map_err(|e| HasnError::Ws(format!("WS连接失败: {}", e)))?;
 
@@ -190,6 +214,19 @@ impl HasnWsClient {
     where
         F: Fn(HasnFrame) + Send + Sync + Clone + 'static,
     {
+        self.connect_with_retry_headers(url, &[], on_event, max_retries).await
+    }
+
+    pub async fn connect_with_retry_headers<F>(
+        &self,
+        url: &str,
+        headers: &[(String, String)],
+        on_event: F,
+        max_retries: u32,
+    ) -> Result<(), HasnError>
+    where
+        F: Fn(HasnFrame) + Send + Sync + Clone + 'static,
+    {
         let mut delay = Duration::from_secs(1);
         let max_delay = Duration::from_secs(30);
 
@@ -204,7 +241,7 @@ impl HasnWsClient {
                 delay = std::cmp::min(delay * 2, max_delay);
             }
 
-            match self.connect(url, on_event.clone()).await {
+            match self.connect_with_headers(url, headers, on_event.clone()).await {
                 Ok(()) => return Ok(()),
                 Err(e) => {
                     warn!("[HasnWS] 连接失败 (尝试{}): {}", attempt, e);

@@ -2512,10 +2512,10 @@ impl Default for BrowserComputerUseConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct BrowserConfig {
     /// Enable `browser_open` tool (opens URLs in the system browser without scraping)
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub enabled: bool,
     /// Allowed domains for `browser_open` (exact or subdomain match)
-    #[serde(default)]
+    #[serde(default = "default_browser_allowed_domains")]
     pub allowed_domains: Vec<String>,
     /// Browser session name (for agent-browser automation)
     #[serde(default)]
@@ -2535,6 +2535,10 @@ pub struct BrowserConfig {
     /// Computer-use sidecar configuration
     #[serde(default)]
     pub computer_use: BrowserComputerUseConfig,
+}
+
+fn default_browser_allowed_domains() -> Vec<String> {
+    vec!["*".into()]
 }
 
 fn default_browser_backend() -> String {
@@ -5480,6 +5484,8 @@ fn default_auto_approve() -> Vec<String> {
         "content_search".into(),
         "image_info".into(),
         "weather".into(),
+        "browser".into(),
+        "browser_open".into(),
     ]
 }
 
@@ -5886,9 +5892,9 @@ pub struct ClassificationRule {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct HeartbeatConfig {
-    /// Enable periodic heartbeat pings. Default: `false`.
+    /// Enable periodic heartbeat pings. Default: `true`.
     pub enabled: bool,
-    /// Interval in minutes between heartbeat pings. Default: `5`.
+    /// Interval in minutes between heartbeat pings. Minimum: `1`. Default: `30`.
     #[serde(default = "default_heartbeat_interval")]
     pub interval_minutes: u32,
     /// Enable two-phase heartbeat: Phase 1 asks LLM whether to run, Phase 2
@@ -5939,6 +5945,11 @@ pub struct HeartbeatConfig {
     /// conversation history — just as if the user had sent a message.
     #[serde(default)]
     pub load_session_context: bool,
+    /// Maximum wall-clock seconds allowed for a single agent invocation
+    /// (Phase 1 decision or Phase 2 task execution). `0` disables.
+    /// Default: `600` (10 minutes).
+    #[serde(default = "default_heartbeat_task_timeout")]
+    pub task_timeout_secs: u64,
 }
 
 fn default_heartbeat_interval() -> u32 {
@@ -5961,10 +5972,14 @@ fn default_heartbeat_max_run_history() -> u32 {
     100
 }
 
+fn default_heartbeat_task_timeout() -> u64 {
+    600
+}
+
 impl Default for HeartbeatConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             interval_minutes: default_heartbeat_interval(),
             two_phase: true,
             message: None,
@@ -5978,6 +5993,7 @@ impl Default for HeartbeatConfig {
             deadman_to: None,
             max_run_history: default_heartbeat_max_run_history(),
             load_session_context: false,
+            task_timeout_secs: default_heartbeat_task_timeout(),
         }
     }
 }
@@ -11798,7 +11814,7 @@ mod tests {
         );
         assert_eq!(c.provider_timeout_secs, 120);
         #[cfg(feature = "huanxing")]
-        assert!(c.workspace_dir.to_string_lossy().contains("agents/default"));
+        assert!(c.workspace_dir.to_string_lossy().contains("guardian/workspace"));
         #[cfg(not(feature = "huanxing"))]
         assert!(c.workspace_dir.to_string_lossy().contains("workspace"));
         assert!(c.config_path.to_string_lossy().contains("config.toml"));
@@ -11935,7 +11951,7 @@ mod tests {
     #[test]
     async fn heartbeat_config_default() {
         let h = HeartbeatConfig::default();
-        assert!(!h.enabled);
+        assert!(h.enabled);
         assert_eq!(h.interval_minutes, 30);
         assert!(h.message.is_none());
         assert!(h.target.is_none());
@@ -12326,7 +12342,7 @@ default_temperature = 0.7
         assert_eq!(parsed.observability.runtime_trace_mode, "none");
         assert_eq!(parsed.autonomy.level, AutonomyLevel::Supervised);
         assert_eq!(parsed.runtime.kind, "native");
-        assert!(!parsed.heartbeat.enabled);
+        assert!(parsed.heartbeat.enabled);
         assert!(parsed.channels_config.cli);
         assert!(parsed.memory.hygiene_enabled);
         assert_eq!(parsed.memory.archive_after_days, 7);
@@ -14530,7 +14546,7 @@ requires_openai_auth = true
         assert_eq!(config_dir, workspace_dir);
         assert_eq!(
             resolved_workspace_dir,
-            workspace_dir.join("agents").join("default")
+            workspace_dir.join(default_workspace_subdir())
         );
 
         // SAFETY: test-only, single-threaded test runner.
@@ -14569,7 +14585,7 @@ requires_openai_auth = true
         assert_eq!(config_dir, explicit_config_dir);
         assert_eq!(
             resolved_workspace_dir,
-            explicit_config_dir.join("agents").join("default")
+            explicit_config_dir.join(default_workspace_subdir())
         );
 
         // SAFETY: test-only, single-threaded test runner.
@@ -14604,7 +14620,7 @@ requires_openai_auth = true
         assert_eq!(config_dir, marker_config_dir);
         assert_eq!(
             resolved_workspace_dir,
-            marker_config_dir.join("agents").join("default")
+            marker_config_dir.join(default_workspace_subdir())
         );
 
         let _ = fs::remove_dir_all(default_config_dir).await;
@@ -14647,7 +14663,7 @@ requires_openai_auth = true
 
         assert_eq!(
             config.workspace_dir,
-            workspace_dir.join("agents").join("default")
+            workspace_dir.join(default_workspace_subdir())
         );
         assert_eq!(config.config_path, workspace_dir.join("config.toml"));
         assert!(workspace_dir.join("config.toml").exists());
@@ -14827,7 +14843,7 @@ default_model = "legacy-model"
         assert_eq!(config.config_path, custom_config_dir.join("config.toml"));
         assert_eq!(
             config.workspace_dir,
-            custom_config_dir.join("agents").join("default")
+            custom_config_dir.join(default_workspace_subdir())
         );
         assert_eq!(config.default_model.as_deref(), Some("persisted-profile"));
 
@@ -14873,7 +14889,7 @@ default_model = "legacy-model"
 
         assert_eq!(
             config.workspace_dir,
-            env_workspace_dir.join("agents").join("default")
+            env_workspace_dir.join(default_workspace_subdir())
         );
         assert_eq!(config.config_path, env_workspace_dir.join("config.toml"));
 
@@ -14954,7 +14970,7 @@ default_model = "persisted-profile"
 
         assert_eq!(
             config.workspace_dir,
-            workspace_dir.join("agents").join("default")
+            workspace_dir.join(default_workspace_subdir())
         );
         assert_eq!(config.config_path, config_path);
         assert_eq!(config.default_model.as_deref(), Some("persisted-profile"));
