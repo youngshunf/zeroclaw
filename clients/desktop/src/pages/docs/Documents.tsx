@@ -363,8 +363,24 @@ export default function Documents() {
           return;
         }
 
+        // ── 辅助函数：递归将 getComputedStyle 解析后的 RGB 颜色烘焙为内联样式 ──
+        // html2canvas 不支持 Tailwind v4 的 oklab() 色彩函数，
+        // 但浏览器的 getComputedStyle 会自动将 oklab 解析成标准 rgb()。
+        // 通过内联这些已解析的值，html2canvas 就不再需要解析原始样式表。
+        const bakeColors = (src: Element, dst: Element) => {
+          if (!(src instanceof HTMLElement) || !(dst instanceof HTMLElement)) return;
+          const cs = window.getComputedStyle(src);
+          dst.style.color = cs.color;
+          dst.style.backgroundColor = cs.backgroundColor;
+          dst.style.borderColor = cs.borderColor;
+          const srcChildren = src.children;
+          const dstChildren = dst.children;
+          for (let i = 0; i < Math.min(srcChildren.length, dstChildren.length); i++) {
+            bakeColors(srcChildren[i], dstChildren[i]);
+          }
+        };
+
         // 将 .hx-markdown 克隆到一个临时全高无滚动的离屏容器中
-        // 这样 html2canvas 才能捕获到完整的文档内容（而非仅可见区域）
         const offscreen = document.createElement('div');
         offscreen.style.cssText = `
           position: fixed; left: -9999px; top: 0;
@@ -372,9 +388,12 @@ export default function Documents() {
           background: white; color: black; z-index: -1;
         `;
         const clone = source.cloneNode(true) as HTMLElement;
-        clone.style.cssText = 'height: auto; overflow: visible; padding-bottom: 0;';
+        clone.style.cssText = 'height: auto; overflow: visible; padding-bottom: 0; background: white; color: black;';
         offscreen.appendChild(clone);
         document.body.appendChild(offscreen);
+
+        // 将浏览器已解析的 RGB 颜色烘焙到克隆体上
+        bakeColors(source, clone);
 
         try {
           const html2pdf = (await import('html2pdf.js')).default;
@@ -383,7 +402,20 @@ export default function Documents() {
             margin:       10,
             filename:     `${selectedDoc.title}.pdf`,
             image:        { type: 'jpeg' as const, quality: 0.98 },
-            html2canvas:  { scale: 2, useCORS: true, logging: false, scrollY: 0 },
+            html2canvas:  { 
+              scale: 2, 
+              useCORS: true, 
+              logging: false, 
+              scrollY: 0,
+              // 让 html2canvas 只处理克隆体容器，不再遍历整个页面的样式表
+              ignoreElements: (el: Element) => {
+                // 忽略 <style> 和 <link rel="stylesheet"> 标签以跳过 oklab 解析
+                if (el.tagName === 'STYLE' || (el.tagName === 'LINK' && (el as HTMLLinkElement).rel === 'stylesheet')) {
+                  return true;
+                }
+                return false;
+              }
+            },
             jsPDF:        { unit: 'mm' as const, format: 'a4' as const, orientation: 'portrait' as const }
           };
 
