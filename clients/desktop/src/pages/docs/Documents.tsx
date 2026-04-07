@@ -354,7 +354,9 @@ export default function Documents() {
       setIsExportMenuOpen(false);
       const isDesktop = !!((window as any).__TAURI_INTERNALS__ || (window as any).__TAURI__);
       
-      // 前端纯原生直出 PDF (拦截后端，静默生成下载)
+      // 前端纯原生直出 PDF — 使用 iframe 完全隔离 Tailwind v4 的 oklab() 色彩空间
+      // html2canvas 会解析 ownerDocument 的所有 CSS，无法通过 ignoreElements 或 bakeColors 绕过
+      // 唯一可靠方案：将内容放入独立 iframe，使用纯 RGB CSS，html2canvas 永远不会碰到 oklab
       if (format === 'pdf') {
         const source = document.querySelector('.hx-markdown') as HTMLElement;
         if (!source) {
@@ -363,63 +365,55 @@ export default function Documents() {
           return;
         }
 
-        // ── 辅助函数：递归将 getComputedStyle 解析后的 RGB 颜色烘焙为内联样式 ──
-        // html2canvas 不支持 Tailwind v4 的 oklab() 色彩函数，
-        // 但浏览器的 getComputedStyle 会自动将 oklab 解析成标准 rgb()。
-        // 通过内联这些已解析的值，html2canvas 就不再需要解析原始样式表。
-        const bakeColors = (src: Element, dst: Element) => {
-          if (!(src instanceof HTMLElement) || !(dst instanceof HTMLElement)) return;
-          const cs = window.getComputedStyle(src);
-          dst.style.color = cs.color;
-          dst.style.backgroundColor = cs.backgroundColor;
-          dst.style.borderColor = cs.borderColor;
-          const srcChildren = src.children;
-          const dstChildren = dst.children;
-          for (let i = 0; i < Math.min(srcChildren.length, dstChildren.length); i++) {
-            bakeColors(srcChildren[i], dstChildren[i]);
-          }
-        };
-
-        // 将 .hx-markdown 克隆到一个临时全高无滚动的离屏容器中
-        const offscreen = document.createElement('div');
-        offscreen.style.cssText = `
-          position: fixed; left: -9999px; top: 0;
-          width: 800px; height: auto; overflow: visible;
-          background: white; color: black; z-index: -1;
-        `;
-        const clone = source.cloneNode(true) as HTMLElement;
-        clone.style.cssText = 'height: auto; overflow: visible; padding-bottom: 0; background: white; color: black;';
-        offscreen.appendChild(clone);
-        document.body.appendChild(offscreen);
-
-        // 将浏览器已解析的 RGB 颜色烘焙到克隆体上
-        bakeColors(source, clone);
+        const iframe = document.createElement('iframe');
+        iframe.style.cssText = 'position: fixed; left: -9999px; top: 0; width: 800px; height: 600px; border: none;';
+        document.body.appendChild(iframe);
 
         try {
+          const iframeDoc = iframe.contentDocument!;
+          iframeDoc.open();
+          iframeDoc.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Helvetica, Arial, sans-serif; color: #1a1a1a; line-height: 1.7; padding: 24px; margin: 0; background: white; }
+            h1 { font-size: 1.8em; font-weight: 700; margin: 1.2em 0 0.5em; padding-bottom: 0.3em; border-bottom: 1px solid #e5e5e5; }
+            h2 { font-size: 1.4em; font-weight: 700; margin: 1em 0 0.4em; }
+            h3 { font-size: 1.2em; font-weight: 600; margin: 0.8em 0 0.3em; }
+            h4, h5, h6 { font-size: 1em; font-weight: 600; margin: 0.6em 0 0.2em; }
+            p { margin: 0.5em 0; }
+            a { color: #0366d6; text-decoration: none; }
+            code { background: #f0f0f0; padding: 2px 6px; border-radius: 4px; font-size: 0.88em; font-family: "SF Mono", Monaco, Consolas, "Liberation Mono", monospace; }
+            pre { background: #f6f8fa; padding: 16px; border-radius: 8px; overflow-x: auto; margin: 1em 0; border: 1px solid #e8e8e8; }
+            pre code { background: none; padding: 0; border: none; font-size: 0.85em; }
+            blockquote { border-left: 4px solid #ddd; padding: 0.5em 1em; color: #666; margin: 1em 0; background: #fafafa; border-radius: 0 4px 4px 0; }
+            table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+            th, td { border: 1px solid #ddd; padding: 8px 12px; text-align: left; }
+            th { background: #f6f8fa; font-weight: 600; }
+            tr:nth-child(even) { background: #fafafa; }
+            img, svg { max-width: 100%; height: auto; }
+            ul, ol { padding-left: 2em; margin: 0.5em 0; }
+            li { margin: 0.25em 0; }
+            hr { border: none; border-top: 1px solid #e5e5e5; margin: 1.5em 0; }
+            .shiki, [class*="language-"] { background: #f6f8fa !important; }
+            /* 代码块容器样式 */
+            div[class*="rounded"] { border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden; margin: 1em 0; }
+            div[class*="rounded"] > div:first-child { background: #f0f0f0; padding: 4px 12px; font-size: 12px; color: #666; border-bottom: 1px solid #e0e0e0; }
+            /* 隐藏复制按钮 */
+            button { display: none !important; }
+          </style></head><body>${source.innerHTML}</body></html>`);
+          iframeDoc.close();
+
+          // 等待 iframe 渲染完毕（含 SVG/图片等异步资源）
+          await new Promise(r => setTimeout(r, 500));
+
           const html2pdf = (await import('html2pdf.js')).default;
-          
           const opt = {
             margin:       10,
             filename:     `${selectedDoc.title}.pdf`,
             image:        { type: 'jpeg' as const, quality: 0.98 },
-            html2canvas:  { 
-              scale: 2, 
-              useCORS: true, 
-              logging: false, 
-              scrollY: 0,
-              // 让 html2canvas 只处理克隆体容器，不再遍历整个页面的样式表
-              ignoreElements: (el: Element) => {
-                // 忽略 <style> 和 <link rel="stylesheet"> 标签以跳过 oklab 解析
-                if (el.tagName === 'STYLE' || (el.tagName === 'LINK' && (el as HTMLLinkElement).rel === 'stylesheet')) {
-                  return true;
-                }
-                return false;
-              }
-            },
+            html2canvas:  { scale: 2, useCORS: true, logging: false, scrollY: 0 },
             jsPDF:        { unit: 'mm' as const, format: 'a4' as const, orientation: 'portrait' as const }
           };
 
-          const pdfBlob: Blob = await html2pdf().from(clone).set(opt).output('blob');
+          const pdfBlob: Blob = await html2pdf().from(iframeDoc.body).set(opt).output('blob');
           
           if (isDesktop) {
             const { save } = await import('@tauri-apps/plugin-dialog');
@@ -440,7 +434,7 @@ export default function Documents() {
             URL.revokeObjectURL(url);
           }
         } finally {
-          document.body.removeChild(offscreen);
+          document.body.removeChild(iframe);
         }
         setIsExporting(null);
         return;
