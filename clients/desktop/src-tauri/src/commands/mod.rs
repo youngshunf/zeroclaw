@@ -4,3 +4,4 @@ pub mod files;
 pub mod marketplace;
 #[cfg(not(mobile))]
 pub mod zeroclaw;
+pub mod cron;

@@ -29,32 +29,9 @@ export default defineConfig({
     strictPort: true,
     // Proxy API requests
     proxy: {
-      // Sidecar HASN 端点（必须在 /api/v1 之前，否则会被后端代理捕获）
-      "/api/v1/hasn/connect": {
-        target: "http://localhost:42620",
-        changeOrigin: true,
-      },
-      "/api/v1/hasn/disconnect": {
-        target: "http://localhost:42620",
-        changeOrigin: true,
-      },
-      "/api/v1/hasn/status": {
-        target: "http://localhost:42620",
-        changeOrigin: true,
-      },
-      "/api/v1/hasn/send": {
-        target: "http://localhost:42620",
-        changeOrigin: true,
-      },
-      "/api/v1/hasn/report": {
-        target: "http://localhost:42620",
-        changeOrigin: true,
-      },
-      "/api/v1/agent/hasn-invoke": {
-        target: "http://localhost:42620",
-        changeOrigin: true,
-      },
       // 唤星后端 API → 云端服务器
+      // 包含: /api/v1/hasn/app/*（云端 HASN 认证）和所有其他 /api/v1/* 业务接口
+      // 注：Sidecar HASN API 已从前端直连 localhost:42620，不再经过此代理
       "/api/v1": {
         target: "http://127.0.0.1:8020",
         changeOrigin: true,

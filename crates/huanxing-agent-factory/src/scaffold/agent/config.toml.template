@@ -4,7 +4,7 @@
 # ═══════════════════════════════════════════════════════════════
 
 # ── agent级独立配置 ──────────────────────────────
-display_name = "{{star_name}}"
+display_name = 唤星AI
 default_model = "{{default_model}}"
 default_temperature = 0.7
 
@@ -18,83 +18,3 @@ hasn_id = "{{hasn_id}}"
 compact_context = true          # 用大模型，不需要压缩模式
 max_tool_iterations = 50
 max_history_messages = 100       # 100条后才触发压缩
-
-[agent.session]
-backend = "sqlite"               # 持久化！重启不丢失
-strategy = "per-sender"          # 每用户独立会话
-ttl_seconds = 604800             # 7天 — 用户一周内回来不断层
-max_messages = 100               # 每会话保留100条消息
-
-# ── 记忆保存实例配置 ──────────────────────────────────────────
-[memory]
-backend = "sqlite"
-auto_save = true                 # 自动保存对话到长期记忆
-hygiene_enabled = true           # 定期清理
-archive_after_days = 14          # 14天后归档
-purge_after_days = 90            # 90天后清除
-conversation_retention_days = 90 # 对话记录保留90天
-auto_hydrate = true              # brain.db丢失时自动恢复
-snapshot_enabled = true          # 启用记忆快照备份
-snapshot_on_hygiene = true       # 清理时自动快照
-
-[skills]
-allow_scripts = true
-prompt_injection_mode = "compact"
-open_skills_enabled = false
-
-# ── Cron 定时任务 ─────────────────────────────────────────────
-[cron]
-enabled = true
-max_run_history = 20
-
-# ── Heartbeat 定时心跳 ────────────────────────────────────────
-[heartbeat]
-enabled = true
-interval_minutes = 60            # 1小时一次
-max_tasks_per_tick = 2
-
-# ── 多模态支持 ────────────────────────────────────────────────
-[multimodal]
-max_images = 4
-max_image_size_mb = 10
-allow_remote_fetch = false
-
-# ── SOP 工作流引擎 (按 Agent 隔离) ────────────────────────────
-[sop]
-sops_dir = "sops"                    # 相对于 workspace 目录
-default_execution_mode = "supervised" # 默认需要审批后执行
-approval_timeout_secs = 300           # 审批超时5分钟
-
-
-# ── Sub-Agent 委派配置 ────────────────────────────────────────
-[delegate]
-timeout_secs = 120
-agentic_timeout_secs = 300
-
-[agents.researcher]
-provider = "{{default_provider}}"
-model = "{{default_model}}"
-system_prompt = "你是一个深度研究助手。专注于搜索、整理信息，输出结构化的研究结果。要求：1) 多角度搜索验证 2) 结果以要点形式呈现 3) 注明信息来源"
-agentic = true
-allowed_tools = ["web_search", "web_fetch", "file_read", "file_write"]
-max_iterations = 20
-max_depth = 2
-agentic_timeout_secs = 300
-
-[agents.coder]
-provider = "{{default_provider}}"
-model = "{{default_model}}"
-system_prompt = "你是一个编码助手。专注于写代码、调试、生成脚本。要求：1) 代码可直接运行 2) 有必要的注释 3) 遵循项目现有风格"
-agentic = true
-allowed_tools = ["shell", "file_read", "file_write", "file_create", "glob_search", "content_search"]
-max_iterations = 30
-max_depth = 2
-agentic_timeout_secs = 300
-
-[agents.writer]
-provider = "{{default_provider}}"
-model = "{{default_model}}"
-system_prompt = "你是一个写作助手。专注于生成报告、文档、文章。要求：1) 格式规范的 Markdown 2) 结构清晰 3) 语言适配用户风格"
-agentic = false
-max_depth = 1
-timeout_secs = 120

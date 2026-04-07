@@ -14569,7 +14569,7 @@ requires_openai_auth = true
         assert_eq!(config_dir, workspace_dir);
         assert_eq!(
             resolved_workspace_dir,
-            workspace_dir.join("guardian").join("workspace")
+workspace_dir.join(default_workspace_subdir())
         );
 
         // SAFETY: test-only, single-threaded test runner.
@@ -14608,7 +14608,7 @@ requires_openai_auth = true
         assert_eq!(config_dir, explicit_config_dir);
         assert_eq!(
             resolved_workspace_dir,
-            explicit_config_dir.join("guardian").join("workspace")
+explicit_config_dir.join(default_workspace_subdir())
         );
 
         // SAFETY: test-only, single-threaded test runner.
@@ -14643,7 +14643,7 @@ requires_openai_auth = true
         assert_eq!(config_dir, marker_config_dir);
         assert_eq!(
             resolved_workspace_dir,
-            marker_config_dir.join("guardian").join("workspace")
+marker_config_dir.join(default_workspace_subdir())
         );
 
         let _ = fs::remove_dir_all(default_config_dir).await;
@@ -14686,7 +14686,7 @@ requires_openai_auth = true
 
         assert_eq!(
             config.workspace_dir,
-            workspace_dir.join("guardian").join("workspace")
+workspace_dir.join(default_workspace_subdir())
         );
         assert_eq!(config.config_path, workspace_dir.join("config.toml"));
         assert!(workspace_dir.join("config.toml").exists());
@@ -14866,7 +14866,7 @@ default_model = "legacy-model"
         assert_eq!(config.config_path, custom_config_dir.join("config.toml"));
         assert_eq!(
             config.workspace_dir,
-            custom_config_dir.join("guardian").join("workspace")
+custom_config_dir.join(default_workspace_subdir())
         );
         assert_eq!(config.default_model.as_deref(), Some("persisted-profile"));
 
@@ -14912,7 +14912,7 @@ default_model = "legacy-model"
 
         assert_eq!(
             config.workspace_dir,
-            env_workspace_dir.join("guardian").join("workspace")
+env_workspace_dir.join(default_workspace_subdir())
         );
         assert_eq!(config.config_path, env_workspace_dir.join("config.toml"));
 
@@ -14993,7 +14993,7 @@ default_model = "persisted-profile"
 
         assert_eq!(
             config.workspace_dir,
-            workspace_dir.join("guardian").join("workspace")
+workspace_dir.join(default_workspace_subdir())
         );
         assert_eq!(config.config_path, config_path);
         assert_eq!(config.default_model.as_deref(), Some("persisted-profile"));

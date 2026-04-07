@@ -1143,6 +1143,7 @@ async fn main() -> Result<()> {
                 Some(d_name.as_str()),
                 None,
                 Some(&expected_tenant_dir),
+                None, // hasn_id
                 None,
                 None,
                 None,
@@ -1230,6 +1231,15 @@ async fn main() -> Result<()> {
                 .unwrap_or_else(|| config.workspace_dir.join("hub"))
                 .join("templates");
             let factory = huanxing_agent_factory::AgentFactory::new(config_dir.clone(), None);
+            // 从 tenant_dir (格式 "001-18611348367") 中提取手机号
+            let extracted_phone = expected_tenant_dir
+                .split('-')
+                .skip(1)
+                .collect::<Vec<_>>()
+                .join("-");
+            let owner_ws = factory
+                .resolve_tenant_root(&expected_tenant_dir)
+                .join("workspace");
             let params = huanxing_agent_factory::CreateAgentParams {
                 tenant_id: expected_tenant_dir.clone(),
                 template_id: template,
@@ -1237,6 +1247,8 @@ async fn main() -> Result<()> {
                 display_name: display_name.unwrap_or_else(|| agent_name.clone()),
                 is_desktop,
                 user_nickname: user_nickname.unwrap_or_default(),
+                user_phone: extracted_phone,
+                owner_dir: owner_ws.to_string_lossy().to_string(),
                 provider,
                 model: None,
                 api_key,

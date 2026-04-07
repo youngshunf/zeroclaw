@@ -5,7 +5,12 @@
 //! - POST   /api/v1/hasn/disconnect  断开连接
 //! - GET    /api/v1/hasn/status      获取连接状态
 //! - POST   /api/v1/hasn/send        发送消息
-//! - POST   /api/v1/hasn/report      上报 Agent 列表
+//! - POST   /api/v1/hasn/node/owners 绑定 Owner
+//! - POST   /api/v1/hasn/node/owners/{owner_id}/renew 续期 Owner
+//! - DELETE /api/v1/hasn/node/owners/{owner_id} 解绑 Owner
+//! - GET    /api/v1/hasn/node/owners 查询已绑定 Owner
+//! - POST   /api/v1/hasn/node/agents  上线 Agent
+//! - DELETE /api/v1/hasn/node/agents/{agent_id} 下线 Agent
 //! - WS     /ws/hasn-events          HASN 事件实时推送
 
 use std::sync::Arc;
@@ -24,7 +29,6 @@ use tracing::{error, info};
 
 use crate::gateway::AppState;
 use crate::huanxing::hasn_connector;
-use hasn_client_core::model::{AgentReport, EntityReport};
 
 // ─── Request/Response 类型 ───
 
@@ -47,31 +51,29 @@ pub struct SendRequest {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct ReportEntitiesRequest {
-    pub entities: Vec<EntityReportItem>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct EntityReportItem {
-    pub hasn_id: String,
-    pub entity_type: String,
-    #[serde(default)]
-    pub auth_token: Option<String>,
-    #[serde(default)]
-    pub owner_id: Option<String>,
-}
-
-/// 兼容旧格式
-#[derive(Debug, Deserialize)]
-pub struct ReportAgentsRequest {
-    pub agents: Vec<AgentReportItem>,
-}
-
-#[derive(Debug, Deserialize)]
 pub struct AgentReportItem {
     pub hasn_id: String,
     #[serde(default)]
     pub owner_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct OwnerProofItem {
+    #[serde(rename = "type")]
+    pub proof_type: String,
+    pub credential: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AddOwnerRequest {
+    pub owner_id: String,
+    pub owner_proof: OwnerProofItem,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AddAgentRequest {
+    pub agent_id: String,
+    pub owner_id: String,
 }
 
 // ─── 端点实现 ───
@@ -99,18 +101,14 @@ pub async fn hasn_connect(
             )
         });
 
-    // 认证参数：优先 node_key，兼容旧 api_key
-    let auth_param = if let Some(token) = &req.token {
+    let auth_headers = if let Some(token) = &req.token {
         if token.starts_with("hasn_nk_") {
-            format!("?node_key={}", token)
-        } else if token.starts_with("hasn_ak_") {
-            format!("?node_key={}", token)  // 旧前缀兼容
+            vec![("Authorization".to_string(), format!("NodeKey {}", token))]
         } else {
-            format!("?token={}", token)
+            vec![("Authorization".to_string(), format!("Bearer {}", token))]
         }
     } else if let Some(api_key) = &hasn_config.api_key {
-        // config 中的 api_key 字段（过渡期），将来统一为 node_key
-        format!("?node_key={}", api_key)
+        vec![("Authorization".to_string(), format!("NodeKey {}", api_key))]
     } else {
         return (
             StatusCode::BAD_REQUEST,
@@ -119,13 +117,13 @@ pub async fn hasn_connect(
             .into_response();
     };
 
-    let url = format!("{}{}&&protocol=hasn/2.0", base_url, auth_param);
+    let url = format!("{}?protocol=hasn/2.0", base_url);
 
     let connector = hasn_connector::global_connector();
     let max_retries = hasn_config.max_retries;
 
     match connector
-        .connect_with_retry(&url, max_retries, Arc::new(state))
+        .connect_with_retry(&url, auth_headers, max_retries, Arc::new(state))
         .await
     {
         Ok(()) => {
@@ -186,27 +184,13 @@ pub async fn hasn_send(Json(req): Json<SendRequest>) -> impl IntoResponse {
     }
 }
 
-/// POST /api/v1/hasn/report — 统一实体上报
-pub async fn hasn_report_entities(Json(req): Json<ReportEntitiesRequest>) -> impl IntoResponse {
+pub async fn hasn_add_owner(Json(req): Json<AddOwnerRequest>) -> impl IntoResponse {
     let connector = hasn_connector::global_connector();
-
-    let entities: Vec<EntityReport> = req
-        .entities
-        .into_iter()
-        .map(|e| EntityReport {
-            hasn_id: e.hasn_id,
-            entity_type: e.entity_type,
-            auth_token: e.auth_token,
-            owner_id: e.owner_id,
-        })
-        .collect();
-
-    match connector.report_entities(entities).await {
-        Ok(()) => (
-            StatusCode::OK,
-            Json(serde_json::json!({"status": "reported"})),
-        )
-            .into_response(),
+    match connector
+        .add_owner(&req.owner_id, &req.owner_proof.proof_type, &req.owner_proof.credential)
+        .await
+    {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({"status": "owner_binding_requested"}))).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": format!("{e}")})),
@@ -215,25 +199,68 @@ pub async fn hasn_report_entities(Json(req): Json<ReportEntitiesRequest>) -> imp
     }
 }
 
-/// POST /api/v1/hasn/report (兼容旧 Agent-only 格式)
-pub async fn hasn_report_agents(Json(req): Json<ReportAgentsRequest>) -> impl IntoResponse {
+pub async fn hasn_add_agent(Json(req): Json<AddAgentRequest>) -> impl IntoResponse {
     let connector = hasn_connector::global_connector();
-
-    let agents: Vec<AgentReport> = req
-        .agents
-        .into_iter()
-        .map(|a| AgentReport {
-            hasn_id: a.hasn_id,
-            owner_id: a.owner_id,
-        })
-        .collect();
-
-    match connector.report_agents(agents).await {
-        Ok(()) => (
-            StatusCode::OK,
-            Json(serde_json::json!({"status": "reported"})),
+    match connector.add_agent_presence(&req.agent_id, &req.owner_id).await {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({"status": "agent_add_requested"}))).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": format!("{e}")})),
         )
             .into_response(),
+    }
+}
+
+pub async fn hasn_remove_agent(
+    axum::extract::Path(agent_id): axum::extract::Path<String>,
+) -> impl IntoResponse {
+    let connector = hasn_connector::global_connector();
+    match connector.remove_agent_presence(&agent_id).await {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({"status": "agent_remove_requested"}))).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": format!("{e}")})),
+        )
+            .into_response(),
+    }
+}
+
+pub async fn hasn_renew_owner(
+    axum::extract::Path(owner_id): axum::extract::Path<String>,
+    Json(req): Json<OwnerProofItem>,
+) -> impl IntoResponse {
+    let connector = hasn_connector::global_connector();
+    match connector
+        .renew_owner(&owner_id, &req.proof_type, &req.credential)
+        .await
+    {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({"status": "owner_renew_requested"}))).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": format!("{e}")})),
+        )
+            .into_response(),
+    }
+}
+
+pub async fn hasn_remove_owner(
+    axum::extract::Path(owner_id): axum::extract::Path<String>,
+) -> impl IntoResponse {
+    let connector = hasn_connector::global_connector();
+    match connector.remove_owner(&owner_id).await {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({"status": "owner_remove_requested"}))).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": format!("{e}")})),
+        )
+            .into_response(),
+    }
+}
+
+pub async fn hasn_list_owners() -> impl IntoResponse {
+    let connector = hasn_connector::global_connector();
+    match connector.list_owners().await {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({"status": "owners_list_requested"}))).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": format!("{e}")})),

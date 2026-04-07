@@ -15,25 +15,38 @@ export function useHasnConnection() {
   const [connected, setConnected] = useState(false);
   const [status, setStatus] = useState<string>("disconnected");
 
-  // 初始化：查询当前连接状态
+  // 统一通过 Sidecar REST API 查询连接状态（Tauri 和 Web 模式通用）
+  // invoke("hasn_status") 不存在，Tauri 事件 hasn:connected 也未 emit，
+  // 因此统一使用 hasnApi.hasnStatus() + 定期轮询
   useEffect(() => {
-    const invoke = (window as any).__TAURI_INTERNALS__?.invoke;
-    if (invoke) {
-      // Tauri 桌面端
-      invoke("hasn_status").then((s: string) => {
-        setConnected(s === "connected");
-        setStatus(s);
-      }).catch(() => {});
-    } else {
-      // Web 浏览器模式：通过 REST API 查询
+    let cancelled = false;
+
+    const checkStatus = () => {
       hasnApi.hasnStatus().then((s) => {
+        if (cancelled) return;
         setConnected(s === "connected");
         setStatus(s);
-      }).catch(() => {});
-    }
+      }).catch(() => {
+        if (!cancelled) {
+          setConnected(false);
+          setStatus("disconnected");
+        }
+      });
+    };
+
+    // 初始查询
+    checkStatus();
+
+    // 定期轮询（每 5 秒）
+    const interval = window.setInterval(checkStatus, 5000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
   }, []);
 
-  // 订阅 Tauri 事件获取实时状态变化
+  // 订阅 hasnWs 实时事件（补充路径，WebSocket 事件可用时生效）
   useEffect(() => {
     const unsub = hasnWs.subscribe((event: HasnWsEvent) => {
       if (event.type === "connected") {
@@ -44,28 +57,7 @@ export function useHasnConnection() {
         setStatus("disconnected");
       }
     });
-
-    // 同时设置 Tauri 事件监听（hasn:connected 由 Rust 侧触发）
-    let unlistenConnected: (() => void) | null = null;
-    let unlistenDisconnected: (() => void) | null = null;
-
-    import('@tauri-apps/api/event').then(({ listen }) => {
-      listen('hasn:connected', () => {
-        setConnected(true);
-        setStatus("connected");
-      }).then(fn => { unlistenConnected = fn; });
-
-      listen('hasn:error', () => {
-        setConnected(false);
-        setStatus("disconnected");
-      }).then(fn => { unlistenDisconnected = fn; });
-    }).catch(() => {});
-
-    return () => {
-      unsub();
-      unlistenConnected?.();
-      unlistenDisconnected?.();
-    };
+    return unsub;
   }, []);
 
   const disconnect = useCallback(async () => {

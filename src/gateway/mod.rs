@@ -901,20 +901,18 @@ pub async fn run_gateway(
                 )
             });
 
-            let auth_param = if let Some(api_key) = &config.huanxing.hasn.api_key {
-                format!("?node_key={}", api_key)
-            } else {
-                "".to_string()
-            };
+            let node_key = config.huanxing.hasn.api_key.clone()
+                .filter(|k| !k.trim().is_empty());
 
-            if !auth_param.is_empty() {
-                let url = format!("{}{}", base_url, auth_param);
+            if let Some(node_key) = node_key {
+                let url = format!("{}?protocol=hasn/2.0", base_url);
+                let auth_headers = vec![("Authorization".to_string(), format!("NodeKey {}", node_key))];
                 let st = std::sync::Arc::new(state.clone());
                 let max_retries = config.huanxing.hasn.max_retries;
                 tokio::spawn(async move {
                     tracing::info!("[HASN] Gateway启动，触发 HASN 自动连接...");
                     if let Err(e) = crate::huanxing::hasn_connector::global_connector()
-                        .connect_with_retry(&url, max_retries, st)
+                        .connect_with_retry(&url, auth_headers, max_retries, st)
                         .await
                     {
                         tracing::error!("[HASN] 自动连接 HASN 中央节点失败: {}", e);
@@ -1108,12 +1106,25 @@ pub async fn run_gateway(
             axum::routing::post(crate::huanxing::hasn_api::hasn_send),
         )
         .route(
-            "/api/v1/hasn/report",
-            axum::routing::post(crate::huanxing::hasn_api::hasn_report_agents),
+            "/api/v1/hasn/node/owners",
+            axum::routing::post(crate::huanxing::hasn_api::hasn_add_owner)
+                .get(crate::huanxing::hasn_api::hasn_list_owners),
         )
         .route(
-            "/api/v1/hasn/report-entities",
-            axum::routing::post(crate::huanxing::hasn_api::hasn_report_entities),
+            "/api/v1/hasn/node/owners/{owner_id}",
+            axum::routing::delete(crate::huanxing::hasn_api::hasn_remove_owner),
+        )
+        .route(
+            "/api/v1/hasn/node/owners/{owner_id}/renew",
+            axum::routing::post(crate::huanxing::hasn_api::hasn_renew_owner),
+        )
+        .route(
+            "/api/v1/hasn/node/agents",
+            axum::routing::post(crate::huanxing::hasn_api::hasn_add_agent),
+        )
+        .route(
+            "/api/v1/hasn/node/agents/{agent_id}",
+            axum::routing::delete(crate::huanxing::hasn_api::hasn_remove_agent),
         )
         .route(
             "/ws/hasn-events",

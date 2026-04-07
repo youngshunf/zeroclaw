@@ -492,7 +492,8 @@ pub struct HasnNodeConfig {
     /// 示例: `wss://api.huanxing.dcfuture.cn/api/v1/hasn/ws/node`
     pub central_url: Option<String>,
 
-    /// 节点 API Key (hasn_ak_xxx 格式) 或 JWT token。
+    /// 节点 Node Key (hasn_nk_xxx 格式)。
+    /// 桌面端登录后自动获取，存储在本地 config.toml。
     pub api_key: Option<String>,
 
     /// 节点类型: desktop / mobile / web / cloud

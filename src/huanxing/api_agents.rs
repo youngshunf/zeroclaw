@@ -72,6 +72,8 @@ fn build_create_agent_params(
         display_name: display_name.to_string(),
         is_desktop: req.is_desktop.unwrap_or(false),
         user_nickname: display_name.to_string(),
+        user_phone: String::new(),
+        owner_dir: String::new(),
         provider: None,
         model: None,
         api_key: req.api_key.clone(),
@@ -958,6 +960,7 @@ mod tests {
             Some("Tester"),
             None,
             Some(tenant_dir),
+            None, // hasn_id
             None,
             None,
             None,

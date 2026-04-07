@@ -90,15 +90,54 @@ export interface AgentInfo {
   created_time?: string;
 }
 
+export interface HasnNodeInfo {
+  node_id: string;
+  user_id?: number | null;
+  allowed_owner_hasn_ids?: string[] | null;
+  node_type: string;
+  node_name?: string | null;
+  device_fingerprint?: string | null;
+  device_platform?: string | null;
+  app_version?: string | null;
+  node_info: Record<string, any>;
+  capacity?: number;
+  last_seen_at?: string | null;
+  created_time?: string | null;
+}
+
+export interface OwnerApiKeyInfo {
+  key_id: string;
+  key_name?: string | null;
+  owner_id: string;
+  status: string;
+  scopes?: Record<string, any> | null;
+  bound_node_id?: string | null;
+  expires_at?: string | null;
+  created_time?: string | null;
+  last_seen_at?: string | null;
+}
+
+export interface CreateOwnerApiKeyPayload {
+  name: string;
+  scopes?: Record<string, any>;
+  bound_node_id?: string | null;
+  expires_at?: string | null;
+}
+
+export interface CreateOwnerApiKeyResult extends OwnerApiKeyInfo {
+  owner_api_key: string;
+}
+
 // ---------- 环境检测与路径解析 ----------
 
 import { HUANXING_CONFIG, getHuanxingSession } from '../config';
 import { hasnWs } from './hasn-ws';
 
 const isDesktop = typeof window !== 'undefined' && (!!((window as any).__TAURI_INTERNALS__) || !!((window as any).__TAURI__));
+// 云端后端 HASN API：DEV 模式走 Vite 代理（/api/v1 → 8020），生产 Tauri 直连后端
 const CLOUD_API_BASE = `${import.meta.env.DEV ? '' : (isDesktop ? HUANXING_CONFIG.backendBaseUrl : '')}/api/v1/hasn/app`;
-// Dev 模式走 Vite 代理（避免 CORS），生产 Tauri 直连 sidecar
-const SIDECAR_API_BASE = `${import.meta.env.DEV ? '' : HUANXING_CONFIG.sidecarBaseUrl}/api/v1/hasn`;
+// 本地 Sidecar HASN API：始终直连 sidecar（sidecar 已配置 CORS allow_origin(Any)）
+const SIDECAR_API_BASE = `${HUANXING_CONFIG.sidecarBaseUrl}/api/v1/hasn`;
 
 async function cloudGet<T>(path: string): Promise<T> {
   const token = getHuanxingSession()?.accessToken;
@@ -137,6 +176,17 @@ async function cloudPost<T>(path: string, body: Record<string, unknown>): Promis
   return json.data ?? json;
 }
 
+async function cloudDelete<T>(path: string): Promise<T> {
+  const token = getHuanxingSession()?.accessToken;
+  const resp = await fetch(`${CLOUD_API_BASE}${path}`, {
+    method: "DELETE",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
+  const json = await resp.json();
+  return json.data ?? json;
+}
+
 async function sidecarGet<T>(path: string): Promise<T> {
   const resp = await fetch(`${SIDECAR_API_BASE}${path}`);
   if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
@@ -157,13 +207,10 @@ async function sidecarPost<T>(path: string, body: Record<string, unknown>): Prom
 
 // ---------- 连接管理 (呼叫 Sidecar) ----------
 
-export async function hasnConnect(nodeKeyOrToken: string, hasnId: string, starId: string): Promise<any> {
+export async function hasnConnect(nodeKey: string, hasnId: string, starId: string): Promise<any> {
   localStorage.setItem("hasn:hasn_id", hasnId);
   localStorage.setItem("hasn:star_id", starId);
-  // Sidecar ConnectRequest: { url?: string, token?: string }
-  // 传入 node_key (hasn_nk_...) 或 JWT token 作为认证凭据
-  const result = await sidecarPost("/connect", { token: nodeKeyOrToken });
-  // 通知 UI 连接已建立
+  const result = await sidecarPost("/connect", { token: nodeKey });
   hasnWs.emitConnected();
   return result;
 }
@@ -183,6 +230,48 @@ export async function hasnStatus(): Promise<string> {
   } catch {
     return "disconnected";
   }
+}
+
+export async function hasnAddOwner(ownerId: string, bearerToken: string): Promise<any> {
+  return sidecarPost("/node/owners", {
+    owner_id: ownerId,
+    owner_proof: {
+      type: "bearer_token",
+      credential: bearerToken,
+    },
+  });
+}
+
+export async function hasnRenewOwner(ownerId: string, bearerToken: string): Promise<any> {
+  return sidecarPost(`/node/owners/${encodeURIComponent(ownerId)}/renew`, {
+    type: "bearer_token",
+    credential: bearerToken,
+  });
+}
+
+export async function hasnRemoveOwner(ownerId: string): Promise<any> {
+  const resp = await fetch(`${SIDECAR_API_BASE}/node/owners/${encodeURIComponent(ownerId)}`, {
+    method: "DELETE",
+  });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
+  const json = await resp.json();
+  return json.data ?? json;
+}
+
+export async function hasnAddAgent(agentId: string, ownerId: string): Promise<any> {
+  return sidecarPost("/node/agents", {
+    agent_id: agentId,
+    owner_id: ownerId,
+  });
+}
+
+export async function hasnRemoveAgent(agentId: string): Promise<any> {
+  const resp = await fetch(`${SIDECAR_API_BASE}/node/agents/${encodeURIComponent(agentId)}`, {
+    method: "DELETE",
+  });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
+  const json = await resp.json();
+  return json.data ?? json;
 }
 
 // ---------- 会话 API (呼叫 Cloud) ----------
@@ -234,7 +323,12 @@ export async function getMessages(
 export async function sendMessage(to: string, content: string, replyToId?: number): Promise<HasnEnvelope> {
   // 发送消息通过 Sidecar 代理发出，实现双端一致性
   const hasnId = localStorage.getItem("hasn:hasn_id") || "";
-  await sidecarPost("/send", { hasn_id: hasnId, target: to, message: content });
+  await sidecarPost("/send", {
+    from_id: hasnId,
+    to,
+    content: { text: content },
+    local_id: `temp_${Date.now()}`,
+  });
   
   // 乐观构建一个 v4.0 HasnEnvelope 返回给前端
   return {
@@ -278,6 +372,31 @@ export async function respondFriendRequest(requestId: number, accept: boolean): 
 
 export async function getMyAgents(): Promise<AgentInfo[]> {
   return cloudGet<AgentInfo[]>("/agents");
+}
+
+export async function getMyNodes(): Promise<any[]> {
+  return cloudGet<HasnNodeInfo[]>("/me/nodes");
+}
+
+export async function reissueMyNodeKey(nodeId: string): Promise<{ node_id: string; node_key: string }> {
+  return cloudPost<{ node_id: string; node_key: string }>(`/me/nodes/${encodeURIComponent(nodeId)}/reissue-key`, {});
+}
+
+export async function getOwnerApiKeys(): Promise<OwnerApiKeyInfo[]> {
+  return cloudGet<OwnerApiKeyInfo[]>("/api-keys");
+}
+
+export async function createOwnerApiKey(payload: CreateOwnerApiKeyPayload): Promise<CreateOwnerApiKeyResult> {
+  return cloudPost<CreateOwnerApiKeyResult>("/api-keys", {
+    name: payload.name,
+    scopes: payload.scopes,
+    bound_node_id: payload.bound_node_id,
+    expires_at: payload.expires_at,
+  });
+}
+
+export async function deleteOwnerApiKey(keyId: string): Promise<void> {
+  await cloudDelete(`/api-keys/${encodeURIComponent(keyId)}`);
 }
 
 // 本地 Agent HASN 注册已统一为无需前端传递 client_id。

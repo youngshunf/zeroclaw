@@ -313,22 +313,13 @@ impl HasnApiClient {
 
     /// Node WS 连接 URL
     ///
-    /// 对齐协议 §1.1: wss://{server}/api/v1/hasn/ws/node?node_key={hasn_nk_xxx}
-    pub fn ws_node_url(&self, node_key: &str) -> String {
+    /// 对齐协议 §1.1: wss://{server}/api/v1/hasn/ws/node?protocol=hasn/2.0
+    pub fn ws_node_url(&self) -> String {
         let ws_base = self
             .base_url
             .replace("https://", "wss://")
             .replace("http://", "ws://");
-        format!(
-            "{}/api/v1/hasn/ws/node?node_key={}&protocol=hasn/2.0",
-            ws_base, node_key
-        )
-    }
-
-    /// 兼容旧接口
-    #[deprecated(note = "使用 ws_node_url() 代替")]
-    pub fn ws_client_url(&self, node_key: &str) -> String {
-        self.ws_node_url(node_key)
+        format!("{}/api/v1/hasn/ws/node?protocol=hasn/2.0", ws_base)
     }
 
     /// 注册节点设备（v5.0）
@@ -349,21 +340,9 @@ impl HasnApiClient {
         }
 
         let req = self
-            .hasn_request(Method::POST, "/auth/register-client")
+            .hasn_request(Method::POST, "/auth/register-node")
             .json(&body);
         self.send_hasn(req).await
-    }
-
-    /// 兼容旧接口
-    #[deprecated(note = "使用 register_node() 代替")]
-    pub async fn register_client(
-        &self,
-        client_type: &str,
-        device_name: Option<&str>,
-        device_info: Option<serde_json::Value>,
-    ) -> Result<RegisterNodeResponse, HasnError> {
-        self.register_node(client_type, device_name, device_info)
-            .await
     }
 
     /// 签发 Node Key（v5.0）
@@ -372,18 +351,9 @@ impl HasnApiClient {
         node_id: &str,
     ) -> Result<NodeKeyResponse, HasnError> {
         let req = self
-            .hasn_request(Method::POST, "/auth/client-token")
-            .json(&serde_json::json!({ "client_id": node_id }));
+            .hasn_request(Method::POST, "/auth/node-token")
+            .json(&serde_json::json!({ "node_id": node_id }));
         self.send_hasn(req).await
-    }
-
-    /// 兼容旧接口
-    #[deprecated(note = "使用 get_node_key() 代替")]
-    pub async fn get_client_token(
-        &self,
-        client_id: &str,
-    ) -> Result<NodeKeyResponse, HasnError> {
-        self.get_node_key(client_id).await
     }
 
     /// 获取当前用户 HASN 身份
@@ -397,6 +367,12 @@ impl HasnApiClient {
         let req = self.hasn_request(Method::GET, "/me/agents");
         let val: serde_json::Value = self.send_hasn(req).await?;
         Self::extract_array(val)
+    }
+
+    /// 获取我的 Node 列表
+    pub async fn list_my_nodes(&self) -> Result<serde_json::Value, HasnError> {
+        let req = self.hasn_request(Method::GET, "/me/nodes");
+        self.send_hasn(req).await
     }
 
     // ═══════════════════════════════════
