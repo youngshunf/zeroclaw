@@ -1272,6 +1272,7 @@ mod tests {
             Some("Star"),
             None,
             Some(tenant_dir),
+            None, // hasn_id
             None,
             None,
             None,

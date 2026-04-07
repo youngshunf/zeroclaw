@@ -26,6 +26,7 @@ const Contacts = lazy(() => import('./pages/contacts/Contacts'));
 const AgentManager = lazy(() => import('./pages/agents/AgentManager'));
 const Marketplace = lazy(() => import('./pages/market/Marketplace'));
 const Documents = lazy(() => import('./pages/docs/Documents'));
+const TasksPage = lazy(() => import('./pages/tasks/TasksPage'));
 const HuanxingLayout = lazy(() => import('./components/layout/HuanxingLayout'));
 const SettingsPanel = lazy(() => import('./components/layout/SettingsPanel'));
 const Engine = lazy(() => import('./pages/engine/Engine'));
@@ -328,6 +329,9 @@ function AppContent() {
 
           {/* 新增: 文档 */}
           <Route path="/docs" element={<Suspense fallback={null}><Documents /></Suspense>} />
+
+          {/* 新增: 守护者定时任务 */}
+          <Route path="/tasks" element={<Suspense fallback={null}><TasksPage /></Suspense>} />
 
           {/* 新增: SOP 工作台 */}
           <Route path="/sop" element={<Suspense fallback={null}><SopWorkbench /></Suspense>} />

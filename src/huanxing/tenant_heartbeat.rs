@@ -172,11 +172,11 @@ impl TenantHeartbeatManager {
                 continue;
             }
 
-            // Get delivery channel
-            let channels = match self.db.get_channels(&user.user_id).await {
+            // Get delivery channels specific to the agent
+            let channels = match self.db.get_agent_channels(&user.agent_id).await {
                 Ok(ch) => ch,
                 Err(e) => {
-                    warn!("💓 Tenant {}: failed to get channels: {}", user.agent_id, e);
+                    warn!("💓 Tenant {}: failed to get agent channels: {}", user.agent_id, e);
                     continue;
                 }
             };
@@ -227,7 +227,7 @@ impl TenantHeartbeatManager {
 
                 // Construct a synthetic ChannelMessage pointing to the user's bound channel
                 // so that TenantRouter resolves the context naturally.
-                let primary_channel = channels.first().expect("Channels checked empty previously");
+                let primary_channel = Self::best_delivery_channel(&channels);
                 let tx_queue = crate::huanxing::channel_registry::get_inbound_queue();
 
                 if let Some(tx) = tx_queue {
@@ -296,6 +296,32 @@ impl TenantHeartbeatManager {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         text.hash(&mut hasher);
         hasher.finish()
+    }
+
+    /// Select the best channel to deliver heartbeat notifications to the user.
+    /// Priority:
+    /// 1. HASN (most real-time, interactive UI)
+    /// 2. WeChat / Lark (real-time chat)
+    /// 3. Any other available channel (fallback to .first())
+    fn best_delivery_channel<'a>(channels: &'a [crate::huanxing::db::ChannelRecord]) -> &'a crate::huanxing::db::ChannelRecord {
+        if channels.is_empty() {
+            panic!("Channels cannot be empty when calling best_delivery_channel");
+        }
+        
+        if let Some(c) = channels.iter().find(|c| c.channel_type.eq_ignore_ascii_case("hasn")) {
+            return c;
+        }
+        if let Some(c) = channels.iter().find(|c| c.channel_type.eq_ignore_ascii_case("wechat")) {
+            return c;
+        }
+        if let Some(c) = channels.iter().find(|c| c.channel_type.eq_ignore_ascii_case("lark")) {
+            return c;
+        }
+        if let Some(c) = channels.iter().find(|c| c.channel_type.eq_ignore_ascii_case("dingtalk")) {
+            return c;
+        }
+        
+        channels.first().unwrap()
     }
 
     /// Remove entries older than 24 hours from the task_last_run map.

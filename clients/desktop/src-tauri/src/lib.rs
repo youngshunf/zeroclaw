@@ -27,15 +27,15 @@ mod tray;
 mod engine;
 
 #[cfg(not(mobile))]
-use commands::{auth, channels, files, marketplace, zeroclaw};
+use commands::{auth, channels, cron, files, marketplace, zeroclaw};
 #[cfg(not(mobile))]
 use sidecar::SidecarManager;
 
 #[cfg(all(mobile, not(feature = "mobile")))]
-use commands::{auth, channels, files, marketplace};
+use commands::{auth, channels, cron, files, marketplace};
 
 #[cfg(feature = "mobile")]
-use commands::{auth, channels, files, marketplace};
+use commands::{auth, channels, cron, files, marketplace};
 
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
@@ -168,6 +168,11 @@ pub fn run() {
                 channels::generate_weixin_qr,
                 channels::poll_weixin_auth_status,
                 channels::save_weixin_credentials,
+                cron::list_cron_jobs,
+                cron::add_cron_job,
+                cron::delete_cron_job,
+                cron::toggle_cron_job,
+                cron::get_cron_runs,
             ])
             .build(tauri::generate_context!())
             .expect("error while building huanxing desktop")
@@ -308,6 +313,11 @@ pub fn run() {
                 channels::generate_weixin_qr,
                 channels::poll_weixin_auth_status,
                 channels::save_weixin_credentials,
+                cron::list_cron_jobs,
+                cron::add_cron_job,
+                cron::delete_cron_job,
+                cron::toggle_cron_job,
+                cron::get_cron_runs,
             ])
             .build(tauri::generate_context!())
             .expect("error while building huanxing mobile")

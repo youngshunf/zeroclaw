@@ -657,6 +657,7 @@ async fn handle_ws_frame(
                                 Some("Assistant"),
                                 Some(&agent_workspace.to_string_lossy()),
                                 Some(&tenant_dir),
+                                None, // hasn_id
                                 None,
                                 None,
                                 None,
@@ -680,6 +681,14 @@ async fn handle_ws_frame(
                                 display_name: "Assistant".to_string(),
                                 is_desktop: false,
                                 user_nickname: "User".to_string(),
+                                user_phone: uname.clone(),
+                                owner_dir: agent_workspace
+                                    .parent()
+                                    .and_then(|p| p.parent())
+                                    .map(|p| p.join("workspace"))
+                                    .unwrap_or_default()
+                                    .to_string_lossy()
+                                    .to_string(),
                                 provider: None,
                                 model: None,
                                 api_key: None,

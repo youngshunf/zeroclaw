@@ -14,6 +14,8 @@ pub struct TenantRecord {
     pub user_id: String,
     /// Agent ID (e.g. "001-18611348367-finance").
     pub agent_id: String,
+    /// HASN Human ID (h_{uuid}), populated after HASN identity registration.
+    pub hasn_id: Option<String>,
     /// Display name / nickname.
     pub nickname: Option<String>,
     /// Phone number.
@@ -67,6 +69,8 @@ pub struct RoutingRecord {
     pub sender_id: String,
     pub agent_id: String,
     pub user_id: String,
+    /// HASN identity bridged to this external channel binding.
+    pub hasn_id: Option<String>,
     pub created_at: Option<String>,
 }
 
@@ -84,6 +88,7 @@ pub struct AgentRecord {
 pub struct ChannelRecord {
     pub id: i64,
     pub user_id: String,
+    pub agent_id: String,
     pub channel_type: String,
     pub peer_id: String,
     pub peer_name: Option<String>,
@@ -155,10 +160,11 @@ impl TenantDb {
                 id            INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id       TEXT NOT NULL UNIQUE,
                 phone         TEXT UNIQUE,
+                hasn_id       TEXT UNIQUE,
                 nickname      TEXT,
                 tenant_dir    TEXT,
                 status        TEXT DEFAULT 'active',
-                plan          TEXT DEFAULT 'star_dust',
+                plan          TEXT DEFAULT 'free',
                 plan_expires  TEXT,
                 access_token  TEXT,
                 llm_token     TEXT,
@@ -187,6 +193,7 @@ impl TenantDb {
                 sender_id     TEXT NOT NULL,
                 agent_id      TEXT NOT NULL,
                 user_id       TEXT NOT NULL,
+                hasn_id       TEXT,
                 created_at    DATETIME DEFAULT (datetime('now')),
                 UNIQUE(channel_type, sender_id),
                 FOREIGN KEY (agent_id) REFERENCES agents(agent_id),
@@ -222,6 +229,7 @@ impl TenantDb {
             ("token_expires", "NULL"),
             ("server_id", "NULL"),
             ("tenant_dir", "NULL"),
+            ("hasn_id", "NULL"),
         ] {
             if !columns.iter().any(|c| c == col) {
                 conn.execute_batch(&format!(
@@ -255,6 +263,29 @@ impl TenantDb {
             }
         }
 
+        // Migrate routing table: add hasn_id if missing
+        let routing_exists: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='routing')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+
+        if routing_exists {
+            let routing_columns: Vec<String> = conn
+                .prepare("PRAGMA table_info(routing)")?
+                .query_map([], |row| row.get::<_, String>(1))?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+
+            if !routing_columns.iter().any(|c| c == "hasn_id") {
+                conn.execute_batch(
+                    "ALTER TABLE routing ADD COLUMN hasn_id TEXT DEFAULT NULL;"
+                )?;
+                tracing::info!("Migrated routing table: added column hasn_id");
+            }
+        }
+
         Ok(())
     }
 
@@ -272,7 +303,8 @@ impl TenantDb {
             "SELECT u.user_id, a.agent_id, u.nickname, u.phone, a.template,
                     u.plan, u.status, a.star_name, u.tenant_dir,
                     u.plan_expires, u.created_at, u.last_active,
-                    u.access_token, u.llm_token, u.gateway_token, NULL as token_expires, u.server_id
+                    u.access_token, u.llm_token, u.gateway_token, NULL as token_expires, u.server_id,
+                    u.hasn_id
              FROM routing r
              JOIN users u ON r.user_id = u.user_id
              JOIN agents a ON r.agent_id = a.agent_id
@@ -300,6 +332,7 @@ impl TenantDb {
         star_name: Option<&str>,
         _workspace: Option<&str>, // Kept for API compatibility but ignored
         tenant_dir: Option<&str>,
+        hasn_id: Option<&str>,
         access_token: Option<&str>,
         llm_token: Option<&str>,
         gateway_token: Option<&str>,
@@ -308,14 +341,15 @@ impl TenantDb {
         let conn = self.conn.lock().await;
         conn.execute(
             "INSERT OR REPLACE INTO users (
-                user_id, phone, nickname, tenant_dir,
+                user_id, phone, nickname, tenant_dir, hasn_id,
                 access_token, llm_token, gateway_token, server_id
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             rusqlite::params![
                 user_id,
                 phone,
                 nickname,
                 tenant_dir,
+                hasn_id,
                 access_token,
                 llm_token,
                 gateway_token,
@@ -424,7 +458,8 @@ impl TenantDb {
             "SELECT u.user_id, a.agent_id, u.nickname, u.phone, a.template,
                     u.plan, u.status, a.star_name, u.tenant_dir,
                     u.plan_expires, u.created_at, u.last_active,
-                    u.access_token, u.llm_token, u.gateway_token, NULL as token_expires, u.server_id
+                    u.access_token, u.llm_token, u.gateway_token, NULL as token_expires, u.server_id,
+                    u.hasn_id
              FROM users u
              LEFT JOIN agents a ON u.user_id = a.user_id
              WHERE u.phone = ?1 LIMIT 1",
@@ -442,7 +477,8 @@ impl TenantDb {
             "SELECT u.user_id, a.agent_id, u.nickname, u.phone, a.template,
                     u.plan, u.status, a.star_name, u.tenant_dir,
                     u.plan_expires, u.created_at, u.last_active,
-                    u.access_token, u.llm_token, u.gateway_token, NULL as token_expires, u.server_id
+                    u.access_token, u.llm_token, u.gateway_token, NULL as token_expires, u.server_id,
+                    u.hasn_id
              FROM agents a
              JOIN users u ON a.user_id = u.user_id
              WHERE a.agent_id = ?1 LIMIT 1",
@@ -462,7 +498,8 @@ impl TenantDb {
             "SELECT u.user_id, a.agent_id, u.nickname, u.phone, a.template,
                     u.plan, u.status, a.star_name, u.tenant_dir,
                     u.plan_expires, u.created_at, u.last_active,
-                    u.access_token, u.llm_token, u.gateway_token, NULL as token_expires, u.server_id
+                    u.access_token, u.llm_token, u.gateway_token, NULL as token_expires, u.server_id,
+                    u.hasn_id
              FROM agents a
              JOIN users u ON a.user_id = u.user_id
              WHERE a.hasn_id = ?1 AND u.status = 'active' LIMIT 1",
@@ -483,7 +520,8 @@ impl TenantDb {
             "SELECT u.user_id, a.agent_id, u.nickname, u.phone, a.template,
                     u.plan, u.status, a.star_name, u.tenant_dir,
                     u.plan_expires, u.created_at, u.last_active,
-                    u.access_token, u.llm_token, u.gateway_token, NULL as token_expires, u.server_id
+                    u.access_token, u.llm_token, u.gateway_token, NULL as token_expires, u.server_id,
+                    u.hasn_id
              FROM users u
              LEFT JOIN agents a ON u.user_id = a.user_id
              WHERE u.user_id = ?1 LIMIT 1",
@@ -500,7 +538,7 @@ impl TenantDb {
     pub async fn get_channels(&self, user_id: &str) -> Result<Vec<ChannelRecord>> {
         let conn = self.conn.lock().await;
         let mut stmt = conn.prepare_cached(
-            "SELECT r.id, r.user_id, r.channel_type, r.sender_id as peer_id, r.sender_id as peer_name, r.created_at as bound_at
+            "SELECT r.id, r.user_id, r.agent_id, r.channel_type, r.sender_id as peer_id, r.sender_id as peer_name, r.created_at as bound_at
              FROM routing r WHERE r.user_id = ?1 ORDER BY r.created_at",
         )?;
         let rows = stmt
@@ -508,10 +546,33 @@ impl TenantDb {
                 Ok(ChannelRecord {
                     id: row.get(0)?,
                     user_id: row.get(1)?,
-                    channel_type: row.get(2)?,
-                    peer_id: row.get(3)?,
-                    peer_name: row.get(4)?,
-                    bound_at: row.get(5)?,
+                    agent_id: row.get(2)?,
+                    channel_type: row.get(3)?,
+                    peer_id: row.get(4)?,
+                    peer_name: row.get(5)?,
+                    bound_at: row.get(6)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub async fn get_agent_channels(&self, agent_id: &str) -> Result<Vec<ChannelRecord>> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare_cached(
+            "SELECT r.id, r.user_id, r.agent_id, r.channel_type, r.sender_id as peer_id, r.sender_id as peer_name, r.created_at as bound_at
+             FROM routing r WHERE r.agent_id = ?1 ORDER BY r.created_at",
+        )?;
+        let rows = stmt
+            .query_map(rusqlite::params![agent_id], |row| {
+                Ok(ChannelRecord {
+                    id: row.get(0)?,
+                    user_id: row.get(1)?,
+                    agent_id: row.get(2)?,
+                    channel_type: row.get(3)?,
+                    peer_id: row.get(4)?,
+                    peer_name: row.get(5)?,
+                    bound_at: row.get(6)?,
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -601,6 +662,16 @@ impl TenantDb {
              SET hasn_id = ?1, updated_at = datetime('now')
              WHERE agent_id = ?2",
             rusqlite::params![hasn_id, agent_id],
+        )?;
+        Ok(rows > 0)
+    }
+
+    /// Update the HASN Human ID for a user (called after HASN identity registration).
+    pub async fn update_user_hasn_id(&self, user_id: &str, hasn_id: &str) -> Result<bool> {
+        let conn = self.conn.lock().await;
+        let rows = conn.execute(
+            "UPDATE users SET hasn_id = ?1, updated_at = datetime('now') WHERE user_id = ?2",
+            rusqlite::params![hasn_id, user_id],
         )?;
         Ok(rows > 0)
     }
@@ -705,7 +776,8 @@ impl TenantDb {
             "SELECT u.user_id, a.agent_id, u.nickname, u.phone, a.template,
                     u.plan, u.status, a.star_name, u.tenant_dir,
                     u.plan_expires, u.created_at, u.last_active,
-                    u.access_token, u.llm_token, u.gateway_token, NULL as token_expires, u.server_id
+                    u.access_token, u.llm_token, u.gateway_token, NULL as token_expires, u.server_id,
+                    u.hasn_id
              FROM users u
              LEFT JOIN agents a ON u.user_id = a.user_id",
         );
@@ -809,6 +881,7 @@ impl TenantDb {
         TenantRecord {
             user_id: row.get(0).unwrap_or_default(),
             agent_id: row.get(1).unwrap_or_default(),
+            hasn_id: row.get(17).unwrap_or(None),
             nickname: row.get(2).unwrap_or(None),
             phone: row.get(3).unwrap_or(None),
             template: row.get(4).unwrap_or(None),
@@ -832,6 +905,7 @@ impl TenantDb {
         TenantRecord {
             user_id: row.get(0).unwrap_or_default(),
             agent_id: row.get(1).unwrap_or_default(),
+            hasn_id: None,
             nickname: row.get(2).unwrap_or(None),
             phone: row.get(3).unwrap_or(None),
             template: row.get(4).unwrap_or(None),

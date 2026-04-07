@@ -316,6 +316,7 @@ impl Tool for HxRegisterUser {
                 Some(star_name),
                 Some(&agent_workspace.to_string_lossy()),
                 Some(&tenant_dir_name),
+                None, // hasn_id — populated later by HASN registration
                 Some(access_token),
                 Some(llm_token),
                 Some(gateway_token),
@@ -378,6 +379,9 @@ impl Tool for HxRegisterUser {
         };
 
         let factory = huanxing_agent_factory::AgentFactory::new(self.config_dir.clone(), None);
+        let owner_ws = factory
+            .resolve_tenant_root(&tenant_dir)
+            .join("workspace");
         let params = huanxing_agent_factory::CreateAgentParams {
             tenant_id: phone.to_string(),
             template_id: template.to_string(),
@@ -385,6 +389,8 @@ impl Tool for HxRegisterUser {
             display_name: star_name.to_string(),
             is_desktop: false,
             user_nickname: nickname.to_string(),
+            user_phone: phone.to_string(),
+            owner_dir: owner_ws.to_string_lossy().to_string(),
             provider: provider.map(|s| s.to_string()),
             model: None,
             api_key,

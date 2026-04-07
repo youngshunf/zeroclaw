@@ -1143,6 +1143,7 @@ async fn main() -> Result<()> {
                 Some(d_name.as_str()),
                 None,
                 Some(&expected_tenant_dir),
+                None, // hasn_id
                 None,
                 None,
                 None,
