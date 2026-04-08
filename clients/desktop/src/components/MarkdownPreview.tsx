@@ -7,9 +7,10 @@ import { CodeBlock, InlineCode } from './markdown/CodeBlock';
 
 export interface MarkdownPreviewProps {
   content: string;
+  onUrlClick?: (url: string) => void;
 }
 
-const MarkdownPreview = React.memo(({ content }: MarkdownPreviewProps) => {
+const MarkdownPreview = React.memo(({ content, onUrlClick }: MarkdownPreviewProps) => {
   return (
     <div className="h-full overflow-y-auto px-4 py-4 scroll-smooth bg-hx-bg-main" data-tauri-drag-region="true">
       <div className="hx-markdown w-full min-h-full pb-[20vh]">
@@ -18,6 +19,25 @@ const MarkdownPreview = React.memo(({ content }: MarkdownPreviewProps) => {
           // @ts-ignore
           rehypePlugins={[rehypeRaw]}
           components={{
+            a(props) {
+              const { href, children, ...rest } = props;
+              return (
+                <a 
+                  href={href} 
+                  {...rest} 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  onClick={(e) => {
+                    if (onUrlClick && href) {
+                      e.preventDefault();
+                      onUrlClick(href);
+                    }
+                  }}
+                >
+                  {children}
+                </a>
+              );
+            },
             code(props) {
               const { children, className, node, ...rest } = props;
               const match = /language-(\w+)/.exec(className || '');

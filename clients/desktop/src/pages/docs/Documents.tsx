@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { FileText, Plus, Search, Loader2, Save, Trash2, Globe, Lock, Edit3, Share2, BookOpen, X, Copy, ChevronRight, ChevronDown, Folder, FolderPlus, FilePlus, ArrowRightLeft, PanelRightClose, PanelRightOpen, Check, Clock, KeyRound, Eye, Pencil, Download, Link, Handshake, Printer, ClipboardCopy } from 'lucide-react';
 import TipTapEditor from '@/components/TipTapEditor';
 import MarkdownPreview from '@/components/MarkdownPreview';
+import { useUrlHandler } from '@/hooks/useUrlHandler';
 import { getHuanxingSession, HUANXING_CONFIG } from '@/config';
 import {
   getHuanxingDocumentListApi,
@@ -45,6 +46,7 @@ export default function Documents() {
   const [documents, setDocuments] = useState<HuanxingDocumentResult[]>([]);
   const [folderTree, setFolderTree] = useState<HuanxingFolderTreeNode[]>([]);
   const [expandedFolders, setExpandedFolders] = useState<Set<number>>(new Set());
+  const handleUrlClick = useUrlHandler();
   
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -969,7 +971,7 @@ export default function Documents() {
                           zIndex: (!isEditing && cacheNode.id === selectedDoc?.id) ? 10 : 0
                        }}
                      >
-                       <MarkdownPreview content={cacheNode.content} />
+                       <MarkdownPreview content={cacheNode.content} onUrlClick={handleUrlClick} />
                      </div>
                   ))}
                </div>
