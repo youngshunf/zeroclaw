@@ -11,6 +11,8 @@ interface StreamingBubbleProps {
   isStreaming: boolean;
   /** Agent name for avatar */
   agentName?: string;
+  /** Link click handler for Markdown */
+  onUrlClick?: (url: string) => void;
 }
 
 /**
@@ -22,6 +24,7 @@ export function StreamingBubble({
   progressLines,
   isStreaming,
   agentName,
+  onUrlClick,
 }: StreamingBubbleProps) {
   const hasContent = content.length > 0;
   const hasProgress = progressLines.length > 0;
@@ -42,7 +45,7 @@ export function StreamingBubble({
             <ProgressPanel lines={progressLines} />
           )}
           {hasContent && (
-            <Markdown mode="minimal">{content}</Markdown>
+            <Markdown mode="minimal" onUrlClick={onUrlClick}>{content}</Markdown>
           )}
           {isStreaming && !hasContent && !hasProgress && (
             <div className="hx-typing">

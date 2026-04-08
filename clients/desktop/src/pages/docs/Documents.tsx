@@ -219,6 +219,31 @@ export default function Documents() {
     fetchDocuments();
   }, [fetchFolders, fetchDocuments]);
 
+  // 从 URL ?share=xxx 自动打开分享文档预览（由聊天消息中的文档链接跳转而来）
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const shareToken = params.get('share');
+    if (shareToken && shareToken.trim()) {
+      setParseShareTokenInput(shareToken.trim());
+      setShowParseShareLinkModal(true);
+      // 自动触发解析
+      (async () => {
+        try {
+          setIsParsingShare(true);
+          const session = getHuanxingSession();
+          const res = await getHuanxingSharedDocumentApi(session?.accessToken || '', shareToken.trim());
+          setPreviewSharedDoc(res.data);
+        } catch (err) {
+          console.error('[Documents] Auto-parse share link failed:', err);
+        } finally {
+          setIsParsingShare(false);
+        }
+      })();
+      // 清除 URL 参数（避免刷新时重复触发）
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, []);
+
   const toggleFolder = (folderId: number) => {
     setExpandedFolders(prev => {
       const next = new Set(prev);

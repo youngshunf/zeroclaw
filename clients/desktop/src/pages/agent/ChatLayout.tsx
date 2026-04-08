@@ -20,6 +20,7 @@ import { useHasnContacts } from '@/hooks/useHasnContacts';
 import { useAgentSkills } from '@/hooks/useAgentSkills';
 import { Markdown } from '@/components/markdown';
 import { HxImageMessage, containsImageMarkers } from '@/components/chat/HxImageMessage';
+import { useUrlHandler } from '@/hooks/useUrlHandler';
 import { StreamingBubble } from '@/components/chat/StreamingBubble';
 import { getHuanxingSession, resolveApiUrl } from '@/config';
 import { usePlatform } from '@/hooks/usePlatform';
@@ -76,6 +77,7 @@ export default function ChatLayout() {
   // ── HASN 联系人 + Agent 技能数据（提供给 HxChatInput 菜单）────────
   const hasnContacts = useHasnContacts();
   const agentSkills = useAgentSkills();
+  const handleUrlClick = useUrlHandler();
 
   // 构建 @ 提及菜单分组：联系人 + 技能
   const mentionSections = useMemo(() => {
@@ -688,7 +690,7 @@ export default function ChatLayout() {
                       <p style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{msg.content}</p>
                     )
                   ) : (
-                    <Markdown mode="minimal">{msg.content}</Markdown>
+                    <Markdown mode="minimal" onUrlClick={handleUrlClick}>{msg.content}</Markdown>
                   )}
                 </div>
                 <span className="hx-msg-time">{msg.timestamp.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span>
@@ -702,6 +704,7 @@ export default function ChatLayout() {
               progressLines={currentProgressLines}
               isStreaming={true}
               agentName={activeAgent ?? undefined}
+              onUrlClick={handleUrlClick}
             />
           ) : currentTyping ? (
             <div className="hx-msg agent">
