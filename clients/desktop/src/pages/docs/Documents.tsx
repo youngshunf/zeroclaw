@@ -186,6 +186,8 @@ export default function Documents() {
     }
   }, []);
 
+  const isFirstLoadRef = useRef(true);
+
   const fetchDocuments = useCallback(async () => {
     try {
       setLoading(true);
@@ -207,6 +209,48 @@ export default function Documents() {
         else if (Array.isArray(responseData.data.records)) items = responseData.data.records;
       }
       setDocuments(items);
+
+      // 处理一次且仅一次 URL 跳转
+      if (isFirstLoadRef.current) {
+        isFirstLoadRef.current = false;
+        const params = new URLSearchParams(window.location.search);
+        const docId = params.get('id');
+        const shareToken = params.get('share');
+
+        let handledNative = false;
+        if (docId) {
+          const myDoc = items.find(d => String(d.id) === docId);
+          if (myDoc) {
+            setSelectedDoc(myDoc);
+            setEditorTitle(myDoc.title);
+            setEditorContent(myDoc.content || '');
+            setIsEditing(false);
+            window.history.replaceState({}, '', window.location.pathname);
+            handledNative = true;
+          }
+        }
+
+        // 若不是原生文档或者提取失败，则退化至分享提取预览
+        if (!handledNative && shareToken && shareToken.trim()) {
+          const token = shareToken.trim();
+          setParseShareTokenInput(token);
+          setShowParseShareLinkModal(true);
+          // 自动触发解析
+          (async () => {
+            try {
+              setIsParsingShare(true);
+              const session = getHuanxingSession();
+              const res = await getHuanxingSharedDocumentApi(session?.accessToken || '', token);
+              setPreviewSharedDoc(res.data);
+            } catch (err) {
+              console.error('[Documents] Auto-parse share link failed:', err);
+            } finally {
+              setIsParsingShare(false);
+            }
+          })();
+          window.history.replaceState({}, '', window.location.pathname);
+        }
+      }
     } catch (err) {
       console.error('Fetch docs failed:', err);
     } finally {
@@ -218,31 +262,6 @@ export default function Documents() {
     fetchFolders();
     fetchDocuments();
   }, [fetchFolders, fetchDocuments]);
-
-  // 从 URL ?share=xxx 自动打开分享文档预览（由聊天消息中的文档链接跳转而来）
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const shareToken = params.get('share');
-    if (shareToken && shareToken.trim()) {
-      setParseShareTokenInput(shareToken.trim());
-      setShowParseShareLinkModal(true);
-      // 自动触发解析
-      (async () => {
-        try {
-          setIsParsingShare(true);
-          const session = getHuanxingSession();
-          const res = await getHuanxingSharedDocumentApi(session?.accessToken || '', shareToken.trim());
-          setPreviewSharedDoc(res.data);
-        } catch (err) {
-          console.error('[Documents] Auto-parse share link failed:', err);
-        } finally {
-          setIsParsingShare(false);
-        }
-      })();
-      // 清除 URL 参数（避免刷新时重复触发）
-      window.history.replaceState({}, '', window.location.pathname);
-    }
-  }, []);
 
   const toggleFolder = (folderId: number) => {
     setExpandedFolders(prev => {

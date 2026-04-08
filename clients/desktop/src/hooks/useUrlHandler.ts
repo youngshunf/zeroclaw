@@ -7,7 +7,8 @@
  */
 import { useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { HUANXING_CONFIG } from '@/config';
+import { getHuanxingSession, HUANXING_CONFIG } from '@/config';
+import { getHuanxingSharedDocumentApi } from '@/lib/document-api';
 
 /**
  * 从 URL 中提取文档分享 token（如有）。
@@ -18,7 +19,7 @@ import { HUANXING_CONFIG } from '@/config';
  *   - /s/{token}  （相对路径）
  *   - /doc/share/{token}
  */
-function extractDocShareToken(url: string): string | null {
+function extractDocUrlInfo(url: string): { type: 'share', token: string } | { type: 'id', id: string } | null {
   const siteUrl = HUANXING_CONFIG.siteUrl.replace(/\/$/, '');
 
   // 绝对路径：移除 siteUrl 前缀得到 pathname
@@ -39,11 +40,15 @@ function extractDocShareToken(url: string): string | null {
 
   // /s/{token}
   const shortMatch = pathname.match(/^\/s\/([a-zA-Z0-9_\-]+)/);
-  if (shortMatch) return shortMatch[1];
+  if (shortMatch) return { type: 'share', token: shortMatch[1] };
 
   // /doc/share/{token}
   const longMatch = pathname.match(/^\/doc\/share\/([a-zA-Z0-9_\-]+)/);
-  if (longMatch) return longMatch[1];
+  if (longMatch) return { type: 'share', token: longMatch[1] };
+
+  // /d/{id} or /docs?id={id}
+  const idMatch = pathname.match(/^\/d\/(\d+)/) || pathname.match(/^\/docs\?id=(\d+)/);
+  if (idMatch) return { type: 'id', id: idMatch[1] };
 
   return null;
 }
@@ -69,14 +74,32 @@ async function openExternal(url: string) {
 export function useUrlHandler() {
   const navigate = useNavigate();
 
-  return useCallback((url: string) => {
+  return useCallback(async (url: string) => {
     if (!url) return;
 
-    const token = extractDocShareToken(url);
-    if (token) {
-      // 文档链接 → 跳转到文档页面并传递 share token
-      navigate(`/docs?share=${encodeURIComponent(token)}`);
-      return;
+    const info = extractDocUrlInfo(url);
+    if (info) {
+      if (info.type === 'id') {
+        navigate(`/docs?id=${info.id}`);
+        return;
+      }
+      
+      if (info.type === 'share') {
+        const token = info.token;
+        try {
+          const session = getHuanxingSession();
+          // 解码分享链接：获取真实的文档 ID
+          const res = await getHuanxingSharedDocumentApi(session?.accessToken || '', token);
+          if (res?.data?.id) {
+             navigate(`/docs?id=${res.data.id}&share=${encodeURIComponent(token)}`);
+             return;
+          }
+        } catch {
+          // 解码失败时退化为纯分享形态
+        }
+        navigate(`/docs?share=${encodeURIComponent(token)}`);
+        return;
+      }
     }
 
     // 普通链接 → 打开系统默认浏览器
