@@ -13,6 +13,11 @@ title_model = "{{title_model}}"
 default_temperature = {{default_temperature}}
 api_key = "{{api_key}}"
 
+# ── 用户级 API 认证 ──────────────────────────────────────────
+# HASN Owner API Key（hasn_ok_xxx），用于文档、云函数等用户级 API 认证。
+# 注册时由后端自动签发并回写，无需手动配置。
+owner_key = ""
+
 # ── 向量记忆池 (租户共享配置) ────────────────────────────────
 [memory]
 embedding_provider = "{{embedding_provider}}"

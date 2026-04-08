@@ -1,49 +1,41 @@
 //! HuanXing document management tools (Phase 3).
 //!
 //! 11 tools for folder + document CRUD + sharing.
-//! All calls go through the backend API with X-User-Id header.
+//! All calls go through the backend API with Owner Key authentication.
+//!
+//! Authentication: `Authorization: OwnerKey hasn_ok_xxx`
+//! The owner_key is injected at construction time (from user registration).
 
 use crate::huanxing::api_client::ApiClient;
-use crate::huanxing::db::TenantDb;
 use crate::tools::traits::{Tool, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
 
-const DOCS_PREFIX: &str = "/api/v1/huanxing/agent/docs";
-
-/// Extract phone number from agent_id format "001-18611348367-finance".
-fn extract_phone(agent_id: &str) -> Option<&str> {
-    let parts: Vec<&str> = agent_id.splitn(3, '-').collect();
-    if parts.len() >= 2 && parts[1].len() == 11 && parts[1].chars().all(|c| c.is_ascii_digit()) {
-        Some(parts[1])
-    } else {
-        None
-    }
-}
-
-/// Resolve user_id (UUID) from agent_id by looking up in local DB.
-async fn resolve_user_id(db: &TenantDb, agent_id: &str) -> Result<String, String> {
-    // Try by agent_id directly
-    if let Ok(Some(user)) = db.find_by_agent_id(agent_id).await {
-        return Ok(user.user_id);
-    }
-    // Try extracting phone
-    if let Some(phone) = extract_phone(agent_id) {
-        if let Ok(Some(user)) = db.find_by_phone(phone).await {
-            return Ok(user.user_id);
-        }
-    }
-    Err(format!("无法确定用户身份 (agent_id={agent_id})"))
-}
+const DOCS_PREFIX: &str = "/api/v1/huanxing/user/docs";
 
 /// Shared context for all document tools.
 #[derive(Clone)]
 pub struct DocToolCtx {
     pub api: ApiClient,
-    pub db: TenantDb,
-    /// The agent_id of the calling agent (set at tool creation, used to resolve user).
-    /// If empty, will need to be passed per-call.
-    pub default_agent_id: Option<String>,
+    /// HASN Owner API Key (hasn_ok_xxx), injected at construction.
+    pub owner_key: String,
+}
+
+// Helper: build a ToolResult for API call results.
+fn ok_result(data: serde_json::Value) -> ToolResult {
+    ToolResult {
+        success: true,
+        output: data.to_string(),
+        error: None,
+    }
+}
+
+fn err_result(msg: String) -> ToolResult {
+    ToolResult {
+        success: false,
+        output: String::new(),
+        error: Some(msg),
+    }
 }
 
 // ═══════════════════════════════════════════════════════
@@ -54,12 +46,12 @@ pub struct DocToolCtx {
 
 pub struct HxFolderTree {
     api: ApiClient,
-    db: TenantDb,
+    owner_key: String,
 }
 
 impl HxFolderTree {
-    pub fn new(api: ApiClient, db: TenantDb) -> Self {
-        Self { api, db }
+    pub fn new(api: ApiClient, owner_key: String) -> Self {
+        Self { api, owner_key }
     }
 }
 
@@ -74,39 +66,18 @@ impl Tool for HxFolderTree {
     fn parameters_schema(&self) -> serde_json::Value {
         json!({
             "type": "object",
-            "properties": {
-                "agent_id": { "type": "string", "description": "Agent ID（用于确定用户身份）" }
-            },
-            "required": ["agent_id"]
+            "properties": {},
+            "required": []
         })
     }
-    async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
-        let agent_id = args["agent_id"].as_str().unwrap_or_default();
-        let user_id = match resolve_user_id(&self.db, agent_id).await {
-            Ok(uid) => uid,
-            Err(e) => {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(e),
-                });
-            }
-        };
+    async fn execute(&self, _args: serde_json::Value) -> anyhow::Result<ToolResult> {
         match self
             .api
-            .agent_get_as_user(&format!("{DOCS_PREFIX}/folders"), &[], &user_id)
+            .ownerkey_get(&format!("{DOCS_PREFIX}/folders"), &self.owner_key, &[])
             .await
         {
-            Ok(resp) => Ok(ToolResult {
-                success: true,
-                output: json!({ "tree": resp }).to_string(),
-                error: None,
-            }),
-            Err(e) => Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!("获取目录树失败: {e}")),
-            }),
+            Ok(resp) => Ok(ok_result(json!({ "tree": resp }))),
+            Err(e) => Ok(err_result(format!("获取目录树失败: {e}"))),
         }
     }
 }
@@ -115,12 +86,12 @@ impl Tool for HxFolderTree {
 
 pub struct HxFolderCreate {
     api: ApiClient,
-    db: TenantDb,
+    owner_key: String,
 }
 
 impl HxFolderCreate {
-    pub fn new(api: ApiClient, db: TenantDb) -> Self {
-        Self { api, db }
+    pub fn new(api: ApiClient, owner_key: String) -> Self {
+        Self { api, owner_key }
     }
 }
 
@@ -136,30 +107,16 @@ impl Tool for HxFolderCreate {
         json!({
             "type": "object",
             "properties": {
-                "agent_id": { "type": "string", "description": "Agent ID" },
                 "name": { "type": "string", "description": "目录名称" },
                 "parent_id": { "type": "number", "description": "父目录ID（不传则创建在根目录）" },
                 "icon": { "type": "string", "description": "目录图标（emoji）" },
                 "description": { "type": "string", "description": "目录描述" }
             },
-            "required": ["agent_id", "name"]
+            "required": ["name"]
         })
     }
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
-        let agent_id = args["agent_id"].as_str().unwrap_or_default();
-        let user_id = match resolve_user_id(&self.db, agent_id).await {
-            Ok(uid) => uid,
-            Err(e) => {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(e),
-                });
-            }
-        };
-        let mut body = json!({
-            "name": args["name"],
-        });
+        let mut body = json!({ "name": args["name"] });
         if let Some(pid) = args["parent_id"].as_i64() {
             body["parent_id"] = json!(pid);
         }
@@ -171,19 +128,11 @@ impl Tool for HxFolderCreate {
         }
         match self
             .api
-            .agent_post_as_user(&format!("{DOCS_PREFIX}/folders"), &body, &user_id)
+            .ownerkey_post(&format!("{DOCS_PREFIX}/folders"), &self.owner_key, &body)
             .await
         {
-            Ok(resp) => Ok(ToolResult {
-                success: true,
-                output: json!({ "folder": resp }).to_string(),
-                error: None,
-            }),
-            Err(e) => Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!("创建目录失败: {e}")),
-            }),
+            Ok(resp) => Ok(ok_result(json!({ "folder": resp }))),
+            Err(e) => Ok(err_result(format!("创建目录失败: {e}"))),
         }
     }
 }
@@ -192,12 +141,12 @@ impl Tool for HxFolderCreate {
 
 pub struct HxFolderDelete {
     api: ApiClient,
-    db: TenantDb,
+    owner_key: String,
 }
 
 impl HxFolderDelete {
-    pub fn new(api: ApiClient, db: TenantDb) -> Self {
-        Self { api, db }
+    pub fn new(api: ApiClient, owner_key: String) -> Self {
+        Self { api, owner_key }
     }
 }
 
@@ -213,43 +162,26 @@ impl Tool for HxFolderDelete {
         json!({
             "type": "object",
             "properties": {
-                "agent_id": { "type": "string", "description": "Agent ID" },
                 "folder_id": { "type": "number", "description": "目录ID" },
                 "recursive": { "type": "boolean", "description": "是否递归删除（默认 false）" }
             },
-            "required": ["agent_id", "folder_id"]
+            "required": ["folder_id"]
         })
     }
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
-        let agent_id = args["agent_id"].as_str().unwrap_or_default();
-        let user_id = match resolve_user_id(&self.db, agent_id).await {
-            Ok(uid) => uid,
-            Err(e) => {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(e),
-                });
-            }
-        };
         let folder_id = args["folder_id"].as_i64().unwrap_or(0);
         let recursive = args["recursive"].as_bool().unwrap_or(false);
         let qs = if recursive { "?recursive=true" } else { "" };
         match self
             .api
-            .agent_delete_as_user(&format!("{DOCS_PREFIX}/folders/{folder_id}{qs}"), &user_id)
+            .ownerkey_delete(
+                &format!("{DOCS_PREFIX}/folders/{folder_id}{qs}"),
+                &self.owner_key,
+            )
             .await
         {
-            Ok(resp) => Ok(ToolResult {
-                success: true,
-                output: json!({ "deleted": true, "detail": resp }).to_string(),
-                error: None,
-            }),
-            Err(e) => Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!("删除目录失败: {e}")),
-            }),
+            Ok(resp) => Ok(ok_result(json!({ "deleted": true, "detail": resp }))),
+            Err(e) => Ok(err_result(format!("删除目录失败: {e}"))),
         }
     }
 }
@@ -258,12 +190,12 @@ impl Tool for HxFolderDelete {
 
 pub struct HxFolderMove {
     api: ApiClient,
-    db: TenantDb,
+    owner_key: String,
 }
 
 impl HxFolderMove {
-    pub fn new(api: ApiClient, db: TenantDb) -> Self {
-        Self { api, db }
+    pub fn new(api: ApiClient, owner_key: String) -> Self {
+        Self { api, owner_key }
     }
 }
 
@@ -279,46 +211,26 @@ impl Tool for HxFolderMove {
         json!({
             "type": "object",
             "properties": {
-                "agent_id": { "type": "string", "description": "Agent ID" },
                 "folder_id": { "type": "number", "description": "要移动的目录ID" },
                 "target_parent_id": { "type": "number", "description": "目标父目录ID（不传=根目录）" }
             },
-            "required": ["agent_id", "folder_id"]
+            "required": ["folder_id"]
         })
     }
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
-        let agent_id = args["agent_id"].as_str().unwrap_or_default();
-        let user_id = match resolve_user_id(&self.db, agent_id).await {
-            Ok(uid) => uid,
-            Err(e) => {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(e),
-                });
-            }
-        };
         let folder_id = args["folder_id"].as_i64().unwrap_or(0);
         let body = json!({ "target_parent_id": args["target_parent_id"] });
         match self
             .api
-            .agent_post_as_user(
+            .ownerkey_post(
                 &format!("{DOCS_PREFIX}/folders/{folder_id}/move"),
+                &self.owner_key,
                 &body,
-                &user_id,
             )
             .await
         {
-            Ok(resp) => Ok(ToolResult {
-                success: true,
-                output: json!({ "moved": true, "detail": resp }).to_string(),
-                error: None,
-            }),
-            Err(e) => Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!("移动目录失败: {e}")),
-            }),
+            Ok(resp) => Ok(ok_result(json!({ "moved": true, "detail": resp }))),
+            Err(e) => Ok(err_result(format!("移动目录失败: {e}"))),
         }
     }
 }
@@ -331,12 +243,12 @@ impl Tool for HxFolderMove {
 
 pub struct HxDocList {
     api: ApiClient,
-    db: TenantDb,
+    owner_key: String,
 }
 
 impl HxDocList {
-    pub fn new(api: ApiClient, db: TenantDb) -> Self {
-        Self { api, db }
+    pub fn new(api: ApiClient, owner_key: String) -> Self {
+        Self { api, owner_key }
     }
 }
 
@@ -352,24 +264,12 @@ impl Tool for HxDocList {
         json!({
             "type": "object",
             "properties": {
-                "agent_id": { "type": "string", "description": "Agent ID" },
                 "folder_id": { "type": "number", "description": "目录ID（不传=根目录下的文档）" }
             },
-            "required": ["agent_id"]
+            "required": []
         })
     }
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
-        let agent_id = args["agent_id"].as_str().unwrap_or_default();
-        let user_id = match resolve_user_id(&self.db, agent_id).await {
-            Ok(uid) => uid,
-            Err(e) => {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(e),
-                });
-            }
-        };
         let mut params: Vec<(&str, &str)> = Vec::new();
         let folder_str;
         if let Some(fid) = args["folder_id"].as_i64() {
@@ -378,19 +278,11 @@ impl Tool for HxDocList {
         }
         match self
             .api
-            .agent_get_as_user(DOCS_PREFIX, &params, &user_id)
+            .ownerkey_get(DOCS_PREFIX, &self.owner_key, &params)
             .await
         {
-            Ok(resp) => Ok(ToolResult {
-                success: true,
-                output: json!({ "documents": resp }).to_string(),
-                error: None,
-            }),
-            Err(e) => Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!("获取文档列表失败: {e}")),
-            }),
+            Ok(resp) => Ok(ok_result(json!({ "documents": resp }))),
+            Err(e) => Ok(err_result(format!("获取文档列表失败: {e}"))),
         }
     }
 }
@@ -399,12 +291,12 @@ impl Tool for HxDocList {
 
 pub struct HxDocGet {
     api: ApiClient,
-    db: TenantDb,
+    owner_key: String,
 }
 
 impl HxDocGet {
-    pub fn new(api: ApiClient, db: TenantDb) -> Self {
-        Self { api, db }
+    pub fn new(api: ApiClient, owner_key: String) -> Self {
+        Self { api, owner_key }
     }
 }
 
@@ -420,40 +312,24 @@ impl Tool for HxDocGet {
         json!({
             "type": "object",
             "properties": {
-                "agent_id": { "type": "string", "description": "Agent ID" },
                 "doc_id": { "type": "number", "description": "文档ID" }
             },
-            "required": ["agent_id", "doc_id"]
+            "required": ["doc_id"]
         })
     }
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
-        let agent_id = args["agent_id"].as_str().unwrap_or_default();
-        let user_id = match resolve_user_id(&self.db, agent_id).await {
-            Ok(uid) => uid,
-            Err(e) => {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(e),
-                });
-            }
-        };
         let doc_id = args["doc_id"].as_i64().unwrap_or(0);
         match self
             .api
-            .agent_get_as_user(&format!("{DOCS_PREFIX}/{doc_id}"), &[], &user_id)
+            .ownerkey_get(
+                &format!("{DOCS_PREFIX}/{doc_id}"),
+                &self.owner_key,
+                &[],
+            )
             .await
         {
-            Ok(resp) => Ok(ToolResult {
-                success: true,
-                output: json!({ "document": resp }).to_string(),
-                error: None,
-            }),
-            Err(e) => Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!("获取文档失败: {e}")),
-            }),
+            Ok(resp) => Ok(ok_result(json!({ "document": resp }))),
+            Err(e) => Ok(err_result(format!("获取文档失败: {e}"))),
         }
     }
 }
@@ -462,12 +338,12 @@ impl Tool for HxDocGet {
 
 pub struct HxDocCreate {
     api: ApiClient,
-    db: TenantDb,
+    owner_key: String,
 }
 
 impl HxDocCreate {
-    pub fn new(api: ApiClient, db: TenantDb) -> Self {
-        Self { api, db }
+    pub fn new(api: ApiClient, owner_key: String) -> Self {
+        Self { api, owner_key }
     }
 }
 
@@ -483,28 +359,16 @@ impl Tool for HxDocCreate {
         json!({
             "type": "object",
             "properties": {
-                "agent_id": { "type": "string", "description": "Agent ID" },
                 "title": { "type": "string", "description": "文档标题" },
                 "content": { "type": "string", "description": "文档内容（Markdown 格式）" },
                 "tags": { "type": "string", "description": "标签（逗号分隔）" },
                 "folder_id": { "type": "number", "description": "目录ID" },
                 "status": { "type": "string", "description": "状态：draft / published / archived" }
             },
-            "required": ["agent_id", "title", "content"]
+            "required": ["title", "content"]
         })
     }
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
-        let agent_id = args["agent_id"].as_str().unwrap_or_default();
-        let user_id = match resolve_user_id(&self.db, agent_id).await {
-            Ok(uid) => uid,
-            Err(e) => {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(e),
-                });
-            }
-        };
         let tags: Vec<&str> = args["tags"]
             .as_str()
             .map(|s| {
@@ -528,19 +392,11 @@ impl Tool for HxDocCreate {
         }
         match self
             .api
-            .agent_post_as_user(DOCS_PREFIX, &body, &user_id)
+            .ownerkey_post(DOCS_PREFIX, &self.owner_key, &body)
             .await
         {
-            Ok(resp) => Ok(ToolResult {
-                success: true,
-                output: json!({ "document": resp }).to_string(),
-                error: None,
-            }),
-            Err(e) => Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!("创建文档失败: {e}")),
-            }),
+            Ok(resp) => Ok(ok_result(json!({ "document": resp }))),
+            Err(e) => Ok(err_result(format!("创建文档失败: {e}"))),
         }
     }
 }
@@ -549,12 +405,12 @@ impl Tool for HxDocCreate {
 
 pub struct HxDocUpdate {
     api: ApiClient,
-    db: TenantDb,
+    owner_key: String,
 }
 
 impl HxDocUpdate {
-    pub fn new(api: ApiClient, db: TenantDb) -> Self {
-        Self { api, db }
+    pub fn new(api: ApiClient, owner_key: String) -> Self {
+        Self { api, owner_key }
     }
 }
 
@@ -570,28 +426,16 @@ impl Tool for HxDocUpdate {
         json!({
             "type": "object",
             "properties": {
-                "agent_id": { "type": "string", "description": "Agent ID" },
                 "doc_id": { "type": "number", "description": "文档ID" },
                 "title": { "type": "string", "description": "新标题" },
                 "content": { "type": "string", "description": "新内容（Markdown 格式）" },
                 "tags": { "type": "string", "description": "标签（逗号分隔）" },
                 "status": { "type": "string", "description": "状态：draft / published / archived" }
             },
-            "required": ["agent_id", "doc_id"]
+            "required": ["doc_id"]
         })
     }
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
-        let agent_id = args["agent_id"].as_str().unwrap_or_default();
-        let user_id = match resolve_user_id(&self.db, agent_id).await {
-            Ok(uid) => uid,
-            Err(e) => {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(e),
-                });
-            }
-        };
         let doc_id = args["doc_id"].as_i64().unwrap_or(0);
         let mut body = json!({});
         if let Some(title) = args["title"].as_str() {
@@ -613,19 +457,15 @@ impl Tool for HxDocUpdate {
         }
         match self
             .api
-            .agent_put_as_user(&format!("{DOCS_PREFIX}/{doc_id}"), &body, &user_id)
+            .ownerkey_put(
+                &format!("{DOCS_PREFIX}/{doc_id}"),
+                &self.owner_key,
+                &body,
+            )
             .await
         {
-            Ok(resp) => Ok(ToolResult {
-                success: true,
-                output: json!({ "updated": true, "detail": resp }).to_string(),
-                error: None,
-            }),
-            Err(e) => Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!("更新文档失败: {e}")),
-            }),
+            Ok(resp) => Ok(ok_result(json!({ "updated": true, "detail": resp }))),
+            Err(e) => Ok(err_result(format!("更新文档失败: {e}"))),
         }
     }
 }
@@ -634,12 +474,12 @@ impl Tool for HxDocUpdate {
 
 pub struct HxDocDelete {
     api: ApiClient,
-    db: TenantDb,
+    owner_key: String,
 }
 
 impl HxDocDelete {
-    pub fn new(api: ApiClient, db: TenantDb) -> Self {
-        Self { api, db }
+    pub fn new(api: ApiClient, owner_key: String) -> Self {
+        Self { api, owner_key }
     }
 }
 
@@ -655,40 +495,23 @@ impl Tool for HxDocDelete {
         json!({
             "type": "object",
             "properties": {
-                "agent_id": { "type": "string", "description": "Agent ID" },
                 "doc_id": { "type": "number", "description": "文档ID" }
             },
-            "required": ["agent_id", "doc_id"]
+            "required": ["doc_id"]
         })
     }
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
-        let agent_id = args["agent_id"].as_str().unwrap_or_default();
-        let user_id = match resolve_user_id(&self.db, agent_id).await {
-            Ok(uid) => uid,
-            Err(e) => {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(e),
-                });
-            }
-        };
         let doc_id = args["doc_id"].as_i64().unwrap_or(0);
         match self
             .api
-            .agent_delete_as_user(&format!("{DOCS_PREFIX}/{doc_id}"), &user_id)
+            .ownerkey_delete(
+                &format!("{DOCS_PREFIX}/{doc_id}"),
+                &self.owner_key,
+            )
             .await
         {
-            Ok(resp) => Ok(ToolResult {
-                success: true,
-                output: json!({ "deleted": true, "detail": resp }).to_string(),
-                error: None,
-            }),
-            Err(e) => Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!("删除文档失败: {e}")),
-            }),
+            Ok(resp) => Ok(ok_result(json!({ "deleted": true, "detail": resp }))),
+            Err(e) => Ok(err_result(format!("删除文档失败: {e}"))),
         }
     }
 }
@@ -697,12 +520,12 @@ impl Tool for HxDocDelete {
 
 pub struct HxDocMove {
     api: ApiClient,
-    db: TenantDb,
+    owner_key: String,
 }
 
 impl HxDocMove {
-    pub fn new(api: ApiClient, db: TenantDb) -> Self {
-        Self { api, db }
+    pub fn new(api: ApiClient, owner_key: String) -> Self {
+        Self { api, owner_key }
     }
 }
 
@@ -718,42 +541,26 @@ impl Tool for HxDocMove {
         json!({
             "type": "object",
             "properties": {
-                "agent_id": { "type": "string", "description": "Agent ID" },
                 "doc_id": { "type": "number", "description": "文档ID" },
                 "target_folder_id": { "type": "number", "description": "目标目录ID（不传=根目录）" }
             },
-            "required": ["agent_id", "doc_id"]
+            "required": ["doc_id"]
         })
     }
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
-        let agent_id = args["agent_id"].as_str().unwrap_or_default();
-        let user_id = match resolve_user_id(&self.db, agent_id).await {
-            Ok(uid) => uid,
-            Err(e) => {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(e),
-                });
-            }
-        };
         let doc_id = args["doc_id"].as_i64().unwrap_or(0);
         let body = json!({ "target_folder_id": args["target_folder_id"] });
         match self
             .api
-            .agent_post_as_user(&format!("{DOCS_PREFIX}/{doc_id}/move"), &body, &user_id)
+            .ownerkey_post(
+                &format!("{DOCS_PREFIX}/{doc_id}/move"),
+                &self.owner_key,
+                &body,
+            )
             .await
         {
-            Ok(resp) => Ok(ToolResult {
-                success: true,
-                output: json!({ "moved": true, "detail": resp }).to_string(),
-                error: None,
-            }),
-            Err(e) => Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!("移动文档失败: {e}")),
-            }),
+            Ok(resp) => Ok(ok_result(json!({ "moved": true, "detail": resp }))),
+            Err(e) => Ok(err_result(format!("移动文档失败: {e}"))),
         }
     }
 }
@@ -762,12 +569,12 @@ impl Tool for HxDocMove {
 
 pub struct HxDocShare {
     api: ApiClient,
-    db: TenantDb,
+    owner_key: String,
 }
 
 impl HxDocShare {
-    pub fn new(api: ApiClient, db: TenantDb) -> Self {
-        Self { api, db }
+    pub fn new(api: ApiClient, owner_key: String) -> Self {
+        Self { api, owner_key }
     }
 }
 
@@ -783,26 +590,14 @@ impl Tool for HxDocShare {
         json!({
             "type": "object",
             "properties": {
-                "agent_id": { "type": "string", "description": "Agent ID" },
                 "doc_id": { "type": "number", "description": "文档ID" },
                 "expires_hours": { "type": "number", "description": "有效期（小时），默认24" },
                 "permission": { "type": "string", "description": "权限：view / edit，默认 view" }
             },
-            "required": ["agent_id", "doc_id"]
+            "required": ["doc_id"]
         })
     }
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
-        let agent_id = args["agent_id"].as_str().unwrap_or_default();
-        let user_id = match resolve_user_id(&self.db, agent_id).await {
-            Ok(uid) => uid,
-            Err(e) => {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(e),
-                });
-            }
-        };
         let doc_id = args["doc_id"].as_i64().unwrap_or(0);
         let permission = args["permission"].as_str().unwrap_or("view");
         let expires = args["expires_hours"].as_i64().unwrap_or(24);
@@ -810,19 +605,11 @@ impl Tool for HxDocShare {
             format!("{DOCS_PREFIX}/{doc_id}/share?permission={permission}&expires_hours={expires}");
         match self
             .api
-            .agent_post_as_user(&path, &json!({}), &user_id)
+            .ownerkey_post(&path, &self.owner_key, &json!({}))
             .await
         {
-            Ok(resp) => Ok(ToolResult {
-                success: true,
-                output: json!({ "share": resp }).to_string(),
-                error: None,
-            }),
-            Err(e) => Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!("生成分享链接失败: {e}")),
-            }),
+            Ok(resp) => Ok(ok_result(json!({ "share": resp }))),
+            Err(e) => Ok(err_result(format!("生成分享链接失败: {e}"))),
         }
     }
 }

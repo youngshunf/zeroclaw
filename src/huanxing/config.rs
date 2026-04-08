@@ -61,6 +61,11 @@ pub struct HuanXingConfig {
     /// Agent authentication key (X-Agent-Key header for backend API).
     pub agent_key: Option<String>,
 
+    /// HASN Owner API Key (hasn_ok_xxx) for user-level API authentication.
+    /// Used by document tools and future cloud function tools.
+    /// Auto-issued during user registration if not configured.
+    pub owner_key: Option<String>,
+
     /// Server identifier for heartbeat registration.
     pub server_id: Option<String>,
 
@@ -204,6 +209,7 @@ impl Default for HuanXingConfig {
             ],
             api_base_url: None,
             agent_key: None,
+            owner_key: None,
             server_id: None,
             server_ip: None,
             hasn_base_url: None,

@@ -345,7 +345,8 @@ impl Tool for HxRegisterUser {
 
         steps.push("✅ Step2: 本地数据保存 + 渠道绑定完成".to_string());
 
-        // Step 2.5: Sync to backend
+        // Step 2.5: Sync to backend (also auto-issues Owner API Key)
+        let mut owner_api_key_from_sync: Option<String> = None;
         match self
             .api
             .agent_post(
@@ -362,7 +363,21 @@ impl Tool for HxRegisterUser {
             )
             .await
         {
-            Ok(_) => steps.push("✅ Step2.5: 后端用户同步完成".to_string()),
+            Ok(resp) => {
+                // 捕获后端自动签发的 Owner API Key
+                if let Some(ok) = resp["data"]["owner_api_key"].as_str() {
+                    if !ok.is_empty() {
+                        owner_api_key_from_sync = Some(ok.to_string());
+                        steps.push(format!(
+                            "✅ Step2.5: 后端用户同步完成 + Owner Key 已签发"
+                        ));
+                    } else {
+                        steps.push("✅ Step2.5: 后端用户同步完成（已有 Owner Key）".to_string());
+                    }
+                } else {
+                    steps.push("✅ Step2.5: 后端用户同步完成".to_string());
+                }
+            }
             Err(e) => {
                 let msg = e.to_string();
                 tracing::error!("后端同步失败: {msg}");
@@ -549,6 +564,52 @@ impl Tool for HxRegisterUser {
             }
         } else {
             steps.push("⚠️ Step4: 无 access_token，跳过 HASN 注册".to_string());
+        }
+
+        // Step 4c: Write owner_key to Owner config.toml (user-level, shared across agents)
+        // Path: {config_dir}/users/{tenant_dir}/config.toml
+        if let Some(ref ok) = owner_api_key_from_sync {
+            let owner_config_path = self
+                .hx_config
+                .resolve_tenant_root(&self.config_dir, Some(&tenant_dir))
+                .join("config.toml");
+            if let Ok(content) = tokio::fs::read_to_string(&owner_config_path).await {
+                let updated = if content.contains("owner_key =") {
+                    let re = regex::Regex::new(r#"owner_key\s*=\s*"[^"]*""#).unwrap();
+                    re.replace(&content, &format!(r#"owner_key = "{ok}""#))
+                        .to_string()
+                } else {
+                    // Insert after api_key line (if present), otherwise append at top level
+                    if let Some(pos) = content.find("api_key =") {
+                        if let Some(nl) = content[pos..].find('\n') {
+                            let insert_at = pos + nl + 1;
+                            format!(
+                                "{}owner_key = \"{ok}\"\n{}",
+                                &content[..insert_at],
+                                &content[insert_at..]
+                            )
+                        } else {
+                            format!("{content}\nowner_key = \"{ok}\"\n")
+                        }
+                    } else {
+                        format!("{content}\nowner_key = \"{ok}\"\n")
+                    }
+                };
+                match tokio::fs::write(&owner_config_path, &updated).await {
+                    Ok(()) => {
+                        steps.push("✅ Step4c: Owner Key 已写入用户 config.toml".to_string());
+                    }
+                    Err(e) => {
+                        tracing::warn!("写 owner_key 到 Owner config.toml 失败: {e}");
+                        steps.push(format!("⚠️ Step4c: Owner Key 写入失败 ({e})"));
+                    }
+                }
+            } else {
+                tracing::warn!(
+                    "Owner config.toml 不存在: {}",
+                    owner_config_path.display()
+                );
+            }
         }
 
         // Step 5: Invalidate router cache so next message routes correctly

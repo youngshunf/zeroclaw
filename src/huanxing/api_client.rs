@@ -1,9 +1,10 @@
 //! HTTP client for the HuanXing backend API.
 //!
-//! Three authentication modes:
+//! Four authentication modes:
 //! 1. **Agent Key** — `X-Agent-Key` header for `agent/` routes
 //! 2. **User Token** — `Authorization: Bearer {token}` for `app/` routes
-//! 3. **Public** — no auth for `open/` and `auth/` routes
+//! 3. **Owner Key** — `Authorization: OwnerKey {hasn_ok_xxx}` for `user/` routes
+//! 4. **Public** — no auth for `open/` and `auth/` routes
 
 use anyhow::{Context, Result};
 use serde_json::Value;
@@ -283,6 +284,80 @@ impl ApiClient {
         self.handle_response(resp, "DELETE", path).await
     }
 
+    // ── Owner Key authenticated requests ────────────────
+    // For user-level APIs (documents, cloud functions, etc.)
+    // Uses HASN Owner API Key (hasn_ok_xxx) for authentication.
+
+    /// GET with Owner Key auth.
+    pub async fn ownerkey_get(
+        &self,
+        path: &str,
+        owner_key: &str,
+        params: &[(&str, &str)],
+    ) -> Result<Value> {
+        let url = format!("{}{}", self.base_url, path);
+        let resp = self
+            .client
+            .get(&url)
+            .headers(self.ownerkey_headers(owner_key))
+            .query(params)
+            .send()
+            .await
+            .with_context(|| format!("GET {path}"))?;
+        self.handle_response(resp, "GET", path).await
+    }
+
+    /// POST with Owner Key auth.
+    pub async fn ownerkey_post(
+        &self,
+        path: &str,
+        owner_key: &str,
+        body: &Value,
+    ) -> Result<Value> {
+        let url = format!("{}{}", self.base_url, path);
+        let resp = self
+            .client
+            .post(&url)
+            .headers(self.ownerkey_headers(owner_key))
+            .json(body)
+            .send()
+            .await
+            .with_context(|| format!("POST {path}"))?;
+        self.handle_response(resp, "POST", path).await
+    }
+
+    /// PUT with Owner Key auth.
+    pub async fn ownerkey_put(
+        &self,
+        path: &str,
+        owner_key: &str,
+        body: &Value,
+    ) -> Result<Value> {
+        let url = format!("{}{}", self.base_url, path);
+        let resp = self
+            .client
+            .put(&url)
+            .headers(self.ownerkey_headers(owner_key))
+            .json(body)
+            .send()
+            .await
+            .with_context(|| format!("PUT {path}"))?;
+        self.handle_response(resp, "PUT", path).await
+    }
+
+    /// DELETE with Owner Key auth.
+    pub async fn ownerkey_delete(&self, path: &str, owner_key: &str) -> Result<Value> {
+        let url = format!("{}{}", self.base_url, path);
+        let resp = self
+            .client
+            .delete(&url)
+            .headers(self.ownerkey_headers(owner_key))
+            .send()
+            .await
+            .with_context(|| format!("DELETE {path}"))?;
+        self.handle_response(resp, "DELETE", path).await
+    }
+
     // ── Internal helpers ──────────────────────────────
 
     fn agent_headers(&self) -> reqwest::header::HeaderMap {
@@ -304,6 +379,17 @@ impl ApiClient {
         let mut h = reqwest::header::HeaderMap::new();
         h.insert("Content-Type", HeaderValue::from_static("application/json"));
         if let Ok(v) = HeaderValue::from_str(&format!("Bearer {token}")) {
+            h.insert("Authorization", v);
+        }
+        h.insert("X-App-Code", HeaderValue::from_static("huanxing"));
+        h
+    }
+
+    fn ownerkey_headers(&self, owner_key: &str) -> reqwest::header::HeaderMap {
+        use reqwest::header::HeaderValue;
+        let mut h = reqwest::header::HeaderMap::new();
+        h.insert("Content-Type", HeaderValue::from_static("application/json"));
+        if let Ok(v) = HeaderValue::from_str(&format!("OwnerKey {owner_key}")) {
             h.insert("Authorization", v);
         }
         h.insert("X-App-Code", HeaderValue::from_static("huanxing"));

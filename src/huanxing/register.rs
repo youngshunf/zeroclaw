@@ -267,52 +267,57 @@ pub fn huanxing_all_tools(
     router.start_server_lifecycle();
 
     // ── Document tools (11) ──────────────────────────────────────
-    if let Some(ref api) = hx_api {
+    // Requires Owner Key (hasn_ok_xxx) for user-level API authentication.
+    // owner_key is configured in config.toml or auto-issued during user registration.
+    if let (Some(api), Some(owner_key)) = (&hx_api, &root_config.huanxing.owner_key) {
+        let ok = owner_key.clone();
         tool_arcs.push(Arc::new(super::doc_tools::HxFolderTree::new(
             api.clone(),
-            hx_db.clone(),
+            ok.clone(),
         )));
         tool_arcs.push(Arc::new(super::doc_tools::HxFolderCreate::new(
             api.clone(),
-            hx_db.clone(),
+            ok.clone(),
         )));
         tool_arcs.push(Arc::new(super::doc_tools::HxFolderDelete::new(
             api.clone(),
-            hx_db.clone(),
+            ok.clone(),
         )));
         tool_arcs.push(Arc::new(super::doc_tools::HxFolderMove::new(
             api.clone(),
-            hx_db.clone(),
+            ok.clone(),
         )));
         tool_arcs.push(Arc::new(super::doc_tools::HxDocList::new(
             api.clone(),
-            hx_db.clone(),
+            ok.clone(),
         )));
         tool_arcs.push(Arc::new(super::doc_tools::HxDocGet::new(
             api.clone(),
-            hx_db.clone(),
+            ok.clone(),
         )));
         tool_arcs.push(Arc::new(super::doc_tools::HxDocCreate::new(
             api.clone(),
-            hx_db.clone(),
+            ok.clone(),
         )));
         tool_arcs.push(Arc::new(super::doc_tools::HxDocUpdate::new(
             api.clone(),
-            hx_db.clone(),
+            ok.clone(),
         )));
         tool_arcs.push(Arc::new(super::doc_tools::HxDocDelete::new(
             api.clone(),
-            hx_db.clone(),
+            ok.clone(),
         )));
         tool_arcs.push(Arc::new(super::doc_tools::HxDocMove::new(
             api.clone(),
-            hx_db.clone(),
+            ok.clone(),
         )));
         tool_arcs.push(Arc::new(super::doc_tools::HxDocShare::new(
             api.clone(),
-            hx_db.clone(),
+            ok,
         )));
-        tracing::info!("HuanXing document tools registered (11 tools)");
+        tracing::info!("HuanXing document tools registered (11 tools, Owner Key auth)");
+    } else if hx_api.is_some() {
+        tracing::info!("HuanXing owner_key not configured, document tools skipped (set huanxing.owner_key in config.toml)");
     }
 
     // ── HASN social tools (5) ────────────────────────────────────
