@@ -268,8 +268,47 @@ pub fn huanxing_all_tools(
 
     // ── Document tools (11) ──────────────────────────────────────
     // Requires Owner Key (hasn_ok_xxx) for user-level API authentication.
-    // owner_key is configured in config.toml or auto-issued during user registration.
-    if let (Some(api), Some(owner_key)) = (&hx_api, &root_config.huanxing.owner_key) {
+    // Cascade read:
+    //   1. [huanxing].owner_key in global config.toml (cloud deployments)
+    //   2. top-level owner_key in Owner config.toml (~/.huanxing/users/{tenant}/config.toml)
+    let effective_owner_key = root_config
+        .huanxing
+        .owner_key
+        .clone()
+        .or_else(|| {
+            // Desktop fallback: read from first tenant's Owner config.toml
+            let config_dir = root_config
+                .config_path
+                .parent()
+                .unwrap_or(&root_config.workspace_dir);
+            // Look up the first tenant directory from users.db
+            let td: Option<String> = tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current()
+                    .block_on(async {
+                        hx_db.get_first_tenant_dir().await.ok().flatten()
+                    })
+            });
+            if let Some(tenant_dir) = td.as_deref() {
+                let owner_config_path = hx_config
+                    .resolve_tenant_root(config_dir, Some(tenant_dir))
+                    .join("config.toml");
+                if let Ok(content) = std::fs::read_to_string(&owner_config_path) {
+                    if let Ok(table) = content.parse::<toml::Table>() {
+                        if let Some(toml::Value::String(ok)) = table.get("owner_key") {
+                            if !ok.is_empty() {
+                                tracing::info!(
+                                    "Found owner_key in Owner config: {}",
+                                    owner_config_path.display()
+                                );
+                                return Some(ok.clone());
+                            }
+                        }
+                    }
+                }
+            }
+            None
+        });
+    if let (Some(api), Some(owner_key)) = (&hx_api, &effective_owner_key) {
         let ok = owner_key.clone();
         tool_arcs.push(Arc::new(super::doc_tools::HxFolderTree::new(
             api.clone(),
@@ -317,7 +356,7 @@ pub fn huanxing_all_tools(
         )));
         tracing::info!("HuanXing document tools registered (11 tools, Owner Key auth)");
     } else if hx_api.is_some() {
-        tracing::info!("HuanXing owner_key not configured, document tools skipped (set huanxing.owner_key in config.toml)");
+        tracing::info!("HuanXing owner_key not configured, document tools skipped (set owner_key in Owner config.toml or huanxing.owner_key globally)");
     }
 
     // ── HASN social tools (5) ────────────────────────────────────

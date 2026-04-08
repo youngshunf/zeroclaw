@@ -153,6 +153,17 @@ impl SidecarManager {
             }
         }
 
+        // 5. Write owner_key to Owner config.toml (from login response)
+        if result.agent_created {
+            if let (Some(ref td), Some(ref ok)) = (&result.tenant_dir, &req.owner_key) {
+                if !ok.is_empty() {
+                    let owner_config = self.config_dir.join("users").join(td).join("config.toml");
+                    write_owner_key_to_config(&owner_config, ok);
+                }
+            }
+        }
+
+
         // 6. 启动 sidecar
         match self.start(app.clone()).await {
             Ok(status) => {
@@ -241,5 +252,55 @@ fn populate_onboard_paths(
             .join("workspace");
         result.tenant_dir = Some(tenant_dir);
         result.workspace_path = Some(workspace_path.to_string_lossy().to_string());
+    }
+}
+
+/// Write owner_key to Owner config.toml (simple string replacement / insertion).
+///
+/// The owner_key is obtained from the login response — no extra backend call needed.
+fn write_owner_key_to_config(owner_config_path: &std::path::Path, owner_key: &str) {
+    let content = match std::fs::read_to_string(owner_config_path) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("Cannot read {}: {e}", owner_config_path.display());
+            return;
+        }
+    };
+
+    let updated = if content.contains("owner_key =") {
+        // Replace existing (possibly empty) owner_key value
+        content
+            .lines()
+            .map(|line| {
+                if line.trim_start().starts_with("owner_key") && line.contains('=') {
+                    format!("owner_key = \"{owner_key}\"")
+                } else {
+                    line.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else if let Some(pos) = content.find("api_key =") {
+        // Insert after api_key line
+        if let Some(nl) = content[pos..].find('\n') {
+            let at = pos + nl + 1;
+            format!(
+                "{}owner_key = \"{owner_key}\"\n{}",
+                &content[..at],
+                &content[at..]
+            )
+        } else {
+            format!("{content}\nowner_key = \"{owner_key}\"\n")
+        }
+    } else {
+        format!("{content}\nowner_key = \"{owner_key}\"\n")
+    };
+
+    match std::fs::write(owner_config_path, &updated) {
+        Ok(()) => tracing::info!("owner_key written to {}", owner_config_path.display()),
+        Err(e) => tracing::warn!(
+            "Failed to write owner_key to {}: {e}",
+            owner_config_path.display()
+        ),
     }
 }

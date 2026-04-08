@@ -104,6 +104,7 @@ async function tauriOnboard(session: HuanxingSession): Promise<OnboardResult> {
         user_uuid: session.user.uuid || null,
         user_phone: session.user.phone || null,
         agent_key: session.agentKey || null,
+        owner_key: session.ownerKey || null,
         api_base_url: HUANXING_CONFIG.backendBaseUrl,
         llm_gateway_url: HUANXING_CONFIG.llmGatewayV1,
         hasn_node_key: session.hasnNodeKey || null,

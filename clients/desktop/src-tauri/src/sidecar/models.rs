@@ -81,6 +81,9 @@ pub struct OnboardRequest {
     pub user_uuid: Option<String>,
     pub user_phone: Option<String>,
     pub agent_key: Option<String>,
+    /// HASN Owner API Key (hasn_ok_ 前缀，用于文档/云函数等用户级 API 认证）
+    /// 前端通过 owner_key 传入
+    pub owner_key: Option<String>,
     pub api_base_url: Option<String>,
     /// LLM 网关地址（含 /v1 后缀），如 http://127.0.0.1:3180/v1
     pub llm_gateway_url: Option<String>,
