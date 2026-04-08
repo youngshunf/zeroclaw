@@ -32,6 +32,7 @@ function agentToMention(a: AgentInfo): MentionItem {
 
 export interface UseHasnContactsReturn {
   sections: MentionSection[];
+  rawAgents: AgentInfo[];
   loading: boolean;
   error: string | null;
   refresh: () => void;
@@ -40,6 +41,7 @@ export interface UseHasnContactsReturn {
 export function useHasnContacts(): UseHasnContactsReturn {
   const [contacts, setContacts] = useState<MentionItem[]>([]);
   const [agents, setAgents] = useState<MentionItem[]>([]);
+  const [rawAgents, setRawAgents] = useState<AgentInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -64,6 +66,7 @@ export function useHasnContacts(): UseHasnContactsReturn {
         const val = agentList.value as any;
         const arr = Array.isArray(val) ? val : (val.agents || val.data || []);
         setAgents(arr.map(agentToMention));
+        setRawAgents(arr);
       } else {
         console.warn('[useHasnContacts] Failed to fetch agents:', agentList.reason);
       }
@@ -100,5 +103,5 @@ export function useHasnContacts(): UseHasnContactsReturn {
     });
   }
 
-  return { sections, loading, error, refresh: fetch };
+  return { sections, rawAgents, loading, error, refresh: fetch };
 }

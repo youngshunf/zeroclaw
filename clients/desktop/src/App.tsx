@@ -89,9 +89,18 @@ function AppContent() {
     }
   }, [isAuthenticated]);
 
+  // 唤星桌面端：sidecar 就绪状态（防止 HASN 注册在 sidecar 启动前触发）
+  // 非 Tauri 环境立即设为 true，Tauri 环境等 check_huanxing_config 通过后set
+  const [configChecked, setConfigChecked] = useState(() => {
+    // 非 Tauri 环境（纯 Web/开发）：无 sidecar 管理，直接放行
+    const hasTauri = typeof window !== 'undefined' && !!(window as any).__TAURI_INTERNALS__;
+    return !hasTauri;
+  });
+
   // HASN 身份注册 + 连接建立
+  // 依赖 configChecked：确保 sidecar 已就绪（config 有效）后再注册/连接
   useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!isAuthenticated || !configChecked) return;
 
     let cancelled = false;
 
@@ -150,7 +159,7 @@ function AppContent() {
     return () => {
       cancelled = true;
     };
-  }, [isAuthenticated]);
+  }, [isAuthenticated, configChecked]);
 
   // Owner Binding 自动续期（轻量定时续租）
   useEffect(() => {
@@ -179,8 +188,6 @@ function AppContent() {
   // 唤星桌面端：主动检查配置有效性
   // config.toml 存在且有效 → 放行（sidecar 由 setup hook 管理）
   // config.toml 不存在或无效 → 强制退出登录
-  const [configChecked, setConfigChecked] = useState(false);
-
   useEffect(() => {
     // 非 Tauri 环境、未登录、或移动端：跳过配置检查
     // 移动端没有注册 check_huanxing_config 命令（它依赖 SidecarManager）

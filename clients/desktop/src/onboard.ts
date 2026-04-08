@@ -513,8 +513,9 @@ export async function registerHasnAgent(
  * 通过 Sidecar REST API 原子更新本地绑定状态。
  */
 async function writeAgentHasnBinding(agentName: string, hasnId: string): Promise<void> {
-  // 本地 Sidecar 始终直连（sidecar 已配置 CORS allow_origin(Any)）
-  const sidecarBase = HUANXING_CONFIG.sidecarBaseUrl;
+  // Dev 模式（Tauri dev / Vite）：/api 由 Vite 代理转发至 sidecar，无需跨域直连
+  // 生产模式（Tauri 打包）：tauri:// 协议，直连 sidecar（无 CORS 限制）
+  const sidecarBase = import.meta.env.DEV ? '' : HUANXING_CONFIG.sidecarBaseUrl;
   const resp = await fetch(
     `${sidecarBase}/api/agents/${encodeURIComponent(agentName)}/hasn-id`,
     {

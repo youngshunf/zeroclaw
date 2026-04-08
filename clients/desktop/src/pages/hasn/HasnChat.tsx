@@ -114,6 +114,40 @@ export default function HasnChat() {
     send(content);
   }, [activeConvId, send]);
 
+  // ── 过滤在线 Agent ────────────────────────────────────────────
+  const onlineAgents = useMemo(() => {
+    if (!hasnContacts.rawAgents) return [];
+    return hasnContacts.rawAgents.filter((a: any) => 
+      a.status === 'active' || a.online === true || a.status === undefined
+    );
+  }, [hasnContacts.rawAgents]);
+
+  const filteredOnlineAgents = searchQuery
+    ? onlineAgents.filter((a) =>
+        a.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (a.server_id && a.server_id.toLowerCase().includes(searchQuery.toLowerCase()))
+      )
+    : onlineAgents;
+
+  // 跳转到 Agent 聊天
+  const handleSelectAgent = useCallback((agent: any) => {
+    const existing = conversations.find((c) => c.peer_id === agent.hasn_id);
+    if (existing) {
+      handleSelectConversation(existing.id);
+    } else {
+      const mockConv = {
+        id: agent.hasn_id,
+        peer_id: agent.hasn_id,
+        peer_name: agent.name,
+        peer_type: 'agent',
+        unread_count: 0,
+        last_message: '',
+      } as any;
+      setConversations((prev: any) => [mockConv, ...prev]);
+      setActiveConvId(agent.hasn_id);
+    }
+  }, [conversations, setConversations]);
+
   // 过滤会话
   const filteredConversations = searchQuery
     ? conversations.filter((c) =>
@@ -166,7 +200,7 @@ export default function HasnChat() {
               <Loader2 className="w-6 h-6 animate-spin opacity-50" />
               <p className="text-[13px]">加载中...</p>
             </div>
-          ) : filteredConversations.length === 0 ? (
+          ) : filteredConversations.length === 0 && filteredOnlineAgents.length === 0 ? (
             <div className="hx-empty-state py-10">
               <MessageSquare className="w-8 h-8 opacity-40" />
               <p className="text-[13px]">
@@ -174,7 +208,51 @@ export default function HasnChat() {
               </p>
             </div>
           ) : (
-            filteredConversations.map((conv) => {
+            <>
+              {/* 在线 Agent 列表 */}
+              {filteredOnlineAgents.length > 0 && (
+                <div className="mb-2">
+                  <div className="px-3 py-1.5 text-[11px] font-semibold text-hx-text-tertiary uppercase tracking-wider">
+                    我的在线 Agent
+                  </div>
+                  {filteredOnlineAgents.map((agent) => {
+                    const isActive = agent.hasn_id === activeConvId;
+                    return (
+                      <div
+                        key={`agent-${agent.hasn_id}`}
+                        onClick={() => handleSelectAgent(agent)}
+                        className={`hx-conv-item${isActive ? ' active' : ''}`}
+                      >
+                        <div className="hx-conv-avatar flex items-center justify-center text-white font-semibold text-sm bg-gradient-to-br from-hx-blue to-hx-purple">
+                          {getInitial(agent.name)}
+                        </div>
+                        <div className="hx-conv-info">
+                          <div className="hx-conv-name-row">
+                            <span className="hx-conv-name">{agent.name}</span>
+                            <span className="text-[10px] px-1.5 py-[1px] bg-hx-bg-hover text-hx-text-secondary rounded-hx-radius-sm border border-hx-border/50 shrink-0">
+                              {agent.server_id || 'LOCAL'}
+                            </span>
+                          </div>
+                          <div className="hx-conv-preview text-hx-green flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-hx-green shrink-0"></span>
+                            在线就绪
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* 最近聊天 */}
+              {filteredConversations.length > 0 && (
+                <div>
+                  {(filteredOnlineAgents.length > 0) && (
+                    <div className="px-3 py-1.5 text-[11px] font-semibold text-hx-text-tertiary uppercase tracking-wider">
+                      最近聊天
+                    </div>
+                  )}
+                  {filteredConversations.map((conv) => {
               const isActive = conv.id === activeConvId;
               return (
                 <div
@@ -205,7 +283,10 @@ export default function HasnChat() {
                   )}
                 </div>
               );
-            })
+            })}
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>

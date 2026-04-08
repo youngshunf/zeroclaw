@@ -134,10 +134,14 @@ import { HUANXING_CONFIG, getHuanxingSession } from '../config';
 import { hasnWs } from './hasn-ws';
 
 const isDesktop = typeof window !== 'undefined' && (!!((window as any).__TAURI_INTERNALS__) || !!((window as any).__TAURI__));
-// 云端后端 HASN API：DEV 模式走 Vite 代理（/api/v1 → 8020），生产 Tauri 直连后端
+// 云端后端 HASN API：DEV 模式走 Vite 代理（/api/v1/hasn/app → 8020），生产 Tauri 直连后端
 const CLOUD_API_BASE = `${import.meta.env.DEV ? '' : (isDesktop ? HUANXING_CONFIG.backendBaseUrl : '')}/api/v1/hasn/app`;
-// 本地 Sidecar HASN API：始终直连 sidecar（sidecar 已配置 CORS allow_origin(Any)）
-const SIDECAR_API_BASE = `${HUANXING_CONFIG.sidecarBaseUrl}/api/v1/hasn`;
+// 本地 Sidecar HASN API
+// - DEV 模式（Tauri dev / Vite）：使用相对路径，由 Vite 代理 /api/v1/hasn → localhost:42620，避免跨域
+// - 生产模式（Tauri 打包）：直连 sidecar（tauri:// 协议不受 CORS 限制）
+const SIDECAR_API_BASE = import.meta.env.DEV
+  ? `/api/v1/hasn`
+  : `${HUANXING_CONFIG.sidecarBaseUrl}/api/v1/hasn`;
 
 async function cloudGet<T>(path: string): Promise<T> {
   const token = getHuanxingSession()?.accessToken;
