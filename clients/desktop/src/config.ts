@@ -157,6 +157,9 @@ export function clearHuanxingSession(): void {
  */
 export function resolveApiUrl(url: string | null | undefined): string {
   if (!url) return '';
+  if (url.startsWith('http://qncdn.dcfuture.cn')) {
+    url = url.replace('http://', 'https://');
+  }
   if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:') || url.startsWith('blob:')) {
     return url;
   }

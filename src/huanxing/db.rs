@@ -45,8 +45,8 @@ pub struct TenantRecord {
     pub gateway_token: Option<String>,
     /// Token expiry.
     pub token_expires: Option<String>,
-    /// Server ID.
-    pub server_id: Option<String>,
+    /// Node ID (device fingerprint derived).
+    pub node_id: Option<String>,
 }
 
 /// Verified credentials stored after phone-login, consumed by register.
@@ -336,7 +336,7 @@ impl TenantDb {
         access_token: Option<&str>,
         llm_token: Option<&str>,
         gateway_token: Option<&str>,
-        server_id: Option<&str>,
+        node_id: Option<&str>,
     ) -> Result<()> {
         let conn = self.conn.lock().await;
         conn.execute(
@@ -353,7 +353,7 @@ impl TenantDb {
                 access_token,
                 llm_token,
                 gateway_token,
-                server_id,
+                node_id,
             ],
         )?;
 
@@ -896,7 +896,7 @@ impl TenantDb {
             llm_token: row.get(13).unwrap_or(None),
             gateway_token: row.get(14).unwrap_or(None),
             token_expires: row.get(15).unwrap_or(None),
-            server_id: row.get(16).unwrap_or(None),
+            node_id: row.get(16).unwrap_or(None),
         }
     }
 
@@ -920,7 +920,7 @@ impl TenantDb {
             llm_token: None,
             gateway_token: None,
             token_expires: None,
-            server_id: None,
+            node_id: None,
         }
     }
 }

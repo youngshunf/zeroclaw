@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { saveHuanxingSession, type HuanxingLoginData } from "@/config";
-import { autoOnboard, registerHasnIdentity, registerHasnAgent, rememberAgentHasnRetry } from "@/onboard";
+import { autoOnboard, registerHasnIdentity } from "@/onboard";
 import { sendVerifyCode, phoneLogin } from "@/lib/huanxing-api";
 import { startTokenRefresh } from "@/lib/token-refresh";
 
@@ -133,23 +133,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
         hasnIdentity = await registerHasnIdentity(session);
         console.log("[huanxing] HASN 身份:", hasnIdentity);
 
-        // 同时注册桌面端默认 Agent 的 HASN 身份
-        const defaultAgentDisplayName = session.user.nickname ? `${session.user.nickname}的星灵` : "唤星AI助手";
-        try {
-          const agentId = await registerHasnAgent(
-            session,
-            "default",
-            defaultAgentDisplayName,
-            "local",
-          );
-          console.log("[huanxing] 默认 Agent HASN 身份:", agentId);
-        } catch (agentErr) {
-          const agentErrMsg = agentErr instanceof Error ? agentErr.message : "默认 Agent HASN 注册失败";
-          console.warn("[huanxing] 默认 Agent HASN 注册失败:", agentErr);
-          rememberAgentHasnRetry("default", defaultAgentDisplayName, "local", agentErrMsg);
-          hasnStepError = `${agentErrMsg}；已记录待重试任务`;
-        }
-
+        // 注意：Agent 身份注册现在由 App.tsx 统一扫描并动态注册
         if (hasnStepError) {
           updateStep("hasn", "error", hasnStepError);
         } else {

@@ -246,10 +246,10 @@ impl TenantRouter {
         let api = ApiClient::new(
             self.config.api_url(),
             agent_key,
-            &self.config.server_id_or_hostname(),
+            &self.config.node_id_or_hostname(),
         );
         let db = self.db.clone();
-        let server_id = self.config.server_id_or_hostname();
+        let node_id = self.config.node_id_or_hostname();
         let server_ip = self.config.server_ip.clone();
         let heartbeat_interval = self.config.heartbeat_interval();
 
@@ -258,8 +258,8 @@ impl TenantRouter {
             let stats = db.get_stats().await.unwrap_or_default();
             let sys = collect_system_metrics();
             let mut payload = serde_json::json!({
-                "server_id": server_id,
-                "server_name": server_id,
+                "server_id": node_id, // backward compat field name for huanxing server API
+                "server_name": node_id,
                 "gateway_status": "running",
                 "user_count": stats.total_users,
                 "active_user_count": stats.active_users,
@@ -282,7 +282,7 @@ impl TenantRouter {
                 .agent_post("/api/v1/huanxing/agent/servers/register", &payload)
                 .await
             {
-                Ok(_) => tracing::info!(server_id = %server_id, "Server registered to backend"),
+                Ok(_) => tracing::info!(node_id = %node_id, "Server registered to backend"),
                 Err(e) => tracing::warn!("Server auto-registration failed (non-fatal): {e}"),
             }
 
@@ -310,7 +310,7 @@ impl TenantRouter {
                     hb["total_disk_gb"] = serde_json::json!(disk_gb);
                 }
 
-                let path = format!("/api/v1/huanxing/agent/servers/{}/heartbeat", server_id);
+                let path = format!("/api/v1/huanxing/agent/servers/{}/heartbeat", node_id);
                 if let Err(e) = api.agent_post(&path, &hb).await {
                     tracing::warn!("Heartbeat failed: {e}");
                 } else {

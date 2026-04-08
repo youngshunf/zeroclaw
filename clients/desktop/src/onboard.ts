@@ -463,13 +463,15 @@ export async function registerHasnAgent(
   session: HuanxingSession,
   agentName: string,
   displayName: string,
-  agentType: string = 'local',
+  agentType: string = 'desktop',
+  nodeId?: string,
 ): Promise<AgentHasnIdentity> {
   const body: Record<string, unknown> = {
     agent_name: agentName,
     display_name: displayName,
     agent_type: agentType,
   };
+  if (nodeId) body.node_id = nodeId;
 
   const resp = await fetch(hasnApiUrl('/api/v1/hasn/app/auth/register-agent'), {
     method: 'POST',
@@ -498,7 +500,7 @@ export async function registerHasnAgent(
   };
 
   // 注册成功后，将 hasn_id 写回 Agent 的 config.toml
-  if (result.hasn_id && agentType === 'local') {
+  if (result.hasn_id) {
     await writeAgentHasnBinding(agentName, result.hasn_id);
     console.log(`[onboard] Agent '${agentName}' hasn_id 已写入本地配置和 users.db:`, result.hasn_id);
   }

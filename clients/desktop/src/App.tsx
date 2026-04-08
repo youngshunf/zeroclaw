@@ -116,12 +116,18 @@ function AppContent() {
         const identity = await registerHasnIdentity(session);
         if (!identity?.hasn_id || cancelled) return;
 
-        // 确保本地 Agent 的 HASN 身份已注册且 hasn_id 已写入 config.toml（幂等）
+        // 动态注册本地未拥有 hasn_id 的所有 Agents
         try {
-          const nickname = session.user?.nickname || '唤星用户';
-          await registerHasnAgent(session, 'default', `${nickname}的星灵`, 'local');
+          const { listAgents } = await import('./lib/agent-api');
+          const res = await listAgents();
+          for (const agent of (res.agents || [])) {
+            if (!agent.hasn_id) {
+              const displayName = agent.display_name || `${session.user?.nickname || '唤星用户'}的${agent.name}`;
+              await registerHasnAgent(session, agent.name, displayName, 'desktop');
+            }
+          }
         } catch (agentErr) {
-          console.warn('[App] Agent HASN 注册（非致命）:', agentErr);
+          console.warn('[App] Agent HASN 批量注册（非致命）:', agentErr);
         }
 
         // 建立 HASN WebSocket 连接
@@ -134,11 +140,13 @@ function AppContent() {
               await hasnConnect(nodeKey, identity.hasn_id, identity.star_id || '');
               await hasnAddOwner(identity.hasn_id, session.accessToken);
 
-              // 本地默认 Agent 已完成 HASN 注册时，自动上线 Presence
-              const agentDisplayName = `${session.user.nickname || '唤星用户'}的星灵`;
-              const agentIdentity = await registerHasnAgent(session, 'default', agentDisplayName, 'local');
-              if (agentIdentity?.hasn_id) {
-                await hasnAddAgent(agentIdentity.hasn_id, identity.hasn_id);
+              // 重新拉取最新的 Agent 状态并批量上线 Presence
+              const { listAgents } = await import('./lib/agent-api');
+              const res = await listAgents();
+              for (const agent of (res.agents || [])) {
+                if (agent.hasn_id) {
+                  await hasnAddAgent(agent.hasn_id, identity.hasn_id);
+                }
               }
 
               console.log('[App] HASN 连接与 Owner/Agent 绑定已建立, hasn_id:', identity.hasn_id);
@@ -177,8 +185,8 @@ function AppContent() {
             await hasnRenewOwner(hasnId, session.accessToken);
           }
         })
-        .catch((err) => {
-          console.warn('[App] HASN owner renew failed:', err);
+        .catch(() => {
+          // renew 是尽力而为，失败时静默忽略，下个周期重试
         });
     }, 5 * 60 * 1000);
 
@@ -263,7 +271,7 @@ function AppContent() {
       }).then(fn => { unlisten = fn; });
     }).catch(() => {});
 
-    return () => { unlisten?.(); };
+    return () => { try { unlisten?.(); } catch { /* Tauri HMR 内部状态竞态，可忽略 */ } };
   }, [logout]);
 
   // 主题管理：登录页强制 dark，登录后默认切换回 light (或尊重已存偏好)

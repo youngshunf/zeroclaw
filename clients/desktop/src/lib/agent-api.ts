@@ -10,6 +10,7 @@ import { getToken } from '@/lib/auth';
 export interface AgentInfo {
   name: string;
   display_name: string | null;
+  hasn_id?: string | null;
   config_dir: string;
   model: string | null;
   active: boolean;
@@ -67,17 +68,8 @@ export async function createAgent(params: CreateAgentParams): Promise<{ status: 
     body: JSON.stringify(body),
   });
 
-  // 2. 注册 Agent 的 HASN 身份（幂等，非阻塞）
-  if (session?.accessToken) {
-    try {
-      const { registerHasnAgent } = await import('../onboard');
-      const displayName = params.display_name || params.name;
-      await registerHasnAgent(session, params.name, displayName, 'local');
-      console.log(`[agent-api] Agent '${params.name}' HASN 身份注册成功`);
-    } catch (err) {
-      console.warn(`[agent-api] Agent '${params.name}' HASN 身份注册失败（非致命）:`, err);
-    }
-  }
+  // 注意：不再此处手动调用 API 注册 HASN。
+  // App.tsx 在检测到 Agent 目录生成并在 `listAgents()` 返回空的 hasn_id 时，会自动读取 agent workspace 配置里的 display_name 注册并写回。
 
   return result;
 }

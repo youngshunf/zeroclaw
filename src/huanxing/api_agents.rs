@@ -212,7 +212,7 @@ async fn list_agents(
                 }
 
                 let ws_cfg = load_workspace_config(&path.join("workspace")).await;
-                let icon_url = if path.join("icon.svg").exists() || path.join("icon.png").exists() {
+                let icon_url = if path.join("icon.png").exists() || path.join("icon.svg").exists() {
                     Some(format!(
                         "/api/agents/{}/icon",
                         urlencoding::encode(&name)
@@ -224,8 +224,8 @@ async fn list_agents(
                 let display_name = ws_cfg
                     .display_name
                     .or_else(|| ws_cfg.name.clone())
-                    .or_else(|| ws_cfg.identity.as_ref().and_then(|id| id.name.clone()))
-                    .or_else(|| config.display_name.clone());
+                    .or_else(|| ws_cfg.identity.as_ref().and_then(|id| id.name.clone()));
+                    // 不再回退到全局 config.display_name —— 那是进程级标识，不应作为 Agent 名称
 
                 agents.push(AgentInfo {
                     config_dir: path.join("workspace").to_string_lossy().to_string(), // point to the inner workspace
@@ -518,11 +518,11 @@ async fn serve_agent_icon(
             .huanxing
             .resolve_agent_wrapper_dir(config_dir, tenant_dir.as_deref(), &name);
 
-    // 按优先级查找: icon.svg > icon.png
-    let (icon_path, content_type) = if wrapper_dir.join("icon.svg").exists() {
-        (wrapper_dir.join("icon.svg"), "image/svg+xml")
-    } else if wrapper_dir.join("icon.png").exists() {
+    // 按优先级查找: icon.png > icon.svg (优先展示 3D 高级图标)
+    let (icon_path, content_type) = if wrapper_dir.join("icon.png").exists() {
         (wrapper_dir.join("icon.png"), "image/png")
+    } else if wrapper_dir.join("icon.svg").exists() {
+        (wrapper_dir.join("icon.svg"), "image/svg+xml")
     } else {
         return (StatusCode::NOT_FOUND, "图标不存在").into_response();
     };

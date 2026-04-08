@@ -48,34 +48,14 @@ scheduler_retries = 2
 # ══════════════════════════════════════════════════════════════
 [autonomy]
 level = "full"                   # full = 所有工具自动批准，无需人工确认
-workspace_only = true            # ⚠️ 多租户安全：只能访问自己的工作区
+workspace_only = false            # ⚠️ 多租户安全：只能访问自己的工作区
 
 # ── Shell 命令白名单 ──
-allowed_commands = [
-    # 信息查询
-    "ls", "cat", "head", "tail", "wc", "grep", "find", "trash",
-    "echo", "pwd", "date",
-    # 文本处理
-    "sort", "uniq", "tr", "cut", "awk", "sed",
-    # 文件管理
-    "mkdir", "touch", "cp", "mv",
-    # 网络与脚本（公共技能需要）
-    "curl", "wget", "bash", "sh", "python3", "uv", "pip", "pip3", "node", "npm", "pnpm", "npx", "newsnow",
-]
+allowed_commands = []
 
-# ── 额外允许的目录（公共技能脚本）──
-allowed_roots = [
-    "/opt/huanxing/config/common-skills",
-]
 
 # ── 禁止访问的系统路径 ──
-forbidden_paths = [
-    "/etc", "/root", "/home", "/bin", "/sbin",
-    "/lib", "/opt", "/boot", "/dev", "/proc", "/sys",
-    "/var", "/tmp", "/mnt",
-    "/usr/sbin", "/usr/local/etc",
-    "~/.ssh", "~/.gnupg", "~/.aws", "~/.config", "~/.zeroclaw",
-]
+forbidden_paths = []
 
 max_actions_per_hour = 200
 max_cost_per_day_cents = 1000
@@ -95,62 +75,6 @@ non_cli_excluded_tools = [
     "hx_local_update_user",      # 更新用户信息
     "hx_local_stats",            # 服务器统计
     "hx_invalidate_cache",       # 缓存失效
-
-    # ═══ 系统配置工具（可修改运行时配置）═══
-    "proxy_config",              # 代理配置
-    "model_routing_config",      # 模型路由配置
-    "model_switch",              # 切换 LLM 提供商
-
-    # ═══ 高级系统工具（用户不需要）═══
-    "composio",                  # Composio 集成
-    "security_ops",              # 安全操作
-    "backup",                    # 系统备份
-    "cloud_ops",                 # 云操作
-    "cloud_patterns",            # 云模式
-    "swarm",                     # Swarm 模式
-    "data_management",           # 数据管理
-
-    # ═══ 定时任务（用户用 Heartbeat 即可，不需要 Cron）═══
-    "cron_add",                  # 添加定时任务
-    "cron_list",                 # 列出定时任务
-    "cron_remove",               # 删除定时任务
-    "cron_update",               # 更新定时任务
-    "cron_run",                  # 手动触发任务
-    "cron_runs",                 # 任务运行历史
-
-    # ═══ 会话管理（用户无需跨会话操作）═══
-    "sessions_list",             # 会话列表
-    "sessions_history",          # 会话历史
-    "sessions_send",             # 跨会话发送
-
-    # ═══ 服务器无 GUI / 低价值工具 ═══
-    "screenshot",                # 截图（服务器无 GUI）
-    "browser",                   # 浏览器自动化（重量级）
-    "browser_open",              # 打开浏览器
-    "browser_delegate",          # 浏览器委托
-    "canvas",                    # 交互式画布（非 CLI 无意义）
-
-    # ═══ 开发工具（普通用户不需要）═══
-    "git_operations",            # Git 操作
-    "process",                   # 后台进程管理
-    "project_intel",             # 项目分析
-    "claude_code",               # Claude Code 委托
-    "vi_verify",                 # 可验证意图（内部测试）
-
-    # ═══ 硬件工具（服务器场景无意义）═══
-    "hardware_board_info",       # 硬件主板信息
-    "hardware_memory_map",       # 硬件内存映射
-    "hardware_memory_read",      # 硬件内存读取
-
-    # ═══ 未部署的第三方集成 ═══
-    "pushover",                  # Pushover 推送
-    "discord_search",            # Discord 搜索
-    "google_workspace",          # Google Workspace
-    "jira",                      # Jira
-    "notion",                    # Notion
-    "linkedin",                  # LinkedIn
-    "microsoft365",              # Microsoft 365
-    "wasm_module",               # WASM 模块
 ]
 
 # ── 安全机制 ──────────────────────────────────────────────────

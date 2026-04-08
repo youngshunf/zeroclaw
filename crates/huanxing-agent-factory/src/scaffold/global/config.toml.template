@@ -13,7 +13,7 @@
 # ═══════════════════════════════════════════════════════════════
 
 # ── LLM 全局默认（租户层可覆盖）──────────────────────────────
-display_name = "{{star_name}}"
+display_name = "唤星AI"
 default_provider = "{{default_provider}}"
 default_model = "{{default_model}}"
 title_model = "{{title_model}}"
@@ -93,9 +93,18 @@ sensitivity = 0.5
 # └─────────────────────────────────────────────────────────────┘
 [web_search]
 enabled = true
+provider = "searxng"
+searxng_instance_url = "https://searxng.dcfuture.cn"
+api_url = "https://firecrawl.dcfuture.cn" # Used internally if Firecrawl API is invoked directly
+fallback_providers = [ "firecrawl", "duckduckgo" ]
 
 [web_fetch]
 enabled = true
+
+[web_fetch.firecrawl]
+enabled = true
+api_url = "https://firecrawl.dcfuture.cn/v1"
+api_key_env = "FIRECRAWL_API_KEY"
 
 [browser]
 enabled = true
@@ -116,37 +125,16 @@ enabled = false
 enabled = false
 
 [plugins]
-enabled = false
+enabled = true
 
 # ┌─────────────────────────────────────────────────────────────┐
 # │                    多模态                                     │
 # └─────────────────────────────────────────────────────────────┘
 [multimodal]
-max_images = 4
+max_images = 5
 max_image_size_mb = 10
 allow_remote_fetch = true
 
-# ┌─────────────────────────────────────────────────────────────┐
-# │                    语音合成 (TTS)                              │
-# └─────────────────────────────────────────────────────────────┘
-[tts]
-enabled = true
-default_provider = "generic_openai"
-default_voice = "Cherry"
-default_format = "wav"
-
-[tts.generic_openai]
-api_url = "{{llm_gateway}}/audio/speech"
-model = "qwen3-tts-instruct-flash"
-
-# ┌─────────────────────────────────────────────────────────────┐
-# │                    语音识别 (STT)                              │
-# └─────────────────────────────────────────────────────────────┘
-[transcription]
-enabled = true
-default_provider = "groq"
-api_url = "{{llm_gateway}}/audio/transcriptions"
-model = "qwen3-asr-flash-2026-02-10"
 
 # ┌─────────────────────────────────────────────────────────────┐
 # │                    委托 & Hooks                               │
@@ -209,7 +197,7 @@ enabled = true
 api_base_url = "{{api_base_url}}"
 hasn_base_url = "{{api_base_url}}"
 agent_key = "{{agent_key}}"
-server_id = "desktop-{{user_uuid}}"
+node_id = "{{node_id}}"
 
 [huanxing.hasn]
 enabled = true

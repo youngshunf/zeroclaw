@@ -94,7 +94,10 @@ impl AgentFactory {
         let template = scaffold::global_scaffold()
             .into_iter()
             .find(|s| s.name == "config.toml.template")
-            .map(|s| s.content.to_string())
+            .and_then(|s| match s.content {
+                scaffold::EmbeddedContent::Text(t) => Some(t.to_string()),
+                _ => None,
+            })
             .unwrap_or_default();
 
         template
@@ -106,7 +109,7 @@ impl AgentFactory {
             .replace("{{llm_gateway}}", &vars.llm_gateway)
             .replace("{{api_base_url}}", &vars.api_base_url)
             .replace("{{agent_key}}", &vars.agent_key)
-            .replace("{{user_uuid}}", &vars.user_uuid)
+            .replace("{{node_id}}", &vars.node_id)
             .replace("{{hasn_api_key}}", &vars.hasn_api_key)
     }
 }
@@ -122,6 +125,6 @@ pub struct GlobalConfigVars {
     pub llm_gateway: String,
     pub api_base_url: String,
     pub agent_key: String,
-    pub user_uuid: String,
+    pub node_id: String,
     pub hasn_api_key: String,
 }

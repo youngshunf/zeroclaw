@@ -125,7 +125,7 @@ export default function HasnChat() {
   const filteredOnlineAgents = searchQuery
     ? onlineAgents.filter((a) =>
         a.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (a.server_id && a.server_id.toLowerCase().includes(searchQuery.toLowerCase()))
+        (a.node_id && a.node_id.toLowerCase().includes(searchQuery.toLowerCase()))
       )
     : onlineAgents;
 
@@ -230,7 +230,7 @@ export default function HasnChat() {
                           <div className="hx-conv-name-row">
                             <span className="hx-conv-name">{agent.name}</span>
                             <span className="text-[10px] px-1.5 py-[1px] bg-hx-bg-hover text-hx-text-secondary rounded-hx-radius-sm border border-hx-border/50 shrink-0">
-                              {agent.server_id || 'LOCAL'}
+                              {agent.node_id || 'LOCAL'}
                             </span>
                           </div>
                           <div className="hx-conv-preview text-hx-green flex items-center gap-1">

@@ -81,7 +81,7 @@ pub fn huanxing_all_tools(
         let api = super::ApiClient::new(
             root_config.huanxing.api_url(),
             key,
-            &root_config.huanxing.server_id_or_hostname(),
+            &root_config.huanxing.node_id_or_hostname(),
         );
         tool_arcs.extend(super::tools::huanxing_api_tools(
             api.clone(),
@@ -162,9 +162,9 @@ pub fn huanxing_all_tools(
         .unwrap_or_else(|| "finance".to_string());
     let default_provider = root_config.huanxing.default_provider.clone();
     let llm_base_url = root_config.huanxing.llm_base_url.clone();
-    let server_id = root_config
+    let node_id = root_config
         .huanxing
-        .server_id
+        .node_id
         .clone()
         .unwrap_or_else(|| "local-dev".to_string());
 
@@ -222,7 +222,7 @@ pub fn huanxing_all_tools(
                 default_template.clone(),
                 default_provider.clone(),
                 llm_base_url.clone(),
-                server_id.clone(),
+                node_id.clone(),
                 router.clone(),
                 registry.clone(),
             )
@@ -241,7 +241,7 @@ pub fn huanxing_all_tools(
                 default_template.clone(),
                 default_provider.clone(),
                 llm_base_url.clone(),
-                server_id.clone(),
+                node_id.clone(),
                 router.clone(),
             )
         };
@@ -368,7 +368,7 @@ pub fn huanxing_all_tools(
                 super::ApiClient::new(
                     root_config.huanxing.api_url(),
                     "",
-                    &root_config.huanxing.server_id_or_hostname(),
+                    &root_config.huanxing.node_id_or_hostname(),
                 )
             }),
             fallback_workspace.clone(),

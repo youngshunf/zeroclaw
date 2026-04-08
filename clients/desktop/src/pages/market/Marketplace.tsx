@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Bot, Wrench, Workflow, Download, Loader2, CheckCircle, XCircle } from 'lucide-react';
+import { Bot, Wrench, Workflow, Download, Loader2, CheckCircle, XCircle, RefreshCw } from 'lucide-react';
 import { listen } from '@tauri-apps/api/event';
 import { usePlatform } from '@/hooks/usePlatform';
 import {
@@ -9,6 +9,7 @@ import {
   installMarketAgent,
   installMarketSkill,
   installMarketSop,
+  forceRefreshMarketCache,
   type MarketApp,
   type MarketSkill,
   type MarketSop,
@@ -49,7 +50,7 @@ export function useInstallManager() {
     const unlisten = listen<{ message: string }>('agent-install-progress', (event) => {
       setInstallSteps(prev => [...prev, event.payload.message]);
     });
-    return () => { unlisten.then(f => f()); };
+    return () => { unlisten.then(f => { try { f(); } catch { /* HMR safe */ } }); };
   }, []);
 
   return {
@@ -224,7 +225,7 @@ function AgentPlaza() {
     fetchApps();
     // 监听后端同步完成事件，解决首次启动竞态问题
     const unlisten = listen('marketplace-synced', () => { fetchApps(); });
-    return () => { unlisten.then(f => f()); };
+    return () => { unlisten.then(f => { try { f(); } catch { /* HMR safe */ } }); };
   }, []);
 
   // Modal States
@@ -359,7 +360,7 @@ function SkillMarket() {
   useEffect(() => {
     fetchSkills();
     const unlisten = listen('marketplace-synced', () => { fetchSkills(); });
-    return () => { unlisten.then(f => f()); };
+    return () => { unlisten.then(f => { try { f(); } catch { /* HMR safe */ } }); };
   }, []);
 
   const openInstallModal = (skill: MarketSkill) => {
@@ -618,7 +619,7 @@ function SopMarket() {
   useEffect(() => {
     fetchSops();
     const unlisten = listen('marketplace-synced', () => { fetchSops(); });
-    return () => { unlisten.then(f => f()); };
+    return () => { unlisten.then(f => { try { f(); } catch { /* HMR safe */ } }); };
   }, []);
 
   const openInstallModal = (sop: MarketSop) => {
@@ -771,7 +772,21 @@ function AgentSelector({ agents, selected, onChange, label }: { agents: AgentInf
 
 export default function Marketplace() {
   const [tab, setTab] = useState<'agents' | 'skills' | 'sops'>('agents');
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const { isMobile } = usePlatform();
+
+  const handleForceRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await forceRefreshMarketCache();
+      const { emit } = await import('@tauri-apps/api/event');
+      await emit('marketplace-synced');
+    } catch (err) {
+      console.error('Refresh failed', err);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   const tabs = [
     { key: 'agents' as const, label: isMobile ? 'Agent' : 'Agent 广场', icon: Bot, color: '#7c3aed' },
@@ -802,6 +817,16 @@ export default function Marketplace() {
               </button>
             ))}
           </div>
+
+          <button 
+            onClick={handleForceRefresh}
+            disabled={isRefreshing}
+            className={`absolute right-6 top-1/2 -translate-y-1/2 p-2 text-hx-text-tertiary hover:text-hx-text-primary hover:bg-hx-bg-input rounded-lg transition-colors cursor-pointer ${isRefreshing ? 'opacity-50' : ''}`}
+            title="强制刷新资源"
+            style={isMobile ? undefined : { WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+          >
+            <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-hx-purple' : ''}`} />
+          </button>
         </div>
       </div>
 

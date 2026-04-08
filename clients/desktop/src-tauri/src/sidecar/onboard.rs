@@ -32,7 +32,7 @@ impl SidecarManager {
 
         let star_name = req.user_nickname.as_deref().unwrap_or("小星");
         let nickname = req.user_nickname.as_deref().unwrap_or("主人");
-        let user_uuid = req.user_uuid.as_deref().unwrap_or("unknown");
+        let node_id = generate_device_node_id(&self.config_dir);
         let user_phone = req.user_phone.as_deref().unwrap_or("（未提供）");
         let agent_key = req.agent_key.as_deref().unwrap_or("");
         // display_name 是 Agent 自己的名字，默认模板叫"唤星AI"
@@ -71,7 +71,7 @@ impl SidecarManager {
             llm_gateway: llm_gateway.clone(),
             api_base_url: api_base.to_string(),
             agent_key: agent_key.to_string(),
-            user_uuid: user_uuid.to_string(),
+            node_id: node_id.clone(),
             hasn_api_key: hasn_api_key.to_string(),
         };
         let config_content = factory.generate_global_config(&vars);
@@ -303,4 +303,111 @@ fn write_owner_key_to_config(owner_config_path: &std::path::Path, owner_key: &st
             owner_config_path.display()
         ),
     }
+}
+
+/// Generate a stable device node_id based on hardware fingerprint.
+///
+/// Strategy:
+/// 1. Try to read macOS IOPlatformUUID (stable across reinstalls)
+/// 2. Fallback to a persisted UUID file (~/.huanxing/.device_id)
+/// 3. Combine with hostname and hash to produce `n_{hash16}`
+fn generate_device_node_id(config_dir: &std::path::Path) -> String {
+    // Try platform-specific hardware ID
+    let hardware_id = get_hardware_uuid().unwrap_or_default();
+
+    let hostname = hostname::get()
+        .ok()
+        .and_then(|h| h.into_string().ok())
+        .unwrap_or_else(|| "unknown-host".to_string());
+
+    // If no hardware ID available, use a persisted device UUID
+    let device_seed = if hardware_id.is_empty() {
+        let device_id_path = config_dir.join(".device_id");
+        if let Ok(existing) = std::fs::read_to_string(&device_id_path) {
+            let existing = existing.trim().to_string();
+            if !existing.is_empty() {
+                existing
+            } else {
+                let new_id = uuid::Uuid::new_v4().to_string();
+                let _ = std::fs::write(&device_id_path, &new_id);
+                new_id
+            }
+        } else {
+            let _ = std::fs::create_dir_all(config_dir);
+            let new_id = uuid::Uuid::new_v4().to_string();
+            let _ = std::fs::write(&device_id_path, &new_id);
+            new_id
+        }
+    } else {
+        hardware_id
+    };
+
+    // Hash hostname + device_seed to produce stable fingerprint
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(format!("{}:{}", hostname, device_seed));
+    let hash = hasher.finalize();
+    let hex = hex::encode(&hash[..8]); // 16 hex chars
+    format!("n_{hex}")
+}
+
+/// Get hardware UUID (platform-specific).
+#[cfg(target_os = "macos")]
+fn get_hardware_uuid() -> Option<String> {
+    std::process::Command::new("ioreg")
+        .args(["-rd1", "-c", "IOPlatformExpertDevice"])
+        .output()
+        .ok()
+        .and_then(|out| {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            for line in stdout.lines() {
+                if line.contains("IOPlatformUUID") {
+                    // Extract UUID from: "IOPlatformUUID" = "XXXXXXXX-XXXX-..."
+                    if let Some(start) = line.rfind('"') {
+                        let before = &line[..start];
+                        if let Some(quote_start) = before.rfind('"') {
+                            let uuid = &line[quote_start + 1..start];
+                            if uuid.len() > 8 {
+                                return Some(uuid.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+            None
+        })
+}
+
+#[cfg(target_os = "linux")]
+fn get_hardware_uuid() -> Option<String> {
+    std::fs::read_to_string("/etc/machine-id")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+#[cfg(target_os = "windows")]
+fn get_hardware_uuid() -> Option<String> {
+    std::process::Command::new("reg")
+        .args([
+            "query",
+            r"HKLM\SOFTWARE\Microsoft\Cryptography",
+            "/v",
+            "MachineGuid",
+        ])
+        .output()
+        .ok()
+        .and_then(|out| {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            stdout
+                .lines()
+                .find(|line| line.contains("MachineGuid"))
+                .and_then(|line| line.split_whitespace().last())
+                .map(|s| s.to_string())
+        })
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+fn get_hardware_uuid() -> Option<String> {
+    None
 }

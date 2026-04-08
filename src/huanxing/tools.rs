@@ -130,7 +130,7 @@ pub struct HxRegisterUser {
     default_template: String,
     default_provider: Option<String>,
     llm_base_url: Option<String>,
-    server_id: String,
+    node_id: String,
     router: Arc<TenantRouter>,
 }
 
@@ -145,7 +145,7 @@ impl HxRegisterUser {
         default_template: String,
         default_provider: Option<String>,
         llm_base_url: Option<String>,
-        server_id: String,
+        node_id: String,
         router: Arc<TenantRouter>,
     ) -> Self {
         Self {
@@ -158,7 +158,7 @@ impl HxRegisterUser {
             default_template,
             default_provider,
             llm_base_url,
-            server_id,
+            node_id,
             router,
         }
     }
@@ -174,7 +174,7 @@ impl HxRegisterUser {
         default_template: String,
         default_provider: Option<String>,
         llm_base_url: Option<String>,
-        server_id: String,
+        node_id: String,
         router: Arc<TenantRouter>,
         _registry: Arc<RegistryLoader>,
     ) -> Self {
@@ -188,7 +188,7 @@ impl HxRegisterUser {
             default_template,
             default_provider,
             llm_base_url,
-            server_id,
+            node_id,
             router,
         }
     }
@@ -320,7 +320,7 @@ impl Tool for HxRegisterUser {
                 Some(access_token),
                 Some(llm_token),
                 Some(gateway_token),
-                Some(&self.server_id),
+                Some(&self.node_id),
             )
             .await
         {
@@ -353,7 +353,7 @@ impl Tool for HxRegisterUser {
                 "/api/v1/huanxing/agent/users",
                 &json!({
                     "user_id": user_id,
-                    "server_id": self.server_id,
+                    "server_id": self.node_id, // backward compat field name for huanxing server API
                     "agent_id": agent_id,
                     "star_name": star_name,
                     "template": template,
@@ -455,11 +455,6 @@ impl Tool for HxRegisterUser {
         }
 
         // Step 4: 注册 HASN 身份（Human + Agent）
-        // agent_type 根据 server_id 前缀推断：
-        //   - desktop-xxx → local（桌面端 sidecar 创建的 Agent）
-        //   - 其他 → cloud（云端服务器创建的 Agent）
-        let is_desktop = self.server_id.starts_with("desktop-");
-        let agent_type = if is_desktop { "local" } else { "cloud" };
 
         if !access_token.is_empty() {
             // 4a: 注册 Human HASN 身份（幂等）
@@ -483,80 +478,9 @@ impl Tool for HxRegisterUser {
                         "✅ Step4a: HASN Human 身份注册完成 (hasn_id={human_hasn_id})"
                     ));
 
-                    // 4b: 注册 Agent HASN 身份（幂等）
-                    if !human_hasn_id.is_empty() {
-                        let mut agent_body = json!({
-                            "agent_name": agent_id,
-                            "display_name": format!("{nickname}的{star_name}"),
-                            "agent_type": agent_type,
-                        });
-                        // 云端 Agent 绑定 server_id；本地 Agent 不设 server_id（由桌面端绑 client_id）
-                        if !is_desktop {
-                            agent_body["server_id"] = json!(self.server_id);
-                        }
-
-                        match self
-                            .api
-                            .user_post(
-                                "/api/v1/hasn/app/auth/register-agent",
-                                access_token,
-                                &agent_body,
-                            )
-                            .await
-                        {
-                            Ok(agent_resp) => {
-                                let agent_hasn_id = agent_resp["data"]["hasn_id"]
-                                    .as_str()
-                                    .unwrap_or_default()
-                                    .to_string();
-                                steps.push(format!(
-                                    "✅ Step4b: HASN Agent 身份注册完成 (hasn_id={agent_hasn_id})"
-                                ));
-
-                                // 将 hasn_id 写回 Agent 的 config.toml
-                                if !agent_hasn_id.is_empty() {
-                                    let _ = crate::huanxing::config::promote_legacy_agent_config_from_workspace(
-                                        &agent_workspace,
-                                    );
-                                    let config_path =
-                                        crate::huanxing::config::agent_config_path_from_workspace(
-                                            &agent_workspace,
-                                        );
-                                    if let Ok(content) =
-                                        tokio::fs::read_to_string(&config_path).await
-                                    {
-                                        let updated = if content.contains("hasn_id =") {
-                                            let re = regex::Regex::new(r#"hasn_id\s*=\s*"[^"]*""#)
-                                                .unwrap();
-                                            re.replace(
-                                                &content,
-                                                &format!(r#"hasn_id = "{agent_hasn_id}""#),
-                                            )
-                                            .to_string()
-                                        } else if content.contains("[agent]") {
-                                            content.replace(
-                                                "[agent]",
-                                                &format!("[agent]\nhasn_id = \"{agent_hasn_id}\""),
-                                            )
-                                        } else {
-                                            format!("{content}\nhasn_id = \"{agent_hasn_id}\"\n")
-                                        };
-                                        if let Err(e) =
-                                            tokio::fs::write(&config_path, &updated).await
-                                        {
-                                            tracing::warn!(
-                                                "[HASN] 写 hasn_id 到 config.toml 失败: {e}"
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                steps
-                                    .push(format!("⚠️ Step4b: HASN Agent 注册失败（非致命）: {e}"));
-                            }
-                        }
-                    }
+                    // 注意：不再此处手动注册 Agent HASN 身份（即旧的 4b 步骤）。
+                    // 我们依赖于前端 (App.tsx) 启动时自动扫描本地 Agent 的 config.toml，
+                    // 如果发现 hasn_id 为空，则读取 config.toml 的实际 display_name 动态向云端注册并写回，实现完美解耦一致性。
                 }
                 Err(e) => {
                     steps.push(format!("⚠️ Step4a: HASN Human 注册失败（非致命）: {e}"));

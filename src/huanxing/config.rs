@@ -66,8 +66,10 @@ pub struct HuanXingConfig {
     /// Auto-issued during user registration if not configured.
     pub owner_key: Option<String>,
 
-    /// Server identifier for heartbeat registration.
-    pub server_id: Option<String>,
+    /// Node identifier for heartbeat registration.
+    /// Derived from device fingerprint. Alias: `server_id` for backward compat.
+    #[serde(alias = "server_id")]
+    pub node_id: Option<String>,
 
     /// Server IP address (reported to backend in heartbeat/registration).
     pub server_ip: Option<String>,
@@ -210,7 +212,7 @@ impl Default for HuanXingConfig {
             api_base_url: None,
             agent_key: None,
             owner_key: None,
-            server_id: None,
+            node_id: None,
             server_ip: None,
             hasn_base_url: None,
             llm_base_url: None,
@@ -420,14 +422,19 @@ impl HuanXingConfig {
         std::time::Duration::from_secs(self.heartbeat_interval_secs.unwrap_or(300))
     }
 
-    /// Get the server ID (falls back to hostname).
-    pub fn server_id_or_hostname(&self) -> String {
-        self.server_id.clone().unwrap_or_else(|| {
+    /// Get the node ID (falls back to hostname).
+    pub fn node_id_or_hostname(&self) -> String {
+        self.node_id.clone().unwrap_or_else(|| {
             hostname::get()
                 .ok()
                 .and_then(|h| h.into_string().ok())
                 .unwrap_or_else(|| "zeroclaw-unknown".to_string())
         })
+    }
+
+    /// Backward-compatible alias.
+    pub fn server_id_or_hostname(&self) -> String {
+        self.node_id_or_hostname()
     }
 }
 

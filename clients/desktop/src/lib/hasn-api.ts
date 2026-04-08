@@ -84,7 +84,7 @@ export interface AgentInfo {
   name: string;
   agent_name: string;
   type: string;
-  server_id?: string;
+  node_id?: string;
   online: boolean;
   created_via: string;
   created_time?: string;
@@ -247,6 +247,10 @@ export async function hasnAddOwner(ownerId: string, bearerToken: string): Promis
 }
 
 export async function hasnRenewOwner(ownerId: string, bearerToken: string): Promise<any> {
+  // 仅在 WS 已连接时才尝试续期，避免对断开的 connector 发帧导致 500
+  const connStatus = await hasnStatus();
+  if (connStatus !== 'connected') return;
+
   return sidecarPost(`/node/owners/${encodeURIComponent(ownerId)}/renew`, {
     type: "bearer_token",
     credential: bearerToken,
@@ -320,11 +324,23 @@ export async function getMessages(
 ): Promise<HasnEnvelope[]> {
   const params = new URLSearchParams({ limit: String(limit) });
   if (beforeId) params.set("before_id", String(beforeId));
-  const legacyMessages = await cloudGet<any[]>(`/conversations/${conversationId}/messages?${params}`);
-  return legacyMessages.map(mapLegacyMessageToEnvelope);
+  try {
+    const legacyMessages = await cloudGet<any[]>(`/conversations/${conversationId}/messages?${params}`);
+    return legacyMessages.map(mapLegacyMessageToEnvelope);
+  } catch (err: any) {
+    // 会话尚未创建时后端返回 404，属于正常情况
+    if (err?.message?.includes('404')) return [];
+    throw err;
+  }
 }
 
 export async function sendMessage(to: string, content: string, replyToId?: number): Promise<HasnEnvelope> {
+  // 检查 HASN 连接状态
+  const status = await hasnStatus();
+  if (status !== 'connected') {
+    throw new Error('HASN 未连接，无法发送消息');
+  }
+
   // 发送消息通过 Sidecar 代理发出，实现双端一致性
   const hasnId = localStorage.getItem("hasn:hasn_id") || "";
   await sidecarPost("/send", {

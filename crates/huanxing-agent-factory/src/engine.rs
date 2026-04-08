@@ -170,10 +170,18 @@ impl AgentFactory {
             used_embedded = true;
             for scaffold in crate::scaffold::agent_scaffold() {
                 let dest_name = scaffold.name.trim_end_matches(".template");
-                std::fs::write(
-                    workspace.join(dest_name),
-                    substitute_placeholders(scaffold.content, params, def, &now),
-                )?;
+                let dest_path = workspace.join(dest_name);
+                match scaffold.content {
+                    crate::scaffold::EmbeddedContent::Text(t) => {
+                        std::fs::write(
+                            dest_path,
+                            substitute_placeholders(t, params, def, &now),
+                        )?;
+                    }
+                    crate::scaffold::EmbeddedContent::Binary(b) => {
+                        std::fs::write(dest_path, b)?;
+                    }
+                }
             }
         }
 
@@ -215,12 +223,27 @@ impl AgentFactory {
                     if name.ends_with(".template") {
                         continue;
                     }
+                    // template.yaml 是模板元数据，不复制到 workspace
+                    if name == "template.yaml" {
+                        continue;
+                    }
                     if path.is_file() {
-                        let content = std::fs::read_to_string(&path)?;
-                        std::fs::write(
-                            dest.join(&name),
-                            substitute_placeholders(&content, params, def, now),
-                        )?;
+                        // 二进制文件（图片等）直接复制，不做文本替换
+                        let is_binary = name.ends_with(".png")
+                            || name.ends_with(".jpg")
+                            || name.ends_with(".jpeg")
+                            || name.ends_with(".gif")
+                            || name.ends_with(".webp")
+                            || name.ends_with(".ico");
+                        if is_binary {
+                            std::fs::copy(&path, dest.join(&name))?;
+                        } else {
+                            let content = std::fs::read_to_string(&path)?;
+                            std::fs::write(
+                                dest.join(&name),
+                                substitute_placeholders(&content, params, def, now),
+                            )?;
+                        }
                     } else if path.is_dir() {
                         let new_dest = dest.join(&name);
                         std::fs::create_dir_all(&new_dest)?;
@@ -291,10 +314,17 @@ impl AgentFactory {
                         owner_ws.join(dest_name)
                     };
                     if !target_path.exists() {
-                        std::fs::write(
-                            &target_path,
-                            substitute_placeholders(scaffold.content, params, def, &now),
-                        )?;
+                        match scaffold.content {
+                            crate::scaffold::EmbeddedContent::Text(t) => {
+                                std::fs::write(
+                                    &target_path,
+                                    substitute_placeholders(t, params, def, &now),
+                                )?;
+                            }
+                            crate::scaffold::EmbeddedContent::Binary(b) => {
+                                std::fs::write(&target_path, b)?;
+                            }
+                        }
                     }
                 }
             }
@@ -405,11 +435,19 @@ impl AgentFactory {
         }
 
         // Promote icon.svg/icon.png to wrapper layer
-        // 前端 list_agents 在 agents/{name}/ 层级检查图标文件
-        for icon_name in &["icon.svg", "icon.png"] {
+        // 优先查看是否有新图标，如果有，覆盖旧图标并清理不同格式的残留
+        for icon_name in &["icon.png", "icon.svg"] {
             let ws_icon = workspace.join(icon_name);
             let wrapper_icon = target_dir.join(icon_name);
-            if ws_icon.exists() && !wrapper_icon.exists() {
+            if ws_icon.exists() {
+                // 如果是提升 PNG，顺便清理旧的 SVG；反之亦然
+                let alt_icon = if *icon_name == "icon.png" { "icon.svg" } else { "icon.png" };
+                let alt_wrapper_icon = target_dir.join(alt_icon);
+                if alt_wrapper_icon.exists() {
+                    let _ = tokio::fs::remove_file(&alt_wrapper_icon).await;
+                }
+                
+                // 强制移动(覆盖)
                 let _ = tokio::fs::rename(&ws_icon, &wrapper_icon).await;
             }
         }
@@ -503,10 +541,15 @@ impl AgentFactory {
         }
 
         // Promote icon.svg/icon.png to wrapper layer
-        for icon_name in &["icon.svg", "icon.png"] {
+        for icon_name in &["icon.png", "icon.svg"] {
             let ws_icon = workspace.join(icon_name);
             let wrapper_icon = target_dir.join(icon_name);
-            if ws_icon.exists() && !wrapper_icon.exists() {
+            if ws_icon.exists() {
+                let alt_icon = if *icon_name == "icon.png" { "icon.svg" } else { "icon.png" };
+                let alt_wrapper_icon = target_dir.join(alt_icon);
+                if alt_wrapper_icon.exists() {
+                    let _ = tokio::fs::remove_file(&alt_wrapper_icon).await;
+                }
                 let _ = tokio::fs::rename(&ws_icon, &wrapper_icon).await;
             }
         }

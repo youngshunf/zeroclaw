@@ -57,6 +57,10 @@ export async function getMarketApps(): Promise<MarketResponse<MarketApp>> {
   return invoke('get_market_apps');
 }
 
+export async function forceRefreshMarketCache(): Promise<void> {
+  return invoke('force_refresh_market_cache');
+}
+
 export async function getMarketSkills(): Promise<MarketResponse<MarketSkill>> {
   return invoke('get_market_skills');
 }

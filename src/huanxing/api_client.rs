@@ -15,12 +15,12 @@ pub struct ApiClient {
     client: reqwest::Client,
     base_url: String,
     agent_key: String,
-    server_id: String,
+    node_id: String,
 }
 
 impl ApiClient {
     /// Create a new API client.
-    pub fn new(base_url: &str, agent_key: &str, server_id: &str) -> Self {
+    pub fn new(base_url: &str, agent_key: &str, node_id: &str) -> Self {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .build()
@@ -30,7 +30,7 @@ impl ApiClient {
             client,
             base_url: base_url.trim_end_matches('/').to_string(),
             agent_key: agent_key.to_string(),
-            server_id: server_id.to_string(),
+            node_id: node_id.to_string(),
         }
     }
 
@@ -77,8 +77,8 @@ impl ApiClient {
         if let Ok(v) = reqwest::header::HeaderValue::from_str(&self.agent_key) {
             h.insert("X-Agent-Key", v);
         }
-        if let Ok(v) = reqwest::header::HeaderValue::from_str(&self.server_id) {
-            h.insert("X-Server-Id", v);
+        if let Ok(v) = reqwest::header::HeaderValue::from_str(&self.node_id) {
+            h.insert("X-Server-Id", v); // backward compat header name
         }
         h.insert(
             "X-App-Code",
@@ -367,8 +367,8 @@ impl ApiClient {
         if let Ok(v) = HeaderValue::from_str(&self.agent_key) {
             h.insert("X-Agent-Key", v);
         }
-        if let Ok(v) = HeaderValue::from_str(&self.server_id) {
-            h.insert("X-Server-Id", v);
+        if let Ok(v) = HeaderValue::from_str(&self.node_id) {
+            h.insert("X-Server-Id", v); // backward compat header name
         }
         h.insert("X-App-Code", HeaderValue::from_static("huanxing"));
         h
@@ -424,7 +424,7 @@ impl std::fmt::Debug for ApiClient {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ApiClient")
             .field("base_url", &self.base_url)
-            .field("server_id", &self.server_id)
+            .field("node_id", &self.node_id)
             .field("agent_key", &"[redacted]")
             .finish()
     }

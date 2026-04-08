@@ -387,6 +387,14 @@ pub async fn get_market_sops() -> Result<Value, String> {
     get_market_data("sop", "sops").await
 }
 
+#[command]
+pub async fn force_refresh_market_cache() -> Result<(), String> {
+    let conn = open_market_cache_db()?;
+    conn.execute_batch("DELETE FROM market_meta; DELETE FROM market_items;")
+        .map_err(|e| format!("清除缓存失败: {}", e))?;
+    Ok(())
+}
+
 /// 辅助：解压工具
 fn unzip_buffer(buf: &[u8], target_dir: &Path) -> Result<(), String> {
     let cursor = Cursor::new(buf);
