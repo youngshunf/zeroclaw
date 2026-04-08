@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
-import { FileText, Plus, Search, Loader2, Save, Trash2, Globe, Lock, Edit3, Share2, BookOpen, X, Copy, ChevronRight, ChevronDown, Folder, FolderPlus, FilePlus, ArrowRightLeft, PanelRightClose, PanelRightOpen, Check, Clock, KeyRound, Eye, Pencil, Download, Link, Handshake, Printer } from 'lucide-react';
+import { FileText, Plus, Search, Loader2, Save, Trash2, Globe, Lock, Edit3, Share2, BookOpen, X, Copy, ChevronRight, ChevronDown, Folder, FolderPlus, FilePlus, ArrowRightLeft, PanelRightClose, PanelRightOpen, Check, Clock, KeyRound, Eye, Pencil, Download, Link, Handshake, Printer, ClipboardCopy } from 'lucide-react';
 import TipTapEditor from '@/components/TipTapEditor';
 import MarkdownPreview from '@/components/MarkdownPreview';
 import { getHuanxingSession, HUANXING_CONFIG } from '@/config';
@@ -82,6 +82,7 @@ export default function Documents() {
   // 导出状态
   const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
   const [isExporting, setIsExporting] = useState<string | null>(null);
+  const [isCopied, setIsCopied] = useState(false);
 
   // 分享解析与收藏
   const [showParseShareLinkModal, setShowParseShareLinkModal] = useState(false);
@@ -806,6 +807,34 @@ export default function Documents() {
                        className="px-3 py-1.5 rounded-hx-radius-sm border border-hx-border bg-transparent text-hx-text-secondary text-[13px] font-medium cursor-pointer hover:bg-hx-bg-hover hover:text-hx-text-primary transition-colors flex items-center gap-1.5"
                      >
                       <Share2 size={14} /> 分享
+                     </button>
+                     
+                     <button
+                       onClick={async () => {
+                         const el = document.querySelector('.hx-markdown') as HTMLElement;
+                         if (!el) return;
+                         try {
+                           const html = el.innerHTML;
+                           const plainText = el.innerText;
+                           await navigator.clipboard.write([
+                             new ClipboardItem({
+                               'text/html': new Blob([html], { type: 'text/html' }),
+                               'text/plain': new Blob([plainText], { type: 'text/plain' }),
+                             })
+                           ]);
+                           setIsCopied(true);
+                           setTimeout(() => setIsCopied(false), 2000);
+                         } catch {
+                           try {
+                             await navigator.clipboard.writeText(selectedDoc?.content || '');
+                             setIsCopied(true);
+                             setTimeout(() => setIsCopied(false), 2000);
+                           } catch {}
+                         }
+                       }}
+                       className="px-3 py-1.5 rounded-hx-radius-sm border border-hx-border bg-transparent text-hx-text-secondary text-[13px] font-medium cursor-pointer hover:bg-hx-bg-hover hover:text-hx-text-primary transition-colors flex items-center gap-1.5"
+                     >
+                       {isCopied ? <><Check size={14} className="text-green-500" /> 已复制</> : <><ClipboardCopy size={14} /> 复制</>}
                      </button>
                      
                      <div className="relative">

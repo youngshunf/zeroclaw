@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
@@ -10,67 +10,9 @@ export interface MarkdownPreviewProps {
 }
 
 const MarkdownPreview = React.memo(({ content }: MarkdownPreviewProps) => {
-  const [copied, setCopied] = useState(false);
-  const contentRef = React.useRef<HTMLDivElement>(null);
-
-  // 复制整篇文档为富文本（保留格式）
-  const handleCopyRichText = useCallback(async () => {
-    const el = contentRef.current;
-    if (!el) return;
-    try {
-      // 获取渲染后的 HTML 作为富文本
-      const html = el.innerHTML;
-      const plainText = el.innerText;
-      
-      const blob = new Blob([html], { type: 'text/html' });
-      const textBlob = new Blob([plainText], { type: 'text/plain' });
-      
-      await navigator.clipboard.write([
-        new ClipboardItem({
-          'text/html': blob,
-          'text/plain': textBlob,
-        })
-      ]);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
-      console.error('Failed to copy rich text:', err);
-      // 降级：复制纯文本
-      try {
-        await navigator.clipboard.writeText(content);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-      } catch {}
-    }
-  }, [content]);
-
   return (
-    <div className="h-full overflow-y-auto px-4 py-4 scroll-smooth bg-hx-bg-main relative" data-tauri-drag-region="true">
-      {/* 浮动复制按钮 */}
-      <button
-        onClick={handleCopyRichText}
-        className="absolute top-3 right-5 z-20 px-2.5 py-1.5 rounded-md border border-hx-border bg-hx-bg-panel/80 backdrop-blur-sm text-hx-text-tertiary text-xs font-medium cursor-pointer hover:bg-hx-bg-hover hover:text-hx-text-primary transition-all flex items-center gap-1.5 opacity-0 hover:opacity-100 focus:opacity-100 group-hover:opacity-70"
-        style={{ opacity: copied ? 1 : undefined }}
-        title="复制为富文本"
-      >
-        {copied ? (
-          <>
-            <svg className="w-3.5 h-3.5 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-            </svg>
-            已复制
-          </>
-        ) : (
-          <>
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-            </svg>
-            复制文档
-          </>
-        )}
-      </button>
-
-      <div className="hx-markdown w-full min-h-full pb-[20vh] group" ref={contentRef}>
+    <div className="h-full overflow-y-auto px-4 py-4 scroll-smooth bg-hx-bg-main" data-tauri-drag-region="true">
+      <div className="hx-markdown w-full min-h-full pb-[20vh]">
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
           // @ts-ignore
