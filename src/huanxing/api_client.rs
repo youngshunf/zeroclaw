@@ -326,6 +326,27 @@ impl ApiClient {
         self.handle_response(resp, "POST", path).await
     }
 
+    /// POST multipart form with Owner Key auth.
+    pub async fn ownerkey_post_multipart(
+        &self,
+        owner_key: &str,
+        path: &str,
+        form: reqwest::multipart::Form,
+        query: &[(&str, &str)],
+    ) -> Result<Value> {
+        let url = format!("{}{}", self.base_url, path);
+        let resp = self
+            .client
+            .post(&url)
+            .headers(self.ownerkey_headers(owner_key))
+            .query(query)
+            .multipart(form)
+            .send()
+            .await
+            .with_context(|| format!("POST multipart {path}"))?;
+        self.handle_response(resp, "POST", path).await
+    }
+
     /// PUT with Owner Key auth.
     pub async fn ownerkey_put(
         &self,

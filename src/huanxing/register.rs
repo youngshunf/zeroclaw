@@ -87,6 +87,7 @@ pub fn huanxing_all_tools(
             api.clone(),
             hx_db.clone(),
             workspace_dir.to_path_buf(),
+            root_config.huanxing.owner_key.clone().unwrap_or_default(),
         ));
         tracing::info!(
             "HuanXing API tools registered (sms, quota, subscription, usage, file_upload, website_deploy)"
