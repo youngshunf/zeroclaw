@@ -18,6 +18,7 @@ const MAX_OUTPUT_BYTES: usize = 1_048_576;
 #[cfg(not(target_os = "windows"))]
 const SAFE_ENV_VARS: &[&str] = &[
     "PATH", "HOME", "TERM", "LANG", "LC_ALL", "LC_CTYPE", "USER", "SHELL", "TMPDIR",
+    "__CF_USER_TEXT_ENCODING", "LOGNAME", "PWD", "NVM_DIR", "NVM_BIN", "NODE_ENV", "NODE_PATH",
 ];
 
 /// Environment variables safe to pass to shell commands on Windows.
