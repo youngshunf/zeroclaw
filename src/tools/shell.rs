@@ -15,10 +15,69 @@ const MAX_OUTPUT_BYTES: usize = 1_048_576;
 
 /// Environment variables safe to pass to shell commands.
 /// Only functional variables are included — never API keys or secrets.
+/// Covers: POSIX basics, macOS CoreFoundation, Node.js (nvm/fnm),
+/// Python (pyenv/virtualenv/conda), Homebrew, curl/SSL, Git, XDG.
 #[cfg(not(target_os = "windows"))]
 const SAFE_ENV_VARS: &[&str] = &[
-    "PATH", "HOME", "TERM", "LANG", "LC_ALL", "LC_CTYPE", "USER", "SHELL", "TMPDIR",
-    "__CF_USER_TEXT_ENCODING", "LOGNAME", "PWD", "NVM_DIR", "NVM_BIN", "NODE_ENV", "NODE_PATH",
+    // ── POSIX / shell basics ──
+    "PATH", "HOME", "TERM", "LANG", "LC_ALL", "LC_CTYPE", "LC_MESSAGES",
+    "USER", "LOGNAME", "SHELL", "TMPDIR", "PWD", "OLDPWD", "SHLVL",
+    "COMMAND_MODE", "COLUMNS", "LINES",
+    // ── macOS CoreFoundation (prevents Node.js Segfault 11) ──
+    "__CF_USER_TEXT_ENCODING", "__CFBundleIdentifier", "MallocNanoZone",
+    // ── XDG dirs ──
+    "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME",
+    "XDG_RUNTIME_DIR",
+    // ── Node.js / nvm / fnm ──
+    "NVM_DIR", "NVM_BIN", "NVM_INC", "NVM_CD_FLAGS",
+    "FNM_DIR", "FNM_MULTISHELL_PATH", "FNM_NODE_DIST_MIRROR",
+    "NODE_ENV", "NODE_PATH", "NODE_OPTIONS", "NPM_CONFIG_PREFIX",
+    // ── Python / pyenv / virtualenv / conda ──
+    "PYENV_ROOT", "PYENV_SHELL", "PYENV_VERSION",
+    "VIRTUAL_ENV", "VIRTUALENVWRAPPER_PYTHON", "PIPENV_ACTIVE",
+    "CONDA_DEFAULT_ENV", "CONDA_PREFIX", "CONDA_EXE", "CONDA_PYTHON_EXE",
+    "PYTHONDONTWRITEBYTECODE", "PYTHONUNBUFFERED", "PYTHONPATH",
+    "PYTHONIOENCODING", "PIP_DISABLE_PIP_VERSION_CHECK",
+    // ── Homebrew ──
+    "HOMEBREW_PREFIX", "HOMEBREW_CELLAR", "HOMEBREW_REPOSITORY",
+    "HOMEBREW_NO_AUTO_UPDATE", "HOMEBREW_NO_ANALYTICS",
+    // ── curl / SSL / TLS ──
+    "CURL_CA_BUNDLE", "SSL_CERT_FILE", "SSL_CERT_DIR",
+    "REQUESTS_CA_BUNDLE", "NODE_EXTRA_CA_CERTS",
+    // ── Git ──
+    "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL",
+    "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL",
+    "GIT_EDITOR", "GIT_PAGER",
+    // ── Rust / Cargo ──
+    "CARGO_HOME", "RUSTUP_HOME",
+    // ── Go ──
+    "GOPATH", "GOROOT", "GOBIN",
+    // ── SSH (agent socket only, not keys) ──
+    "SSH_AUTH_SOCK",
+    // ── macOS SDK / compilation ──
+    "SDKROOT", "MACOSX_DEPLOYMENT_TARGET", "DEVELOPER_DIR",
+    "CPATH", "LIBRARY_PATH", "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH",
+    "PKG_CONFIG_PATH",
+];
+
+/// Well-known directories where developer tools are installed on macOS/Linux.
+/// The shell tool appends any existing ones to PATH so that commands like
+/// `python3`, `npm`, `curl`, `git`, `brew` work even when ZeroClaw is launched
+/// as a Tauri sidecar with a minimal Launch Services PATH.
+#[cfg(not(target_os = "windows"))]
+const EXTRA_PATH_DIRS: &[&str] = &[
+    "/usr/local/bin",
+    "/usr/local/sbin",
+    "/opt/homebrew/bin",
+    "/opt/homebrew/sbin",
+    // common version-manager shim dirs (expanded at runtime via $HOME)
+    ".pyenv/shims",
+    ".pyenv/bin",
+    ".nvm/current/bin",
+    ".fnm/current/bin",
+    ".local/bin",
+    ".cargo/bin",
+    "go/bin",
 ];
 
 /// Environment variables safe to pass to shell commands on Windows.
@@ -187,6 +246,32 @@ impl Tool for ShellTool {
             if let Ok(val) = std::env::var(&var) {
                 cmd.env(&var, val);
             }
+        }
+
+        // Enrich PATH with well-known developer-tool directories so that
+        // python3, npm, curl, git, brew, etc. are reachable even when the
+        // process was launched from a minimal macOS Launch Services env.
+        #[cfg(not(target_os = "windows"))]
+        {
+            let current_path = std::env::var("PATH").unwrap_or_default();
+            let home = std::env::var("HOME").unwrap_or_default();
+            let mut enriched = current_path.clone();
+            for extra in EXTRA_PATH_DIRS {
+                let resolved = if extra.starts_with('/') {
+                    (*extra).to_string()
+                } else if !home.is_empty() {
+                    format!("{home}/{extra}")
+                } else {
+                    continue;
+                };
+                if std::path::Path::new(&resolved).is_dir()
+                    && !current_path.split(':').any(|p| p == resolved)
+                {
+                    enriched.push(':');
+                    enriched.push_str(&resolved);
+                }
+            }
+            cmd.env("PATH", &enriched);
         }
 
         let timeout_secs = self.timeout_secs;
