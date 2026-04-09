@@ -1845,14 +1845,21 @@ pub struct HxFileUpload {
     api: ApiClient,
     db: super::db::TenantDb,
     workspace_dir: std::path::PathBuf,
+    owner_key: String,
 }
 
 impl HxFileUpload {
-    pub fn new(api: ApiClient, db: super::db::TenantDb, workspace_dir: std::path::PathBuf) -> Self {
+    pub fn new(
+        api: ApiClient,
+        db: super::db::TenantDb,
+        workspace_dir: std::path::PathBuf,
+        owner_key: String,
+    ) -> Self {
         Self {
             api,
             db,
             workspace_dir,
+            owner_key,
         }
     }
 }
@@ -1892,19 +1899,6 @@ impl Tool for HxFileUpload {
             });
         }
 
-        let agent_id = self
-            .workspace_dir
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or_default()
-            .to_string();
-
-        // 自动从数据库获取 user_id
-        let user_id = match self.db.find_by_agent_id(&agent_id).await {
-            Ok(Some(user)) => user.user_id,
-            _ => agent_id.clone(), // 退回使用 agent_id 避免上传失败
-        };
-
         let path = std::path::Path::new(file_path);
         if !path.exists() || !path.is_file() {
             return Ok(ToolResult {
@@ -1937,10 +1931,11 @@ impl Tool for HxFileUpload {
 
         match self
             .api
-            .agent_post_multipart(
-                "/api/v1/huanxing/agent/files/upload",
+            .ownerkey_post_multipart(
+                &self.owner_key,
+                "/api/v1/huanxing/user/files/upload",
                 form,
-                &[("user_id", &user_id)],
+                &[("unused", "param")],
             )
             .await
         {
@@ -1975,14 +1970,16 @@ pub struct HxDeployWebsite {
     api: ApiClient,
     workspace_dir: std::path::PathBuf,
     db: TenantDb,
+    owner_key: String,
 }
 
 impl HxDeployWebsite {
-    pub fn new(api: ApiClient, workspace_dir: std::path::PathBuf, db: TenantDb) -> Self {
+    pub fn new(api: ApiClient, workspace_dir: std::path::PathBuf, db: TenantDb, owner_key: String) -> Self {
         Self {
             api,
             workspace_dir,
             db,
+            owner_key,
         }
     }
 }
@@ -2027,87 +2024,6 @@ impl Tool for HxDeployWebsite {
             });
         }
 
-        let agent_id = self
-            .workspace_dir
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or_default()
-            .to_string();
-
-        // 自动从数据库获取 user_id
-        let user_id = match self.db.find_by_agent_id(&agent_id).await {
-            Ok(Some(user)) => user.user_id,
-            _ => agent_id.clone(), // 退回使用 agent_id 避免上传失败
-        };
-
-        let path = std::path::Path::new(dir_path);
-        if !path.exists() || !path.is_dir() {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!("目标目录不存在或不是有效的文件夹: {}", dir_path)),
-            });
-        }
-
-        // 检查是否包含 index.html
-        if !path.join("index.html").exists() {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("该目录不包含 index.html，不能作为网站部署".to_string()),
-            });
-        }
-
-        // 将目录内容打包为 ZIP
-        let temp_dir = std::env::temp_dir();
-        let zip_filename = format!("deploy_{}_{}.zip", user_id, uuid::Uuid::new_v4().simple());
-        let zip_path = temp_dir.join(&zip_filename);
-
-        // 使用系统 zip 命令进行目录压缩 (cd dir_path && zip -r temp_zip_path .)
-        let zip_cmd = tokio::process::Command::new("zip")
-            .current_dir(path)
-            .arg("-r")
-            .arg(&zip_path)
-            .arg(".")
-            .output()
-            .await;
-
-        match zip_cmd {
-            Ok(out) if !out.status.success() => {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(format!(
-                        "压缩网站文件失败: {}",
-                        String::from_utf8_lossy(&out.stderr)
-                    )),
-                });
-            }
-            Err(e) => {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(format!("调用 zip 命令失败: {}", e)),
-                });
-            }
-            _ => {}
-        }
-
-        let contents = match tokio::fs::read(&zip_path).await {
-            Ok(bytes) => bytes,
-            Err(e) => {
-                let _ = tokio::fs::remove_file(&zip_path).await;
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(format!("读取压缩文件失败: {}", e)),
-                });
-            }
-        };
-
-        // 清理临时文件
-        let _ = tokio::fs::remove_file(&zip_path).await;
-
         let part = reqwest::multipart::Part::bytes(contents).file_name(zip_filename);
 
         let form = reqwest::multipart::Form::new()
@@ -2116,10 +2032,11 @@ impl Tool for HxDeployWebsite {
 
         match self
             .api
-            .agent_post_multipart(
-                "/api/v1/huanxing/agent/website/deploy",
+            .ownerkey_post_multipart(
+                &self.owner_key,
+                "/api/v1/huanxing/user/website/deploy",
                 form,
-                &[("user_id", &user_id)],
+                &[("unused", "param")],
             )
             .await
         {
@@ -2150,6 +2067,7 @@ pub fn huanxing_api_tools(
     api: ApiClient,
     db: TenantDb,
     workspace_dir: std::path::PathBuf,
+    owner_key: String,
 ) -> Vec<Arc<dyn Tool>> {
     vec![
         Arc::new(HxSendSms::new(api.clone())),
@@ -2161,11 +2079,13 @@ pub fn huanxing_api_tools(
             api.clone(),
             db.clone(),
             workspace_dir.clone(),
+            owner_key.clone(),
         )),
         Arc::new(HxDeployWebsite::new(
             api.clone(),
             workspace_dir.clone(),
             db.clone(),
+            owner_key.clone(),
         )),
     ]
 }
