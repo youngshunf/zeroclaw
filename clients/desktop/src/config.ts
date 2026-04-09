@@ -54,6 +54,7 @@ export interface HuanxingLoginData {
   refresh_token_expire_time: string;
   llm_token: string;
   hasn_node_key?: string;
+  hasn_node_id?: string;
   owner_key?: string;
   agent_key: string;
   gateway_token: string;

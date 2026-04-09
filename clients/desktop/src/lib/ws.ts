@@ -20,11 +20,13 @@ export type ConnectionStatusHandler = (status: 'connected' | 'disconnected' | 'c
 // ---------------------------------------------------------------------------
 
 const DEFAULT_RECONNECT_DELAY = 1000;
+const PING_INTERVAL_MS = 15_000;
 const MAX_RECONNECT_DELAY = 30000;
 
 export class WsMultiplexer {
   private ws: WebSocket | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private pingTimer: ReturnType<typeof setInterval> | null = null;
   private intentionallyClosed = false;
   private currentDelay = DEFAULT_RECONNECT_DELAY;
 
@@ -87,6 +89,7 @@ export class WsMultiplexer {
   disconnect(): void {
     this.intentionallyClosed = true;
     this._clearTimer();
+    this._stopPing();
     this.ws?.close();
     this.ws = null;
     this.onStatusChange?.('disconnected');
@@ -118,6 +121,7 @@ export class WsMultiplexer {
 
     this.ws.onopen = () => {
       this.currentDelay = DEFAULT_RECONNECT_DELAY;
+      this._startPing();
       this.onStatusChange?.('connected');
     };
 
@@ -131,6 +135,7 @@ export class WsMultiplexer {
     };
 
     this.ws.onclose = () => {
+      this._stopPing();
       this.onStatusChange?.('disconnected');
       if (!this.intentionallyClosed) this._scheduleReconnect();
     };
@@ -168,6 +173,24 @@ export class WsMultiplexer {
     if (this.reconnectTimer !== null) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
+    }
+  }
+
+  /** 启动客户端心跳 — 每 15 秒发送 {"type":"ping"} */
+  private _startPing(): void {
+    this._stopPing();
+    this.pingTimer = setInterval(() => {
+      if (this.ws?.readyState === WebSocket.OPEN) {
+        this.ws.send(JSON.stringify({ type: 'ping' }));
+      }
+    }, PING_INTERVAL_MS);
+  }
+
+  /** 停止客户端心跳 */
+  private _stopPing(): void {
+    if (this.pingTimer !== null) {
+      clearInterval(this.pingTimer);
+      this.pingTimer = null;
     }
   }
 

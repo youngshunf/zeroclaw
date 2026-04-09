@@ -32,7 +32,7 @@
    }
    
    .hx-conv-avatar {
-     @apply w-10 h-10 min-w-[40px] rounded-hx-radius-md flex items-center justify-center text-base relative bg-gradient-to-br from-[#E0E7FF] to-[#EDE9FE] text-hx-purple font-semibold;
+     @apply w-10 h-10 min-w-[40px] rounded-hx-radius-md overflow-hidden flex items-center justify-center text-base relative bg-gradient-to-br from-[#E0E7FF] to-[#EDE9FE] text-hx-purple font-semibold;
    }
    
    .dark .hx-conv-avatar {

@@ -161,9 +161,15 @@ pub async fn hasn_status() -> impl IntoResponse {
     let connected = connector.is_connected().await;
     let node_id = connector.get_node_id().await;
 
+    // 附加设备指纹信息（由 bootstrap 初始化）
+    let fp = crate::huanxing::device_fingerprint::get_global_fingerprint();
+
     Json(serde_json::json!({
         "connected": connected,
         "node_id": node_id,
+        "device_fingerprint": fp.map(|f| f.fingerprint.as_str()),
+        "node_name": fp.map(|f| f.node_name.as_str()),
+        "device_platform": fp.map(|f| f.device_platform.as_str()),
     }))
 }
 

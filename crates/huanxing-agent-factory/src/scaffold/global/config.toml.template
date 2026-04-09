@@ -95,16 +95,16 @@ sensitivity = 0.5
 enabled = true
 provider = "searxng"
 searxng_instance_url = "https://searxng.dcfuture.cn"
-api_url = "https://firecrawl.dcfuture.cn" # Used internally if Firecrawl API is invoked directly
-fallback_providers = [ "firecrawl", "duckduckgo" ]
+fallback_providers = [ "duckduckgo" ]
 
 [web_fetch]
 enabled = true
 
-[web_fetch.firecrawl]
+# Jina Reader：无需部署，直接将 URL 转为干净 Markdown（免费，20次/分钟）
+[web_fetch.jina]
 enabled = true
-api_url = "https://firecrawl.dcfuture.cn/v1"
-api_key_env = "FIRECRAWL_API_KEY"
+api_url = "https://r.jina.ai"
+# api_key = "jina_xxx"  # 可选：注册 jina.ai 后填入，提升至 200次/分钟
 
 [browser]
 enabled = true
@@ -228,7 +228,7 @@ enabled = false
 enabled = false
 
 [knowledge]
-enabled = false
+enabled = true
 
 [scheduler]
 enabled = true

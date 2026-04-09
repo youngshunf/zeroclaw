@@ -21,6 +21,16 @@ import {
 import { resolveApiUrl } from '@/config';
 import { Input } from '@/components/ui/Input';
 import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogFooter,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogAction,
+  AlertDialogCancel,
+} from '@/components/ui/AlertDialog';
+import {
   listSessions,
   createSession,
   deleteSession,
@@ -91,6 +101,7 @@ export default function SessionList({
   const [editTitle, setEditTitle] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [collapsedAgents, setCollapsedAgents] = useState<Set<string>>(new Set());
+  const [deleteConfirm, setDeleteConfirm] = useState<{ open: boolean; sessionId: string | null }>({ open: false, sessionId: null });
   const editInputRef = useRef<HTMLInputElement>(null);
 
   const loadSessions = useCallback(async () => {
@@ -129,9 +140,15 @@ export default function SessionList({
     }
   };
 
-  const handleDelete = async (e: React.MouseEvent, sessionId: string) => {
+  const handleDeleteClick = (e: React.MouseEvent, sessionId: string) => {
     e.stopPropagation();
-    if (!confirm('确定删除这个对话吗？')) return;
+    setDeleteConfirm({ open: true, sessionId });
+  };
+
+  const handleDeleteConfirm = async () => {
+    const sessionId = deleteConfirm.sessionId;
+    setDeleteConfirm({ open: false, sessionId: null });
+    if (!sessionId) return;
     try {
       await deleteSession(sessionId);
       setSessions((prev) => prev.filter((s) => s.id !== sessionId));
@@ -179,7 +196,7 @@ export default function SessionList({
 
   /** Get icon url for an agent */
   const getAgentIcon = (agentNameOrId: string) => {
-    if (!agentNameOrId || agentNameOrId === 'default') return null;
+    if (!agentNameOrId) return null;
     const found = agents?.find(a => a.name === agentNameOrId);
     return resolveApiUrl(found?.icon_url) || null;
   };
@@ -375,7 +392,7 @@ export default function SessionList({
                         color: getAgentColor(session.agent_id),
                       }}>
                         {getAgentIcon(session.agent_id) ? (
-                          <img src={getAgentIcon(session.agent_id)!} alt="agent" className="w-full h-full object-cover rounded-inherit" />
+                          <img src={getAgentIcon(session.agent_id)!} alt="agent" className="w-full h-full object-cover rounded-[inherit]" />
                         ) : (
                           <Bot className="w-[18px] h-[18px]" />
                         )}
@@ -437,7 +454,7 @@ export default function SessionList({
                             <button onClick={(e) => handleStartRename(e, session)} title="重命名">
                               <Pencil size={13} />
                             </button>
-                            <button onClick={(e) => handleDelete(e, session.id)} title="删除">
+                            <button onClick={(e) => handleDeleteClick(e, session.id)} title="删除">
                               <Trash2 size={13} />
                             </button>
                           </div>
@@ -452,6 +469,23 @@ export default function SessionList({
         )}
       </div>
 
+      {/* 删除确认对话框 */}
+      <AlertDialog open={deleteConfirm.open} onOpenChange={(open) => !open && setDeleteConfirm({ open: false, sessionId: null })}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>删除对话</AlertDialogTitle>
+            <AlertDialogDescription>
+              确定要删除这个对话吗？删除后将无法恢复。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeleteConfirm} className="hx-btn hx-btn-danger">
+              删除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

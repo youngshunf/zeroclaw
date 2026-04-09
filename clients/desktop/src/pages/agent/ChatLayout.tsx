@@ -22,6 +22,7 @@ import { Markdown } from '@/components/markdown';
 import { HxImageMessage, containsImageMarkers } from '@/components/chat/HxImageMessage';
 import { useUrlHandler } from '@/hooks/useUrlHandler';
 import { StreamingBubble } from '@/components/chat/StreamingBubble';
+import { ProgressPanel } from '@/components/chat/ProgressPanel';
 import { getHuanxingSession, resolveApiUrl } from '@/config';
 import { usePlatform } from '@/hooks/usePlatform';
 
@@ -32,6 +33,7 @@ interface ChatMessage {
   role: 'user' | 'agent';
   content: string;
   timestamp: Date;
+  progressLines?: string[];
 }
 
 let msgCounter = 0;
@@ -43,8 +45,6 @@ function makeId(): string {
 // ── 常量 ──────────────────────────────────────────────────────────
 /** 页面加载时最多自动连接的会话数（按最近活跃排序） */
 const MAX_AUTO_CONNECT = 20;
-/** 心跳间隔（毫秒） */
-const HEARTBEAT_INTERVAL_MS = 30_000;
 
 export default function ChatLayout() {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -121,6 +121,7 @@ export default function ChatLayout() {
   /** 最后一条消息预览（用于会话列表） */
   const [lastMessages, setLastMessages] = useState(new Map<string, string>());
   const pendingContentRef = useRef(new Map<string, string>());
+  const progressLinesRef = useRef(new Map<string, string[]>());
   const [streamingContent, setStreamingContent] = useState(new Map<string, string>());
   const [progressLines, setProgressLines] = useState(new Map<string, string[]>());
   /** 各会话标题缓存 */
@@ -238,6 +239,7 @@ export default function ChatLayout() {
         setTypingMap(prev => new Map(prev).set(sessionId, false));
         pendingContentRef.current.set(sessionId, '');
         setStreamingContent(prev => new Map(prev).set(sessionId, ''));
+        progressLinesRef.current.set(sessionId, []);
         setProgressLines(prev => new Map(prev).set(sessionId, []));
         // 更新最后消息预览
         if (restored.length > 0) {
@@ -258,6 +260,7 @@ export default function ChatLayout() {
         setTypingMap(prev => new Map(prev).set(sessionId, true));
         setProgressLines(prev => {
           const lines = [...(prev.get(sessionId) ?? []), msg.content ?? ''];
+          progressLinesRef.current.set(sessionId, lines);
           return new Map(prev).set(sessionId, lines);
         });
         break;
@@ -267,11 +270,49 @@ export default function ChatLayout() {
         setProgressLines(prev => {
           const blockContent = msg.content ?? '';
           const lines = blockContent.split('\n').filter((l: string) => l.trim());
+          progressLinesRef.current.set(sessionId, lines);
+          return new Map(prev).set(sessionId, lines);
+        });
+        break;
+      }
+      case 'thinking': {
+        // 思考过程作为 progress 展示
+        setTypingMap(prev => new Map(prev).set(sessionId, true));
+        if (msg.content) {
+          setProgressLines(prev => {
+            const lines = [...(prev.get(sessionId) ?? [])];
+            const thinkingLines = msg.content!.split('\n').filter((l: string) => l.trim());
+            const merged = [...lines, ...thinkingLines];
+            progressLinesRef.current.set(sessionId, merged);
+            return new Map(prev).set(sessionId, merged);
+          });
+        }
+        break;
+      }
+      case 'tool_call': {
+        setTypingMap(prev => new Map(prev).set(sessionId, true));
+        const toolName = msg.display_name || msg.name || '工具';
+        setProgressLines(prev => {
+          const lines = [...(prev.get(sessionId) ?? [])];
+          lines.push(`🔧 调用工具: ${toolName}`);
+          progressLinesRef.current.set(sessionId, lines);
+          return new Map(prev).set(sessionId, lines);
+        });
+        break;
+      }
+      case 'tool_result': {
+        setTypingMap(prev => new Map(prev).set(sessionId, true));
+        const status = msg.status === 'error' ? '❌' : '✅';
+        setProgressLines(prev => {
+          const lines = [...(prev.get(sessionId) ?? [])];
+          lines.push(`${status} 工具执行完成`);
+          progressLinesRef.current.set(sessionId, lines);
           return new Map(prev).set(sessionId, lines);
         });
         break;
       }
       case 'progress_clear': {
+        progressLinesRef.current.set(sessionId, []);
         setProgressLines(prev => new Map(prev).set(sessionId, []));
         break;
       }
@@ -280,15 +321,32 @@ export default function ChatLayout() {
         const pending = pendingContentRef.current.get(sessionId) ?? '';
         const content = (msg.full_response ?? msg.content ?? pending).trim();
         const finalContent = content || '(工具执行完成，无文本输出)';
-        setHistories(prev => {
-          const h = [...(prev.get(sessionId) ?? [])];
-          h.push({ id: makeId(), role: 'agent', content: finalContent, timestamp: new Date() });
-          return new Map(prev).set(sessionId, h);
+        
+        // 优先使用后端携带的完整 progress_lines（数据已持久化），
+        // 如果后端没有返回则 fallback 到本地累积的
+        const backendProgress: string[] | undefined = (msg as any).progress_lines;
+        const savedProgress = backendProgress && backendProgress.length > 0
+          ? backendProgress
+          : [...(progressLinesRef.current.get(sessionId) ?? [])];
+        
+        setHistories(hPrev => {
+          const h = [...(hPrev.get(sessionId) ?? [])];
+          h.push({ 
+            id: makeId(), 
+            role: 'agent', 
+            content: finalContent, 
+            timestamp: new Date(),
+            progressLines: savedProgress.length > 0 ? savedProgress : undefined
+          });
+          return new Map(hPrev).set(sessionId, h);
         });
+
+        progressLinesRef.current.set(sessionId, []);
+        setProgressLines(prev => new Map(prev).set(sessionId, []));
+
         pendingContentRef.current.set(sessionId, '');
         setTypingMap(prev => new Map(prev).set(sessionId, false));
         setStreamingContent(prev => new Map(prev).set(sessionId, ''));
-        setProgressLines(prev => new Map(prev).set(sessionId, []));
         // 未读计数：非当前活跃会话 +1
         if (activeSessionIdRef.current !== sessionId) {
           setUnreadCounts(prev => {
@@ -332,6 +390,7 @@ export default function ChatLayout() {
         setTypingMap(prev => new Map(prev).set(sessionId, false));
         pendingContentRef.current.set(sessionId, '');
         setStreamingContent(prev => new Map(prev).set(sessionId, ''));
+        progressLinesRef.current.set(sessionId, []);
         setProgressLines(prev => new Map(prev).set(sessionId, []));
         break;
       }
@@ -443,6 +502,28 @@ export default function ChatLayout() {
           setConnectedMap(prev => new Map(prev).set(sessionId, true));
           wsMultiplexer.requestHistory(sessionId, sessionAgentRef.current.get(sessionId));
         }
+        // 重连恢复：清理卡死在 typing 状态的 session
+        setTypingMap(prev => {
+          const next = new Map(prev);
+          for (const [sid, typing] of next) {
+            if (typing) {
+              next.set(sid, false);
+              pendingContentRef.current.set(sid, '');
+              progressLinesRef.current.set(sid, []);
+            }
+          }
+          return next;
+        });
+        setStreamingContent(prev => {
+          const next = new Map(prev);
+          for (const [sid] of next) next.set(sid, '');
+          return next;
+        });
+        setProgressLines(prev => {
+          const next = new Map(prev);
+          for (const [sid] of next) next.set(sid, []);
+          return next;
+        });
       } else if (status === 'disconnected') {
         for (const sessionId of subscribersRef.current.keys()) {
           connectedSessionsRef.current.delete(sessionId);
@@ -454,16 +535,7 @@ export default function ChatLayout() {
     return () => { wsMultiplexer.onStatusChange = null; };
   }, []);
 
-  // ── 心跳保活：定期 ping（multiplexer 层自动重连，此处只发心跳） ──
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (wsMultiplexer.connected) {
-        // multiplexer 没有广播 API，心跳由连接层内部维护
-        // 此处保留 interval 供未来扩展
-      }
-    }, HEARTBEAT_INTERVAL_MS);
-    return () => clearInterval(interval);
-  }, []);
+  // 心跳已移入 WsMultiplexer 内部（每 15 秒自动 ping），不再需要外部 interval
 
   const handleSelectSession = useCallback((sessionId: string, agentId?: string) => {
     setActiveSessionId(sessionId);
@@ -480,6 +552,8 @@ export default function ChatLayout() {
     connectSession(sessionId, agentId);
     setActiveSessionId(sessionId);
     if (agentId) setActiveAgent(agentId);
+    // 刷新会话列表，确保新会话立即显示在左侧 sidebar
+    setReloadKey(k => k + 1);
   }, [connectSession, setActiveAgent]);
 
   const handleDeleteSession = useCallback((sessionId: string) => {
@@ -690,7 +764,12 @@ export default function ChatLayout() {
                       <p style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{msg.content}</p>
                     )
                   ) : (
-                    <Markdown mode="minimal" onUrlClick={handleUrlClick}>{msg.content}</Markdown>
+                    <>
+                      {msg.progressLines && msg.progressLines.length > 0 && (
+                        <ProgressPanel lines={msg.progressLines} isFinished={true} />
+                      )}
+                      <Markdown mode="minimal" onUrlClick={handleUrlClick}>{msg.content}</Markdown>
+                    </>
                   )}
                 </div>
                 <span className="hx-msg-time">{msg.timestamp.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span>
@@ -703,7 +782,8 @@ export default function ChatLayout() {
               content={currentStreamingContent}
               progressLines={currentProgressLines}
               isStreaming={true}
-              agentName={activeAgent ?? undefined}
+              agentName={activeAgentDisplayName ?? activeAgent ?? undefined}
+              agentIconUrl={activeAgentInfo?.icon_url ? resolveApiUrl(activeAgentInfo.icon_url) : undefined}
               onUrlClick={handleUrlClick}
             />
           ) : currentTyping ? (

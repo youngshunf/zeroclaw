@@ -58,6 +58,8 @@ enum InboundFrame {
         #[serde(default)]
         capabilities: Vec<String>,
     },
+    /// 心跳 ping
+    Ping,
 }
 
 /// 单连接内一个 session 的状态
@@ -327,6 +329,11 @@ async fn handle_socket(socket: WebSocket, state: AppState, default_session_id: O
                     serde_json::json!({"type": "connected", "message": "Connection established"});
                 let _ = sender.send(Message::Text(ack.to_string().into())).await;
             }
+
+            InboundFrame::Ping => {
+                let pong = serde_json::json!({"type": "pong"});
+                let _ = sender.send(Message::Text(pong.to_string().into())).await;
+            }
         }
     }
 }
@@ -447,6 +454,9 @@ async fn init_agent_session(
 }
 
 /// 处理单条消息并回复，所有出站帧携带 session_id
+///
+/// 使用 `turn_streamed` 实现流式输出：LLM 生成的每个 chunk 都会立即
+/// 通过 WebSocket 发送给前端，而不是等整个回复生成完毕。
 async fn process_chat_message(
     state: &AppState,
     session: &mut AgentSession,
@@ -468,9 +478,190 @@ async fn process_chat_message(
         "model": state.model,
     }));
 
-    match session.agent.turn(content).await {
+    // ── 使用 turn_streamed 实现流式输出 ──────────────────────────
+    let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<crate::agent::TurnEvent>(64);
+    let session_id_owned = session_id.to_string();
+    let agent_id = session.agent_id.clone();
+
+    // 在后台 task 中运行 turn_streamed
+    let turn_handle = {
+        // SAFETY: 我们需要 &mut Agent，但 tokio::spawn 要求 'static。
+        // 这里用 unsafe 延长生命周期——实际上我们会在 handle.await 后再访问 session，
+        // 所以不存在数据竞争。
+        //
+        // 但为了避免 unsafe，改用 tokio::task::spawn_blocking 是不行的（Agent 不是 Send）。
+        // 更好的做法是在当前 task 中交替 poll turn_streamed future 和 relay events。
+        //
+        // 实际上，最安全的做法是直接在当前 async 上下文中驱动 turn_streamed，
+        // 并用 select! 同时处理 event_rx。但 turn_streamed 需要 &mut self，
+        // 所以我们不能同时 borrow session 和 sender。
+        //
+        // 最终方案：直接在 select! 中同时驱动 turn future 和 relay events。
+        event_tx
+    };
+
+    // 使用 pin! 来 pin future，这样可以在 select! 中重复 poll
+    let turn_future = session.agent.turn_streamed(content, turn_handle);
+    tokio::pin!(turn_future);
+
+    let mut tool_call_counter = 0u32;
+    let mut turn_result: Option<Result<String, anyhow::Error>> = None;
+    let mut progress_lines: Vec<String> = Vec::new();
+
+    let mut ping_interval = tokio::time::interval(std::time::Duration::from_secs(15));
+    ping_interval.tick().await; // consume the first immediate tick
+
+    loop {
+        tokio::select! {
+            // Send periodic WebSocket Ping to keep proxy/load balancer connection alive
+            _ = ping_interval.tick() => {
+                let _ = sender.send(Message::Ping(vec![].into())).await;
+            }
+            // Poll turn_streamed future
+            result = &mut turn_future, if turn_result.is_none() => {
+                turn_result = Some(result);
+            }
+            // Relay events to WebSocket
+            event = event_rx.recv() => {
+                match event {
+                    Some(crate::agent::TurnEvent::Chunk { delta }) => {
+                        let frame = serde_json::json!({
+                            "type": "chunk",
+                            "agent": agent_id,
+                            "session_id": session_id_owned,
+                            "content": delta,
+                        });
+                        let _ = sender.send(Message::Text(frame.to_string().into())).await;
+                    }
+                    Some(crate::agent::TurnEvent::Thinking { delta }) => {
+                        // 累积思考内容到 progress_lines
+                        for line in delta.lines() {
+                            let trimmed = line.trim();
+                            if !trimmed.is_empty() {
+                                progress_lines.push(trimmed.to_string());
+                            }
+                        }
+                        let frame = serde_json::json!({
+                            "type": "thinking",
+                            "agent": agent_id,
+                            "session_id": session_id_owned,
+                            "content": delta,
+                        });
+                        let _ = sender.send(Message::Text(frame.to_string().into())).await;
+                    }
+                    Some(crate::agent::TurnEvent::ToolCall { name, args }) => {
+                        let call_id = format!("c{tool_call_counter}_{name}");
+                        tool_call_counter += 1;
+                        progress_lines.push(format!("\u{1f527} 调用工具: {name}"));
+                        let frame = serde_json::json!({
+                            "type": "tool_call",
+                            "agent": agent_id,
+                            "session_id": session_id_owned,
+                            "call_id": call_id,
+                            "name": name,
+                            "display_name": name,
+                            "args_preview": serde_json::to_string(&args).unwrap_or_default(),
+                        });
+                        let _ = sender.send(Message::Text(frame.to_string().into())).await;
+                    }
+                    Some(crate::agent::TurnEvent::ToolResult { name, output }) => {
+                        let call_id = format!("c{}_{name}", tool_call_counter.saturating_sub(1));
+                        let preview = if output.len() > 200 {
+                            format!("{}...", &output[..200])
+                        } else {
+                            output
+                        };
+                        progress_lines.push("\u{2705} 工具执行完成".to_string());
+                        let frame = serde_json::json!({
+                            "type": "tool_result",
+                            "agent": agent_id,
+                            "session_id": session_id_owned,
+                            "call_id": call_id,
+                            "status": "success",
+                            "output_preview": preview,
+                        });
+                        let _ = sender.send(Message::Text(frame.to_string().into())).await;
+                    }
+                    None => {
+                        // Channel closed — turn_streamed has completed and dropped tx
+                        break;
+                    }
+                }
+            }
+        }
+
+        // If turn completed AND channel is drained, break
+        if turn_result.is_some() && event_rx.is_empty() {
+            // Drain any remaining events
+            while let Ok(event) = event_rx.try_recv() {
+                match event {
+                    crate::agent::TurnEvent::Chunk { delta } => {
+                        let frame = serde_json::json!({
+                            "type": "chunk",
+                            "agent": agent_id,
+                            "session_id": session_id_owned,
+                            "content": delta,
+                        });
+                        let _ = sender.send(Message::Text(frame.to_string().into())).await;
+                    }
+                    crate::agent::TurnEvent::Thinking { delta } => {
+                        for line in delta.lines() {
+                            let trimmed = line.trim();
+                            if !trimmed.is_empty() {
+                                progress_lines.push(trimmed.to_string());
+                            }
+                        }
+                        let frame = serde_json::json!({
+                            "type": "thinking",
+                            "agent": agent_id,
+                            "session_id": session_id_owned,
+                            "content": delta,
+                        });
+                        let _ = sender.send(Message::Text(frame.to_string().into())).await;
+                    }
+                    crate::agent::TurnEvent::ToolCall { name, args } => {
+                        let call_id = format!("c{tool_call_counter}_{name}");
+                        tool_call_counter += 1;
+                        progress_lines.push(format!("\u{1f527} 调用工具: {name}"));
+                        let frame = serde_json::json!({
+                            "type": "tool_call",
+                            "agent": agent_id,
+                            "session_id": session_id_owned,
+                            "call_id": call_id,
+                            "name": name,
+                            "display_name": name,
+                            "args_preview": serde_json::to_string(&args).unwrap_or_default(),
+                        });
+                        let _ = sender.send(Message::Text(frame.to_string().into())).await;
+                    }
+                    crate::agent::TurnEvent::ToolResult { name, output } => {
+                        let call_id = format!("c{}_{name}", tool_call_counter.saturating_sub(1));
+                        let preview = if output.len() > 200 {
+                            format!("{}...", &output[..200])
+                        } else {
+                            output
+                        };
+                        progress_lines.push("\u{2705} 工具执行完成".to_string());
+                        let frame = serde_json::json!({
+                            "type": "tool_result",
+                            "agent": agent_id,
+                            "session_id": session_id_owned,
+                            "call_id": call_id,
+                            "status": "success",
+                            "output_preview": preview,
+                        });
+                        let _ = sender.send(Message::Text(frame.to_string().into())).await;
+                    }
+                }
+            }
+            break;
+        }
+    }
+
+    // ── 处理 turn 结果 ──────────────────────────────────────────
+    match turn_result.unwrap_or_else(|| Err(anyhow::anyhow!("turn was not completed"))) {
         Ok(response) => {
-            // Persist assistant reply — prefer per-session backend, fall back to global
+            // Persist assistant reply
             {
                 let backend = session
                     .session_backend
@@ -482,52 +673,12 @@ async fn process_chat_message(
                 }
             }
 
-            // Emit tool_call / tool_result frames collected by the observer
-            // during this turn.  The WsObserver implements the upstream
-            // Observer trait; we downcast via `as_any()` to access the
-            // huanxing-specific `take_records()` method.
-            // Emit tool_call / tool_result frames collected by WsObserver
-            if let Some(ref obs) = session.ws_observer {
-                if let Some(ws_obs) = obs
-                    .as_any()
-                    .downcast_ref::<crate::huanxing::ws_observer::WsObserver>()
-                {
-                    let records = ws_obs.take_records();
-                    for (i, rec) in records.iter().enumerate() {
-                        let call_id = format!("c{i}_{}", rec.name);
-                        let tool_call = serde_json::json!({
-                            "type": "tool_call",
-                            "agent": session.agent_id,
-                            "session_id": session_id,
-                            "call_id": call_id,
-                            "name": rec.name,
-                            "display_name": rec.display_name,
-                            "args_preview": rec.args_preview,
-                        });
-                        let _ = sender
-                            .send(Message::Text(tool_call.to_string().into()))
-                            .await;
-
-                        let tool_result = serde_json::json!({
-                            "type": "tool_result",
-                            "agent": session.agent_id,
-                            "session_id": session_id,
-                            "call_id": call_id,
-                            "status": if rec.success { "success" } else { "error" },
-                            "duration_ms": rec.duration.as_millis(),
-                        });
-                        let _ = sender
-                            .send(Message::Text(tool_result.to_string().into()))
-                            .await;
-                    }
-                }
-            }
-
             let done = serde_json::json!({
                 "type": "done",
                 "agent": session.agent_id,
                 "session_id": session_id,
                 "full_response": response,
+                "progress_lines": progress_lines,
             });
             let _ = sender.send(Message::Text(done.to_string().into())).await;
 

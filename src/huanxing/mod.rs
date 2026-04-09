@@ -9,6 +9,7 @@ pub mod channel_registry;
 pub mod channels;
 pub mod config;
 pub mod db;
+pub mod device_fingerprint;
 pub mod doc_tools;
 pub mod hasn_api;
 pub mod hasn_connector;

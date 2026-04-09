@@ -125,11 +125,32 @@ export async function phoneLogin(
   phone: string,
   code: string,
 ): Promise<HuanxingLoginData> {
+  // 从本地 sidecar 获取设备指纹（启动时由 ZeroClaw 生成）
+  let deviceFingerprint: string | undefined;
+  let deviceName: string | undefined;
+  try {
+    const statusResp = await fetch(
+      `${HUANXING_CONFIG.sidecarBaseUrl}/api/v1/hasn/status`,
+    );
+    if (statusResp.ok) {
+      const statusData = await statusResp.json();
+      deviceFingerprint = statusData.device_fingerprint || undefined;
+      deviceName = statusData.node_name || undefined;
+    }
+  } catch {
+    // sidecar 不可达，降级为不传指纹（后端仍可正常工作）
+  }
+
   const resp = await request<{ data: HuanxingLoginData }>(
     '/api/v1/auth/phone-login',
     {
       method: 'POST',
-      body: JSON.stringify({ phone, code }),
+      body: JSON.stringify({
+        phone,
+        code,
+        device_fingerprint: deviceFingerprint,
+        device_name: deviceName,
+      }),
     },
   );
   return resp.data;

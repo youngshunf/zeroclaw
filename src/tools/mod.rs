@@ -573,8 +573,7 @@ pub fn all_tools_with_runtime(
     ) {
         tool_arcs.push(Arc::new(ReadSkillTool::new(
             workspace_dir.to_path_buf(),
-            root_config.skills.open_skills_enabled,
-            root_config.skills.open_skills_dir.clone(),
+            config.clone(),
         )));
     }
 

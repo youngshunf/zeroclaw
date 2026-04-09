@@ -4,7 +4,7 @@
 # ═══════════════════════════════════════════════════════════════
 
 # ── agent级独立配置 ──────────────────────────────
-display_name = "星枢"
+display_name = "星源"
 default_model = "{{default_model}}"
 default_temperature = 0.7
 

@@ -2,12 +2,12 @@ use super::traits::{Tool, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 /// Compact-mode helper for loading a skill's source file on demand.
 pub struct ReadSkillTool {
     workspace_dir: PathBuf,
-    open_skills_enabled: bool,
-    open_skills_dir: Option<String>,
+    config: Arc<crate::config::Config>,
     /// Global skills directory (Level 1 — platform-wide shared skills)
     global_skills_dir: Option<PathBuf>,
     /// User/tenant skills directory (Level 2 — user-shared skills)
@@ -17,13 +17,11 @@ pub struct ReadSkillTool {
 impl ReadSkillTool {
     pub fn new(
         workspace_dir: PathBuf,
-        open_skills_enabled: bool,
-        open_skills_dir: Option<String>,
+        config: Arc<crate::config::Config>,
     ) -> Self {
         Self {
             workspace_dir,
-            open_skills_enabled,
-            open_skills_dir,
+            config,
             global_skills_dir: None,
             user_skills_dir: None,
         }
@@ -83,34 +81,12 @@ impl Tool for ReadSkillTool {
             .clone()
             .or_else(crate::skills::get_active_user_skills_dir);
 
-        let skills = crate::skills::load_skills_with_open_skills_settings(
+        let all_skills = crate::skills::load_skills_cascaded(
+            global_dir.as_deref(),
+            user_dir.as_deref(),
             &self.workspace_dir,
-            self.open_skills_enabled,
-            self.open_skills_dir.as_deref(),
-            false,
+            &self.config,
         );
-        // Merge with global and user level skills (three-level cascade)
-        let all_skills = {
-            use std::collections::HashMap;
-            let mut map: HashMap<String, crate::skills::Skill> = HashMap::new();
-            // Level 1: global
-            if let Some(ref dir) = global_dir {
-                for s in crate::skills::load_skills_from_directory(dir, false) {
-                    map.insert(s.name.clone(), s);
-                }
-            }
-            // Level 2: user
-            if let Some(ref dir) = user_dir {
-                for s in crate::skills::load_skills_from_directory(dir, false) {
-                    map.insert(s.name.clone(), s);
-                }
-            }
-            // Level 3: agent workspace (from the original load above)
-            for s in &skills {
-                map.insert(s.name.clone(), s.clone());
-            }
-            map.into_values().collect::<Vec<_>>()
-        };
 
         let Some(skill) = all_skills
             .iter()
@@ -169,7 +145,7 @@ mod tests {
     use tempfile::TempDir;
 
     fn make_tool(tmp: &TempDir) -> ReadSkillTool {
-        ReadSkillTool::new(tmp.path().join("workspace"), false, None)
+        ReadSkillTool::new(tmp.path().join("workspace"), std::sync::Arc::new(crate::config::Config::default()))
     }
 
     #[tokio::test]

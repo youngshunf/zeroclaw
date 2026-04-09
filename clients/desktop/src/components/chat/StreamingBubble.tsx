@@ -11,6 +11,8 @@ interface StreamingBubbleProps {
   isStreaming: boolean;
   /** Agent name for avatar */
   agentName?: string;
+  /** Agent icon URL */
+  agentIconUrl?: string;
   /** Link click handler for Markdown */
   onUrlClick?: (url: string) => void;
 }
@@ -24,6 +26,7 @@ export function StreamingBubble({
   progressLines,
   isStreaming,
   agentName,
+  agentIconUrl,
   onUrlClick,
 }: StreamingBubbleProps) {
   const hasContent = content.length > 0;
@@ -33,8 +36,12 @@ export function StreamingBubble({
 
   return (
     <div className="hx-msg agent">
-      <div className="hx-msg-avatar">
-        <Bot size={18} />
+      <div className="hx-msg-avatar" style={{ overflow: 'hidden', padding: agentIconUrl ? 0 : undefined }}>
+        {agentIconUrl ? (
+          <img src={agentIconUrl} alt={agentName ?? 'agent'} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'inherit' }} />
+        ) : (
+          <Bot size={16} />
+        )}
       </div>
       <div className="hx-msg-content">
         {agentName && (
