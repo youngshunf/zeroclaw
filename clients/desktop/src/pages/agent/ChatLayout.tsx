@@ -172,11 +172,14 @@ export default function ChatLayout() {
         setSessionTitles(prev => new Map(prev).set(sessionId, result.title));
       }
 
-      const newMessages: ChatMessage[] = result.messages.map(m => ({
+      const newMessages: ChatMessage[] = result.messages.map((m: any) => ({
         id: `db_${m.id}`,
         role: m.role === 'user' ? 'user' as const : 'agent' as const,
         content: m.content,
         timestamp: new Date(m.timestamp),
+        progressLines: Array.isArray(m.progress_lines) && m.progress_lines.length > 0
+          ? m.progress_lines
+          : undefined,
       }));
 
       if (loadMore) {
@@ -234,6 +237,9 @@ export default function ChatLayout() {
             role: e.role === 'user' ? 'user' : 'agent',
             content: e.content.trim(),
             timestamp: new Date(),
+            progressLines: Array.isArray(e.progress_lines) && e.progress_lines.length > 0
+              ? e.progress_lines
+              : undefined,
           }));
         setHistories(prev => new Map(prev).set(sessionId, restored));
         setTypingMap(prev => new Map(prev).set(sessionId, false));
@@ -292,9 +298,14 @@ export default function ChatLayout() {
       case 'tool_call': {
         setTypingMap(prev => new Map(prev).set(sessionId, true));
         const toolName = msg.display_name || msg.name || '工具';
+        let argsStr = '';
+        if (msg.args_preview) {
+            const raw = msg.args_preview;
+            argsStr = raw.length > 1000 ? `\n【参数】\n${raw.substring(0, 1000)}...\n(参数过长被截断)` : `\n【参数】\n${raw}`;
+        }
         setProgressLines(prev => {
           const lines = [...(prev.get(sessionId) ?? [])];
-          lines.push(`🔧 调用工具: ${toolName}`);
+          lines.push(`🔧 调用工具: ${toolName}${argsStr}`);
           progressLinesRef.current.set(sessionId, lines);
           return new Map(prev).set(sessionId, lines);
         });
@@ -303,9 +314,12 @@ export default function ChatLayout() {
       case 'tool_result': {
         setTypingMap(prev => new Map(prev).set(sessionId, true));
         const status = msg.status === 'error' ? '❌' : '✅';
+        const rawOutput = msg.output_preview || msg.output || '';
+        const displayPreview = rawOutput.length > 2000 ? rawOutput.substring(0, 2000) + '...\n(结果过长，已截断显示)' : rawOutput;
+        
         setProgressLines(prev => {
           const lines = [...(prev.get(sessionId) ?? [])];
-          lines.push(`${status} 工具执行完成`);
+          lines.push(`${status} 工具返回: ${displayPreview || '无输出'}`);
           progressLinesRef.current.set(sessionId, lines);
           return new Map(prev).set(sessionId, lines);
         });

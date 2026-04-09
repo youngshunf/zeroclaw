@@ -5,7 +5,7 @@
 //! Designed as the default backend, replacing JSONL for new installations.
 
 use crate::channels::session_backend::{
-    SessionBackend, SessionMetadata, SessionQuery, SessionState,
+    MessageWithMeta, SessionBackend, SessionMetadata, SessionQuery, SessionState,
 };
 use crate::providers::traits::ChatMessage;
 use anyhow::{Context, Result};
@@ -104,6 +104,18 @@ impl SqliteSessionBackend {
             );
         }
 
+        // Migration: add metadata column to sessions table (for progress_lines etc.)
+        let has_metadata: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('sessions') WHERE name = 'metadata'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+        if !has_metadata {
+            let _ = conn.execute("ALTER TABLE sessions ADD COLUMN metadata TEXT", []);
+        }
+
         Ok(Self {
             conn: Mutex::new(conn),
             db_path,
@@ -188,13 +200,22 @@ impl SessionBackend for SqliteSessionBackend {
     }
 
     fn append(&self, session_key: &str, message: &ChatMessage) -> std::io::Result<()> {
+        self.append_with_metadata(session_key, message, None)
+    }
+
+    fn append_with_metadata(
+        &self,
+        session_key: &str,
+        message: &ChatMessage,
+        metadata: Option<&str>,
+    ) -> std::io::Result<()> {
         let conn = self.conn.lock();
         let now = Utc::now().to_rfc3339();
 
         conn.execute(
-            "INSERT INTO sessions (session_key, role, content, created_at)
-             VALUES (?1, ?2, ?3, ?4)",
-            params![session_key, message.role, message.content, now],
+            "INSERT INTO sessions (session_key, role, content, created_at, metadata)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![session_key, message.role, message.content, now, metadata],
         )
         .map_err(std::io::Error::other)?;
 
@@ -210,6 +231,31 @@ impl SessionBackend for SqliteSessionBackend {
         .map_err(std::io::Error::other)?;
 
         Ok(())
+    }
+
+    fn load_with_metadata(&self, session_key: &str) -> Vec<MessageWithMeta> {
+        let conn = self.conn.lock();
+        let mut stmt = match conn
+            .prepare("SELECT role, content, metadata FROM sessions WHERE session_key = ?1 ORDER BY id ASC")
+        {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+
+        let rows = match stmt.query_map(params![session_key], |row| {
+            Ok(MessageWithMeta {
+                message: ChatMessage {
+                    role: row.get(0)?,
+                    content: row.get(1)?,
+                },
+                metadata: row.get(2)?,
+            })
+        }) {
+            Ok(r) => r,
+            Err(_) => return Vec::new(),
+        };
+
+        rows.filter_map(|r| r.ok()).collect()
     }
 
     fn remove_last(&self, session_key: &str) -> std::io::Result<bool> {

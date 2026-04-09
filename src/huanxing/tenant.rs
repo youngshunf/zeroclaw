@@ -426,7 +426,7 @@ impl TenantContext {
         let effective_memory_config =
             merge_config_section(&global_config.memory, overrides.memory.as_ref())
                 .context("merge [memory] overrides")?;
-        let effective_knowledge_config =
+        let mut effective_knowledge_config =
             merge_config_section(&global_config.knowledge, overrides.knowledge.as_ref())
                 .context("merge [knowledge] overrides")?;
         let effective_autonomy =
@@ -570,15 +570,21 @@ impl TenantContext {
                 );
                 std::path::PathBuf::from(expanded)
             } else {
-                // Relative path: resolve against owner_dir
-                // Desktop: owner_dir = ~/.huanxing/ → global shared
-                // Cloud:   owner_dir = workspace_dir → per-agent isolated
+                // Relative path: resolve against owner_dir (user-level shared)
+                // Both Desktop and Cloud: owner_dir = {config_dir}/users/{td}/workspace/
+                // → knowledge DB is per-tenant isolated, shared across all agents of that user
                 owner_dir.join(&effective_knowledge_config.db_path)
             };
             // Ensure parent directory exists
             if let Some(parent) = kb_path.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
+            
+            // Overwrite db_path with the fully resolved absolute path 
+            // so that down-stream tools registry (like Agent's KnowledgeTool) 
+            // shares the identical exact database.
+            effective_knowledge_config.db_path = kb_path.to_string_lossy().into_owned();
+
             match crate::memory::knowledge_graph::KnowledgeGraph::new(
                 &kb_path,
                 effective_knowledge_config.max_nodes,

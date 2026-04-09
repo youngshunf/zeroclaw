@@ -16,6 +16,8 @@
     "core:window:allow-center",
     "dialog:default",
     "fs:default",
+    "fs:allow-app-write",
+    "fs:allow-app-write-recursive",
     "core:webview:allow-print"
   ]
 }

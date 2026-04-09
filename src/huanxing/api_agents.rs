@@ -61,6 +61,8 @@ async fn require_tenant_dir(
 fn build_create_agent_params(
     req: &CreateAgentRequest,
     tenant_dir: &str,
+    config_dir: &std::path::Path,
+    config: &crate::huanxing::config::HuanXingConfig,
 ) -> huanxing_agent_factory::CreateAgentParams {
     let template_id = req.template.as_deref().unwrap_or("_base");
     let display_name = req.display_name.as_deref().unwrap_or(&req.name);
@@ -73,7 +75,7 @@ fn build_create_agent_params(
         is_desktop: req.is_desktop.unwrap_or(false),
         user_nickname: display_name.to_string(),
         user_phone: String::new(),
-        owner_dir: String::new(),
+        owner_dir: config.resolve_owner_dir(config_dir, Some(tenant_dir)).to_string_lossy().to_string(),
         provider: None,
         model: None,
         api_key: req.api_key.clone(),
@@ -306,7 +308,7 @@ async fn create_agent(
     let template_id = req.template.as_deref().unwrap_or("_base");
 
     let factory = huanxing_agent_factory::AgentFactory::new(config_dir.to_path_buf(), None);
-    let params = build_create_agent_params(&req, &tenant_dir);
+    let params = build_create_agent_params(&req, &tenant_dir, config_dir, &config.huanxing);
 
     struct ApiProgress;
     impl huanxing_agent_factory::ProgressSink for ApiProgress {
@@ -1008,7 +1010,9 @@ mod tests {
             is_desktop: Some(true),
         };
 
-        let params = build_create_agent_params(&request, "001-tenant-a");
+        let config_dir = std::path::Path::new("/tmp/.huanxing");
+        let config = crate::huanxing::config::HuanXingConfig::default();
+        let params = build_create_agent_params(&request, "001-tenant-a", config_dir, &config);
 
         assert_eq!(params.tenant_id, "001-tenant-a");
         assert_eq!(params.agent_name, "assistant-130");

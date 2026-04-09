@@ -31,6 +31,18 @@ pub struct SessionQuery {
     pub limit: Option<usize>,
 }
 
+/// A message paired with optional UI-only metadata (e.g. progress lines).
+///
+/// The `metadata` field is **never sent to the LLM** — it is purely for
+/// frontend display (thinking chain, tool-call logs, etc.).
+#[derive(Debug, Clone)]
+pub struct MessageWithMeta {
+    pub message: ChatMessage,
+    /// JSON-encoded metadata blob (opaque to the trait layer).
+    /// Convention: `{"progress_lines": ["...", "..."]}`
+    pub metadata: Option<String>,
+}
+
 /// Trait for session persistence backends.
 ///
 /// Implementations must be `Send + Sync` for sharing across async tasks.
@@ -38,8 +50,30 @@ pub trait SessionBackend: Send + Sync {
     /// Load all messages for a session. Returns empty vec if session doesn't exist.
     fn load(&self, session_key: &str) -> Vec<ChatMessage>;
 
+    /// Load all messages with their UI metadata.
+    ///
+    /// Default implementation delegates to `load()` and returns empty metadata.
+    fn load_with_metadata(&self, session_key: &str) -> Vec<MessageWithMeta> {
+        self.load(session_key)
+            .into_iter()
+            .map(|message| MessageWithMeta { message, metadata: None })
+            .collect()
+    }
+
     /// Append a single message to a session.
     fn append(&self, session_key: &str, message: &ChatMessage) -> std::io::Result<()>;
+
+    /// Append a message with optional UI metadata.
+    ///
+    /// Default implementation ignores metadata and delegates to `append()`.
+    fn append_with_metadata(
+        &self,
+        session_key: &str,
+        message: &ChatMessage,
+        _metadata: Option<&str>,
+    ) -> std::io::Result<()> {
+        self.append(session_key, message)
+    }
 
     /// Remove the last message from a session. Returns `true` if a message was removed.
     fn remove_last(&self, session_key: &str) -> std::io::Result<bool>;

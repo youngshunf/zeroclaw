@@ -682,11 +682,11 @@ async fn handle_ws_frame(
                                 is_desktop: false,
                                 user_nickname: "User".to_string(),
                                 user_phone: uname.clone(),
-                                owner_dir: agent_workspace
-                                    .parent()
-                                    .and_then(|p| p.parent())
-                                    .map(|p| p.join("workspace"))
-                                    .unwrap_or_default()
+                                owner_dir: st
+                                    .config
+                                    .lock()
+                                    .huanxing
+                                    .resolve_owner_dir(&config_dir, Some(&tenant_dir))
                                     .to_string_lossy()
                                     .to_string(),
                                 provider: None,

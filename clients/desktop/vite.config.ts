@@ -44,7 +44,7 @@ export default defineConfig({
       //    包括：/connect, /disconnect, /status, /send, /node/* 等本地 sidecar 端点
       //    必须放在 /api/v1（云端）之前！
       "/api/v1/hasn": {
-        target: "http://localhost:42620",
+        target: "http://127.0.0.1:42620",
         changeOrigin: true,
       },
 
@@ -57,23 +57,23 @@ export default defineConfig({
 
       // 4. Sidecar 专属路由
       "/pair": {
-        target: "http://localhost:42620",
+        target: "http://127.0.0.1:42620",
         changeOrigin: true,
       },
       "/health": {
-        target: "http://localhost:42620",
+        target: "http://127.0.0.1:42620",
         changeOrigin: true,
       },
 
       // 5. Sidecar 通用 /api 路由（/api/agents, /api/config 等）
       "/api": {
-        target: "http://localhost:42620",
+        target: "http://127.0.0.1:42620",
         changeOrigin: true,
       },
 
       // 6. WebSocket → sidecar
       "/ws": {
-        target: "http://localhost:42620",
+        target: "http://127.0.0.1:42620",
         ws: true,
         changeOrigin: true,
       },

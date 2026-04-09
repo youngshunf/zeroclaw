@@ -49,6 +49,8 @@ pub struct SessionMessage {
     pub role: String,
     pub content: String,
     pub timestamp: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress_lines: Option<Vec<String>>,
 }
 
 /// 会话详情（含分页消息）
@@ -462,31 +464,51 @@ async fn get_session(
         // 分页查询消息（倒序，before cursor）
         let msgs: Vec<SessionMessage> = if let Some(before_id) = before {
             let mut stmt = conn.prepare(
-                "SELECT id, role, content, created_at FROM sessions
+                "SELECT id, role, content, created_at, metadata FROM sessions
                  WHERE session_key = ?1 AND id < ?2
                  ORDER BY id DESC LIMIT ?3",
             )?;
             let rows = stmt.query_map(params![session_id_clone, before_id, limit], |row| {
+                let metadata: Option<String> = row.get(4)?;
+                let mut progress_lines = None;
+                if let Some(meta_str) = metadata {
+                    if let Ok(meta) = serde_json::from_str::<serde_json::Value>(&meta_str) {
+                        if let Some(pl) = meta.get("progress_lines") {
+                            progress_lines = serde_json::from_value(pl.clone()).ok();
+                        }
+                    }
+                }
                 Ok(SessionMessage {
                     id: row.get(0)?,
                     role: row.get(1)?,
                     content: row.get(2)?,
                     timestamp: row.get(3)?,
+                    progress_lines,
                 })
             })?;
             rows.filter_map(|r| r.ok()).collect()
         } else {
             let mut stmt = conn.prepare(
-                "SELECT id, role, content, created_at FROM sessions
+                "SELECT id, role, content, created_at, metadata FROM sessions
                  WHERE session_key = ?1
                  ORDER BY id DESC LIMIT ?2",
             )?;
             let rows = stmt.query_map(params![session_id_clone, limit], |row| {
+                let metadata: Option<String> = row.get(4)?;
+                let mut progress_lines = None;
+                if let Some(meta_str) = metadata {
+                    if let Ok(meta) = serde_json::from_str::<serde_json::Value>(&meta_str) {
+                        if let Some(pl) = meta.get("progress_lines") {
+                            progress_lines = serde_json::from_value(pl.clone()).ok();
+                        }
+                    }
+                }
                 Ok(SessionMessage {
                     id: row.get(0)?,
                     role: row.get(1)?,
                     content: row.get(2)?,
                     timestamp: row.get(3)?,
+                    progress_lines,
                 })
             })?;
             rows.filter_map(|r| r.ok()).collect()

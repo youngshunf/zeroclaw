@@ -896,11 +896,26 @@ async fn main() -> Result<()> {
     }
 
     // Initialize logging - respects RUST_LOG env var, defaults to INFO
-    let subscriber = fmt::Subscriber::builder()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
-        .finish();
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+
+    let home_dir = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
+    let log_dir = home_dir.join(".huanxing").join("logs");
+    let _ = std::fs::create_dir_all(&log_dir);
+    let log_path = log_dir.join("huanxing.log");
+
+    let file_appender = rolling_file::BasicRollingFileAppender::new(
+        log_path,
+        rolling_file::RollingConditionBasic::new().daily().max_size(50 * 1024 * 1024),
+        30, // retain last 30 files
+    ).expect("failed to create rolling file appender");
+
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+
+    use tracing_subscriber::layer::SubscriberExt;
+    let subscriber = tracing_subscriber::registry()
+        .with(env_filter)
+        .with(fmt::layer().with_writer(std::io::stdout))
+        .with(fmt::layer().with_writer(non_blocking));
 
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 

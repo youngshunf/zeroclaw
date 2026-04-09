@@ -37,6 +37,46 @@ impl ReadSkillTool {
         self.user_skills_dir = user_skills_dir;
         self
     }
+
+    /// Derive global skills directory from Config when task-local is unavailable.
+    ///
+    /// Uses HuanXing's `resolve_common_skills_dir()` when the feature is active,
+    /// falling back to `{config_dir}/skills/` for vanilla ZeroClaw.
+    fn derive_global_skills_dir(&self) -> Option<PathBuf> {
+        let config_dir = self.config.config_path.parent()?;
+        #[cfg(feature = "huanxing")]
+        {
+            if self.config.huanxing.enabled {
+                let common_dir = self.config.huanxing.resolve_common_skills_dir(config_dir);
+                // resolve_common_skills_dir returns {config_dir}/skills/ by default.
+                // The actual skills may be directly in this dir or in a `skills/` subdirectory.
+                let nested = common_dir.join("skills");
+                if nested.exists() {
+                    return Some(nested);
+                }
+                if common_dir.exists() {
+                    return Some(common_dir);
+                }
+            }
+        }
+        // Vanilla ZeroClaw: check {config_dir}/skills/
+        let dir = config_dir.join("skills");
+        if dir.exists() { Some(dir) } else { None }
+    }
+
+    /// Derive user/tenant skills directory from workspace_dir when task-local is unavailable.
+    ///
+    /// Workspace layout: `{config_dir}/users/{td}/agents/{id}/workspace/`
+    /// User skills dir:  `{config_dir}/users/{td}/workspace/skills/`
+    fn derive_user_skills_dir(&self) -> Option<PathBuf> {
+        // Walk up: workspace/ → agents/{id} → agents/ → users/{td}
+        let tenant_root = self.workspace_dir
+            .parent()  // agents/{id}
+            .and_then(|p| p.parent())  // agents/
+            .and_then(|p| p.parent())?;  // users/{td}
+        let user_skills = tenant_root.join("workspace").join("skills");
+        if user_skills.exists() { Some(user_skills) } else { None }
+    }
 }
 
 #[async_trait]
@@ -70,22 +110,44 @@ impl Tool for ReadSkillTool {
             .filter(|value| !value.is_empty())
             .ok_or_else(|| anyhow::anyhow!("Missing 'name' parameter"))?;
 
-        // Resolve effective global/user dirs: prefer struct fields, then
-        // fall back to task-local variables injected by HuanXing dispatcher.
+        // Resolve effective global/user dirs with three-level fallback:
+        //   1. Struct fields (set at construction time)
+        //   2. Task-local variables (injected by channels/mod.rs pipeline)
+        //   3. Dynamic derivation from Config (covers WS/desktop path where
+        //      task-locals are never injected)
         let global_dir = self
             .global_skills_dir
             .clone()
-            .or_else(crate::skills::get_active_global_skills_dir);
+            .or_else(crate::skills::get_active_global_skills_dir)
+            .or_else(|| self.derive_global_skills_dir());
         let user_dir = self
             .user_skills_dir
             .clone()
-            .or_else(crate::skills::get_active_user_skills_dir);
+            .or_else(crate::skills::get_active_user_skills_dir)
+            .or_else(|| self.derive_user_skills_dir());
+
+        tracing::info!(
+            requested_skill = requested,
+            workspace_dir = %self.workspace_dir.display(),
+            global_dir = ?global_dir,
+            user_dir = ?user_dir,
+            config_path = %self.config.config_path.display(),
+            huanxing_enabled = cfg!(feature = "huanxing"),
+            "【read_skill 调试】开始加载技能"
+        );
 
         let all_skills = crate::skills::load_skills_cascaded(
             global_dir.as_deref(),
             user_dir.as_deref(),
             &self.workspace_dir,
             &self.config,
+        );
+
+        let skill_names: Vec<&str> = all_skills.iter().map(|s| s.name.as_str()).collect();
+        tracing::info!(
+            total = all_skills.len(),
+            names = ?skill_names,
+            "【read_skill 调试】技能加载完成"
         );
 
         let Some(skill) = all_skills

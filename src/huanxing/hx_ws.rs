@@ -270,7 +270,7 @@ async fn handle_socket(socket: WebSocket, state: AppState, default_session_id: O
                     }
                 }
 
-                process_chat_message(&state, session, &mut sender, &content, &sid).await;
+                process_chat_message(&state, session, &mut sender, &mut receiver, &content, &sid).await;
             }
 
             InboundFrame::HistoryRequest {
@@ -283,7 +283,7 @@ async fn handle_socket(socket: WebSocket, state: AppState, default_session_id: O
                 // Load history — prefer per-session backend from active
                 // session cache, or resolve from agent workspace; fall
                 // back to the global session backend.
-                let messages: Vec<crate::providers::ChatMessage> = {
+                let messages_with_meta: Vec<crate::channels::session_backend::MessageWithMeta> = {
                     let backend = if let Some(sess) = sessions.get(&sid) {
                         // Session already initialised — reuse its backend
                         sess.session_backend
@@ -300,13 +300,35 @@ async fn handle_socket(socket: WebSocket, state: AppState, default_session_id: O
                             Ok(None) | Err(_) => state.session_backend.clone(),
                         }
                     };
-                    backend.map(|b| b.load(&session_key)).unwrap_or_default()
+                    backend
+                        .map(|b| b.load_with_metadata(&session_key))
+                        .unwrap_or_default()
                 };
+
+                // Build history frame with per-message metadata
+                let messages_json: Vec<serde_json::Value> = messages_with_meta
+                    .into_iter()
+                    .map(|mwm| {
+                        let mut obj = serde_json::json!({
+                            "role": mwm.message.role,
+                            "content": mwm.message.content,
+                        });
+                        // Parse metadata and merge progress_lines into the message object
+                        if let Some(meta_str) = &mwm.metadata {
+                            if let Ok(meta) = serde_json::from_str::<serde_json::Value>(meta_str) {
+                                if let Some(pl) = meta.get("progress_lines") {
+                                    obj["progress_lines"] = pl.clone();
+                                }
+                            }
+                        }
+                        obj
+                    })
+                    .collect();
 
                 let history_frame = serde_json::json!({
                     "type": "history",
                     "session_id": sid,
-                    "messages": messages,
+                    "messages": messages_json,
                 });
                 let _ = sender
                     .send(Message::Text(history_frame.to_string().into()))
@@ -461,6 +483,7 @@ async fn process_chat_message(
     state: &AppState,
     session: &mut AgentSession,
     sender: &mut futures_util::stream::SplitSink<WebSocket, Message>,
+    receiver: &mut futures_util::stream::SplitStream<WebSocket>,
     content: &str,
     session_id: &str,
 ) {
@@ -517,6 +540,31 @@ async fn process_chat_message(
             _ = ping_interval.tick() => {
                 let _ = sender.send(Message::Ping(vec![].into())).await;
             }
+            // Poll receiver to process Ping/Pong and keep the internal TCP buffer flowing
+            msg_opt = receiver.next() => {
+                let text = match msg_opt {
+                    Some(Ok(Message::Text(t))) => t,
+                    Some(Ok(Message::Close(_))) | None => break, // WS closed
+                    _ => continue,
+                };
+                if let Ok(frame) = serde_json::from_str::<InboundFrame>(&text) {
+                    match frame {
+                        InboundFrame::Ping => {
+                            let pong = serde_json::json!({"type": "pong"});
+                            let _ = sender.send(Message::Text(pong.to_string().into())).await;
+                        }
+                        InboundFrame::Message { .. } => {
+                            let err = serde_json::json!({
+                                "type": "error",
+                                "session_id": session_id_owned,
+                                "message": "Agent is currently processing a message."
+                            });
+                            let _ = sender.send(Message::Text(err.to_string().into())).await;
+                        }
+                        _ => {} // Ignore other frames during processing
+                    }
+                }
+            }
             // Poll turn_streamed future
             result = &mut turn_future, if turn_result.is_none() => {
                 turn_result = Some(result);
@@ -552,7 +600,9 @@ async fn process_chat_message(
                     Some(crate::agent::TurnEvent::ToolCall { name, args }) => {
                         let call_id = format!("c{tool_call_counter}_{name}");
                         tool_call_counter += 1;
-                        progress_lines.push(format!("\u{1f527} 调用工具: {name}"));
+                        let args_str = serde_json::to_string_pretty(&args).unwrap_or_default();
+                        let args_display = if args_str.len() > 1000 { format!("{}...\n(参数过长被截断)", &args_str[..1000]) } else { args_str.clone() };
+                        progress_lines.push(format!("\u{1f527} 调用工具: {}\n【参数】\n{}", name, args_display));
                         let frame = serde_json::json!({
                             "type": "tool_call",
                             "agent": agent_id,
@@ -560,18 +610,18 @@ async fn process_chat_message(
                             "call_id": call_id,
                             "name": name,
                             "display_name": name,
-                            "args_preview": serde_json::to_string(&args).unwrap_or_default(),
+                            "args_preview": args_str,
                         });
                         let _ = sender.send(Message::Text(frame.to_string().into())).await;
                     }
                     Some(crate::agent::TurnEvent::ToolResult { name, output }) => {
                         let call_id = format!("c{}_{name}", tool_call_counter.saturating_sub(1));
-                        let preview = if output.len() > 200 {
-                            format!("{}...", &output[..200])
+                        let preview = if output.len() > 2000 {
+                            format!("{}...\n(结果过长，已截断显示)", &output[..2000])
                         } else {
-                            output
+                            output.clone()
                         };
-                        progress_lines.push("\u{2705} 工具执行完成".to_string());
+                        progress_lines.push(format!("\u{2705} 工具返回: {}", if preview.is_empty() { "无输出" } else { &preview }));
                         let frame = serde_json::json!({
                             "type": "tool_result",
                             "agent": agent_id,
@@ -622,7 +672,9 @@ async fn process_chat_message(
                     crate::agent::TurnEvent::ToolCall { name, args } => {
                         let call_id = format!("c{tool_call_counter}_{name}");
                         tool_call_counter += 1;
-                        progress_lines.push(format!("\u{1f527} 调用工具: {name}"));
+                        let args_str = serde_json::to_string_pretty(&args).unwrap_or_default();
+                        let args_display = if args_str.len() > 1000 { format!("{}...\n(参数过长被截断)", &args_str[..1000]) } else { args_str.clone() };
+                        progress_lines.push(format!("\u{1f527} 调用工具: {}\n【参数】\n{}", name, args_display));
                         let frame = serde_json::json!({
                             "type": "tool_call",
                             "agent": agent_id,
@@ -630,18 +682,18 @@ async fn process_chat_message(
                             "call_id": call_id,
                             "name": name,
                             "display_name": name,
-                            "args_preview": serde_json::to_string(&args).unwrap_or_default(),
+                            "args_preview": args_str,
                         });
                         let _ = sender.send(Message::Text(frame.to_string().into())).await;
                     }
                     crate::agent::TurnEvent::ToolResult { name, output } => {
                         let call_id = format!("c{}_{name}", tool_call_counter.saturating_sub(1));
-                        let preview = if output.len() > 200 {
-                            format!("{}...", &output[..200])
+                        let preview = if output.len() > 2000 {
+                            format!("{}...\n(结果过长，已截断显示)", &output[..2000])
                         } else {
-                            output
+                            output.clone()
                         };
-                        progress_lines.push("\u{2705} 工具执行完成".to_string());
+                        progress_lines.push(format!("\u{2705} 工具返回: {}", if preview.is_empty() { "无输出" } else { &preview }));
                         let frame = serde_json::json!({
                             "type": "tool_result",
                             "agent": agent_id,
@@ -661,7 +713,7 @@ async fn process_chat_message(
     // ── 处理 turn 结果 ──────────────────────────────────────────
     match turn_result.unwrap_or_else(|| Err(anyhow::anyhow!("turn was not completed"))) {
         Ok(response) => {
-            // Persist assistant reply
+            // Persist assistant reply with progress metadata
             {
                 let backend = session
                     .session_backend
@@ -669,7 +721,19 @@ async fn process_chat_message(
                     .or(state.session_backend.as_ref());
                 if let Some(b) = backend {
                     let assistant_msg = crate::providers::ChatMessage::assistant(&response);
-                    let _ = b.append(&session.session_key, &assistant_msg);
+                    let metadata = if progress_lines.is_empty() {
+                        None
+                    } else {
+                        serde_json::to_string(&serde_json::json!({
+                            "progress_lines": progress_lines,
+                        }))
+                        .ok()
+                    };
+                    let _ = b.append_with_metadata(
+                        &session.session_key,
+                        &assistant_msg,
+                        metadata.as_deref(),
+                    );
                 }
             }
 

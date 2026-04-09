@@ -987,7 +987,12 @@ pub fn all_tools_with_runtime(
                 .map(|u| u.home_dir().to_string_lossy().to_string())
                 .unwrap_or_else(|| ".".to_string()),
         );
-        let db_path = std::path::PathBuf::from(&db_path_str);
+        let parsed_path = std::path::PathBuf::from(&db_path_str);
+        let db_path = if parsed_path.is_absolute() {
+            parsed_path
+        } else {
+            workspace_dir.join(parsed_path)
+        };
         match crate::memory::knowledge_graph::KnowledgeGraph::new(
             &db_path,
             root_config.knowledge.max_nodes,

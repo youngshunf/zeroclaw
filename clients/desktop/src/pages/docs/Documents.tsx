@@ -489,12 +489,18 @@ export default function Documents() {
       
       const { blob, filename } = await exportHuanxingDocumentApi(session.accessToken, selectedDoc.id, format);
 
+      // 使用文档真实标题作为导出文件名，过滤系统路径不支持的非法字符
+      const safeTitle = (selectedDoc.title || '未命名文档').replace(/[\\/:*?"<>|]/g, '_');
+      const actualFilename = filename.startsWith('huanxing_document.') 
+        ? `${safeTitle}.${format === 'markdown' ? 'md' : format}` 
+        : filename;
+
       if (isDesktop) {
         const { save } = await import('@tauri-apps/plugin-dialog');
         const { writeFile } = await import('@tauri-apps/plugin-fs');
         
         const filePath = await save({
-          defaultPath: filename,
+          defaultPath: actualFilename,
           filters: [{ 
             name: format.toUpperCase(), 
             extensions: [format === 'markdown' ? 'md' : format] 
@@ -510,7 +516,7 @@ export default function Documents() {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = filename;
+        a.download = actualFilename;
         a.click();
         URL.revokeObjectURL(url);
       }
