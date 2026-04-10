@@ -114,7 +114,9 @@ impl Tool for MemoryRecallTool {
             .and_then(serde_json::Value::as_u64)
             .map_or(5, |v| v as usize);
 
-        match self.memory.recall(query, limit, None, since, until).await {
+        let memory = crate::tools::get_active_memory().unwrap_or_else(|| self.memory.clone());
+
+        match memory.recall(query, limit, None, since, until).await {
             Ok(entries) if entries.is_empty() => Ok(ToolResult {
                 success: true,
                 output: "No memories found.".into(),

@@ -15,6 +15,8 @@ use crate::memory::importance;
 use crate::memory::knowledge_graph::{KnowledgeGraph, NodeType};
 use crate::memory::traits::{Memory, MemoryCategory};
 use crate::providers::traits::Provider;
+use std::path::Path;
+
 
 /// Output of consolidation extraction.
 #[derive(Debug, serde::Deserialize)]
@@ -112,6 +114,7 @@ pub async fn consolidate_turn(
     provider: &dyn Provider,
     model: &str,
     memory: &dyn Memory,
+    workspace_dir: Option<&Path>,
     user_message: &str,
     assistant_response: &str,
 ) -> anyhow::Result<()> {
@@ -185,6 +188,10 @@ pub async fn consolidate_turn(
                     Some(imp),
                 )
                 .await?;
+
+            if let Some(wd) = workspace_dir {
+                distill_core_memory_to_markdown(provider, model, wd, update).await;
+            }
         }
     }
 
@@ -203,6 +210,7 @@ pub async fn consolidate_turn_with_knowledge(
     model: &str,
     memory: &dyn Memory,
     graph: &KnowledgeGraph,
+    workspace_dir: Option<&Path>,
     user_message: &str,
     assistant_response: &str,
     source_agent: Option<&str>,
@@ -273,6 +281,10 @@ pub async fn consolidate_turn_with_knowledge(
                     Some(imp),
                 )
                 .await?;
+
+            if let Some(wd) = workspace_dir {
+                distill_core_memory_to_markdown(provider, model, wd, update).await;
+            }
         }
     }
 
@@ -409,8 +421,6 @@ mod tests {
 
     #[test]
     fn fallback_truncates_cjk_text_without_panic() {
-        // Each CJK character is 3 bytes in UTF-8; byte index 200 may land
-        // inside a character. This must not panic.
         let cjk_text = "二手书项目".repeat(50); // 250 chars = 750 bytes
         let result = parse_consolidation_response("invalid", &cjk_text);
         assert!(
@@ -419,5 +429,56 @@ mod tests {
                 .is_char_boundary(result.history_entry.len())
         );
         assert!(result.history_entry.ends_with('…'));
+    }
+}
+
+/// Asynchronously rewrite MEMORY.md using the LLM provider based on existing MEMORY.md and the new core update
+async fn distill_core_memory_to_markdown(
+    provider: &dyn Provider,
+    model: &str,
+    workspace_dir: &std::path::Path,
+    new_memory_update: &str,
+) {
+    let memory_md_path = workspace_dir.join("MEMORY.md");
+    let current_content = if memory_md_path.exists() {
+        tokio::fs::read_to_string(&memory_md_path).await.unwrap_or_default()
+    } else {
+        String::new()
+    };
+    
+    let prompt = format!(
+        "You are tasked with dynamically updating a long-term memory file (MEMORY.md). \n\
+         The existing file content is provided below. You have just learned a NEW core memory fact. \n\
+         Please seamlessly integrate the new fact into the existing file. \n\
+         If there is a relevant section (e.g. user preferences, milestones), add it there. \n\
+         If not, create an appropriate section. \n\
+         Preserve the original formatting, tone, and any structural directives (like headings, comments). \n\n\
+         NEW FACT TO INTEGRATE:\n\
+         {new_memory_update}\n\n\
+         CURRENT MEMORY.md:\n\
+         {current_content}"
+    );
+
+    let system_prompt = "You are a memory distillation engine. Output ONLY the raw markdown content for the updated MEMORY.md. Do not wrap it in markdown code blocks unless the file itself should have them, do not explain your changes.";
+
+    match provider.chat_with_system(Some(system_prompt), &prompt, model, 0.1).await {
+        Ok(new_content) => {
+            let cleaned = new_content
+                .trim()
+                .strip_prefix("```markdown")
+                .or_else(|| new_content.trim().strip_prefix("```"))
+                .and_then(|s| s.strip_suffix("```"))
+                .unwrap_or(&new_content)
+                .trim();
+                
+            if let Err(e) = tokio::fs::write(&memory_md_path, cleaned).await {
+                tracing::warn!("Failed to overwrite MEMORY.md during distillation: {}", e);
+            } else {
+                tracing::info!("Successfully distilled and updated MEMORY.md with new core fact");
+            }
+        }
+        Err(e) => {
+            tracing::warn!("LLM provider failed during MEMORY.md distillation: {}", e);
+        }
     }
 }

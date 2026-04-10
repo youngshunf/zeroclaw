@@ -72,7 +72,8 @@ impl Tool for SessionsListTool {
             .and_then(serde_json::Value::as_u64)
             .map_or(50, |v| v as usize);
 
-        let metadata = self.backend.list_sessions_with_metadata();
+        let backend = crate::tools::get_active_session_backend().unwrap_or_else(|| self.backend.clone());
+        let metadata = backend.list_sessions_with_metadata();
 
         if metadata.is_empty() {
             return Ok(ToolResult {
@@ -170,7 +171,8 @@ impl Tool for SessionsHistoryTool {
             .and_then(serde_json::Value::as_u64)
             .map_or(20, |v| v as usize);
 
-        let messages = self.backend.load(session_id);
+        let backend = crate::tools::get_active_session_backend().unwrap_or_else(|| self.backend.clone());
+        let messages = backend.load(session_id);
 
         if messages.is_empty() {
             return Ok(ToolResult {
@@ -279,7 +281,8 @@ impl Tool for SessionsSendTool {
 
         let chat_msg = crate::providers::traits::ChatMessage::user(message);
 
-        match self.backend.append(session_id, &chat_msg) {
+        let backend = crate::tools::get_active_session_backend().unwrap_or_else(|| self.backend.clone());
+        match backend.append(session_id, &chat_msg) {
             Ok(()) => Ok(ToolResult {
                 success: true,
                 output: format!("Message sent to session '{session_id}'."),

@@ -237,6 +237,8 @@ tokio::task_local! {
     static ACTIVE_WORKSPACE: std::path::PathBuf;
     static ACTIVE_KNOWLEDGE_GRAPH: Arc<crate::memory::knowledge_graph::KnowledgeGraph>;
     static ACTIVE_KNOWLEDGE_CONFIG: crate::config::KnowledgeConfig;
+    static ACTIVE_MEMORY: Arc<dyn crate::memory::Memory>;
+    static ACTIVE_SESSION_BACKEND: Arc<dyn crate::channels::session_backend::SessionBackend>;
 }
 
 /// Retrieve the per-request security policy, if one was injected.
@@ -299,6 +301,40 @@ where
     F: std::future::Future<Output = T>,
 {
     ACTIVE_KNOWLEDGE_CONFIG.scope(config, future).await
+}
+
+/// Retrieve the per-request memory, if one was injected.
+pub fn get_active_memory() -> Option<Arc<dyn crate::memory::Memory>> {
+    ACTIVE_MEMORY.try_with(|m| m.clone()).ok()
+}
+
+/// Retrieve the per-request session backend, if one was injected.
+pub fn get_active_session_backend() -> Option<Arc<dyn crate::channels::session_backend::SessionBackend>> {
+    ACTIVE_SESSION_BACKEND.try_with(|b| b.clone()).ok()
+}
+
+/// Run a future with a per-request memory injected into the
+/// task-local scope.
+pub async fn with_active_memory<F, T>(
+    memory: Arc<dyn crate::memory::Memory>,
+    future: F,
+) -> T
+where
+    F: std::future::Future<Output = T>,
+{
+    ACTIVE_MEMORY.scope(memory, future).await
+}
+
+/// Run a future with a per-request session backend injected into the
+/// task-local scope.
+pub async fn with_active_session_backend<F, T>(
+    backend: Arc<dyn crate::channels::session_backend::SessionBackend>,
+    future: F,
+) -> T
+where
+    F: std::future::Future<Output = T>,
+{
+    ACTIVE_SESSION_BACKEND.scope(backend, future).await
 }
 
 /// Shared handle to the delegate tool's parent-tools list.

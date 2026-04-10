@@ -1271,6 +1271,7 @@ async fn main() -> Result<()> {
                 fallback_provider,
                 embedding_provider,
                 llm_gateway,
+                avatar_url: None,
             };
 
             struct CLIProgress;

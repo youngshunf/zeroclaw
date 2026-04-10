@@ -22,7 +22,7 @@ import {
   useHasnConversations,
   useHasnMessages,
 } from '@/hooks/useHasn';
-import { useHasnContacts } from '@/hooks/useHasnContacts';
+import { useHasnContacts, inferConversationType } from '@/hooks/useHasnContacts';
 import { useAgentSkills } from '@/hooks/useAgentSkills';
 import { HxChatInput } from '@/components/chat/input';
 import { HUANXING_SLASH_SECTIONS } from '@/components/chat/input/HxSlashMenu';
@@ -223,14 +223,24 @@ export default function HasnChat() {
                         onClick={() => handleSelectAgent(agent)}
                         className={`hx-conv-item${isActive ? ' active' : ''}`}
                       >
-                        <div className="hx-conv-avatar flex items-center justify-center text-white font-semibold text-sm bg-gradient-to-br from-hx-blue to-hx-purple">
-                          {getInitial(agent.name)}
-                        </div>
+                        {agent.avatar_url ? (
+                          <div className="relative">
+                            <img src={agent.avatar_url} alt={agent.name} className="hx-conv-avatar object-cover ring-2 ring-hx-blue ring-offset-1 ring-offset-hx-bg-panel" />
+                            <div className="absolute -bottom-0.5 -right-0.5 text-[10px] bg-hx-bg-panel rounded-full">✨</div>
+                          </div>
+                        ) : (
+                          <div className="relative">
+                            <div className="hx-conv-avatar flex items-center justify-center text-white font-semibold text-sm bg-gradient-to-br from-hx-blue to-hx-purple ring-2 ring-hx-blue ring-offset-1 ring-offset-hx-bg-panel">
+                              {getInitial(agent.name)}
+                            </div>
+                            <div className="absolute -bottom-0.5 -right-0.5 text-[10px] bg-hx-bg-panel rounded-full">✨</div>
+                          </div>
+                        )}
                         <div className="hx-conv-info">
                           <div className="hx-conv-name-row">
                             <span className="hx-conv-name">{agent.name}</span>
                             <span className="text-[10px] px-1.5 py-[1px] bg-hx-bg-hover text-hx-text-secondary rounded-hx-radius-sm border border-hx-border/50 shrink-0">
-                              {agent.node_id || 'LOCAL'}
+                              {agent.star_id || agent.node_id || 'LOCAL'}
                             </span>
                           </div>
                           <div className="hx-conv-preview text-hx-green flex items-center gap-1">
@@ -253,37 +263,64 @@ export default function HasnChat() {
                     </div>
                   )}
                   {filteredConversations.map((conv) => {
-              const isActive = conv.id === activeConvId;
-              return (
-                <div
-                  key={conv.id}
-                  onClick={() => handleSelectConversation(conv.id)}
-                  className={`hx-conv-item${isActive ? ' active' : ''}`}
-                >
-                  <div
-                    className={`hx-conv-avatar flex items-center justify-center text-white font-semibold text-sm ${conv.peer_type === 'agent' ? 'bg-gradient-to-br from-hx-blue to-hx-purple' : 'bg-gradient-to-br from-hx-purple to-hx-blue'}`}
-                  >
-                    {getInitial(conv.peer_name)}
-                  </div>
+                    const isActive = conv.id === activeConvId;
+                    const entityType = inferConversationType(conv.peer_type, conv.peer_id, hasnContacts.myAgentIds);
+                    
+                    // 查找 ContactFull 以获取 avatar_url 如果有的话
+                    const cp = hasnContacts.rawContacts.find(c => c.peer.hasn_id === conv.peer_id);
+                    const avatarUrl = cp?.peer.avatar_url;
 
-                  <div className="hx-conv-info">
-                    <div className="hx-conv-name-row">
-                      <span className="hx-conv-name">{conv.peer_name}</span>
-                      <span className="text-[11px] text-hx-text-tertiary shrink-0">
-                        {formatTime(conv.last_message_at)}
-                      </span>
-                    </div>
-                    <div className="hx-conv-preview">{conv.last_message || ''}</div>
-                  </div>
+                    let avatarBorder = '';
+                    let nameSuffix = '';
+                    if (entityType === 'my-agent') {
+                      avatarBorder = 'ring-2 ring-hx-blue ring-offset-1 ring-offset-hx-bg-panel';
+                    } else if (entityType === 'friend-agent') {
+                      avatarBorder = 'ring-2 ring-purple-400 ring-offset-1 ring-offset-hx-bg-panel';
+                      nameSuffix = ' (Agent)';
+                    } else {
+                      avatarBorder = 'ring-2 ring-hx-green ring-offset-1 ring-offset-hx-bg-panel';
+                    }
 
-                  {conv.unread_count > 0 && !isActive && (
-                    <span className="hx-conv-badge">
-                      {conv.unread_count > 99 ? '99+' : conv.unread_count}
-                    </span>
-                  )}
-                </div>
-              );
-            })}
+                    return (
+                      <div
+                        key={conv.id}
+                        onClick={() => handleSelectConversation(conv.id)}
+                        className={`hx-conv-item${isActive ? ' active' : ''}`}
+                      >
+                        {avatarUrl ? (
+                          <div className="relative">
+                            <img src={avatarUrl} alt={conv.peer_name} className={`hx-conv-avatar object-cover ${avatarBorder}`} />
+                            {entityType === 'my-agent' && <div className="absolute -bottom-0.5 -right-0.5 text-[10px] bg-hx-bg-panel rounded-full relative z-10">✨</div>}
+                          </div>
+                        ) : (
+                          <div className="relative">
+                            <div
+                              className={`hx-conv-avatar flex items-center justify-center text-white font-semibold text-sm ${conv.peer_type === 'agent' ? 'bg-gradient-to-br from-hx-blue to-hx-purple' : 'bg-gradient-to-br from-hx-purple to-hx-blue'} ${avatarBorder}`}
+                            >
+                              {getInitial(conv.peer_name)}
+                            </div>
+                            {entityType === 'my-agent' && <div className="absolute -bottom-0.5 -right-0.5 text-[10px] bg-hx-bg-panel rounded-full relative z-10">✨</div>}
+                          </div>
+                        )}
+
+                        <div className="hx-conv-info">
+                          <div className="hx-conv-name-row">
+                            <span className="hx-conv-name">{conv.peer_name}{nameSuffix && <span className="text-hx-text-tertiary font-normal ml-0.5">{nameSuffix}</span>}</span>
+                            <span className="text-[11px] text-hx-text-tertiary shrink-0">
+                              {formatTime(conv.last_message_at)}
+                            </span>
+                          </div>
+                          <div className="hx-conv-preview">{conv.last_message || ''}</div>
+                        </div>
+
+                        {conv.unread_count > 0 && !isActive && (
+                          <span className="hx-conv-badge">
+                            {conv.unread_count > 99 ? '99+' : conv.unread_count}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </>
@@ -305,18 +342,41 @@ export default function HasnChat() {
                   <ChevronLeft size={22} />
                 </button>
               )}
-              <div
-                className="hx-chat-header-avatar bg-gradient-to-br from-hx-purple to-hx-blue text-white font-semibold text-sm"
-              >
-                {getInitial(activeConv.peer_name)}
-              </div>
-              <div className="hx-chat-header-info">
-                <h3>{activeConv.peer_name}</h3>
-                <div className="hx-chat-header-status">
-                  <span className={`dot ${connected ? 'bg-hx-green' : 'bg-hx-text-tertiary'}`} />
-                  {activeConv.peer_type === 'agent' ? 'Agent' : 'HASN'}
-                </div>
-              </div>
+              
+              {(() => {
+                const entityType = inferConversationType(activeConv.peer_type, activeConv.peer_id, hasnContacts.myAgentIds);
+                const cp = hasnContacts.rawContacts.find(c => c.peer.hasn_id === activeConv.peer_id);
+                const avatarUrl = cp?.peer.avatar_url;
+                
+                let HeaderIcon = null;
+                if (avatarUrl) {
+                  HeaderIcon = <img src={avatarUrl} alt={activeConv.peer_name} className="w-[36px] h-[36px] rounded-full object-cover shrink-0" />;
+                } else {
+                  HeaderIcon = (
+                    <div className="hx-chat-header-avatar bg-gradient-to-br from-hx-purple to-hx-blue text-white font-semibold text-sm">
+                      {getInitial(activeConv.peer_name)}
+                    </div>
+                  );
+                }
+
+                return (
+                  <>
+                    {HeaderIcon}
+                    <div className="hx-chat-header-info">
+                      <h3 className="flex items-center gap-1.5">
+                        {entityType === 'friend-agent' || entityType === 'my-agent' ? '🤖 ' : ''}
+                        {activeConv.peer_name}
+                      </h3>
+                      <div className="hx-chat-header-status">
+                        <span className={`dot ${connected ? 'bg-hx-green' : 'bg-hx-text-tertiary'}`} />
+                        {entityType === 'human' ? '🟢 会话就绪' : ''}
+                        {entityType === 'my-agent' ? '我的 Agent' : ''}
+                        {entityType === 'friend-agent' ? `归属: ${cp?.nickname || cp?.peer.name || '好友'}` : ''}
+                      </div>
+                    </div>
+                  </>
+                );
+              })()}
             </div>
           </div>
         )}
@@ -356,17 +416,46 @@ export default function HasnChat() {
 
               {messages.map((msg) => {
                 const isOutgoing = msg.from.hasn_id === myId;
+                const senderEntityType = isOutgoing ? 'human' : inferConversationType(msg.from.entity_type, msg.from.hasn_id, hasnContacts.myAgentIds);
+                const cp = !isOutgoing ? hasnContacts.rawContacts.find(c => c.peer.hasn_id === msg.from.hasn_id) : null;
+                const senderAvatarUrl = cp?.peer.avatar_url;
+                
+                let avatarBorder = '';
+                if (!isOutgoing) {
+                  if (senderEntityType === 'my-agent') avatarBorder = 'ring-2 ring-hx-blue ring-offset-1 ring-offset-hx-bg-panel';
+                  else if (senderEntityType === 'friend-agent') avatarBorder = 'ring-2 ring-purple-400 ring-offset-1 ring-offset-hx-bg-panel';
+                  else avatarBorder = 'ring-2 ring-hx-green ring-offset-1 ring-offset-hx-bg-panel';
+                }
+
                 return (
                   <div
                     key={msg.local_id || msg.id}
                     className={`hx-msg ${isOutgoing ? 'user' : 'agent'}`}
                   >
-                    <div
-                      className={`hx-msg-avatar flex items-center justify-center shrink-0 ${!isOutgoing ? 'bg-gradient-to-br from-hx-purple to-hx-blue text-white font-semibold text-xs' : ''}`}
-                    >
-                      {isOutgoing ? getInitial(myName) : getInitial(activeConv?.peer_name || '?')}
-                    </div>
+                    {!isOutgoing && senderAvatarUrl ? (
+                      <div className="relative shrink-0">
+                        <img src={senderAvatarUrl} alt={activeConv?.peer_name || '?'} className={`hx-msg-avatar flex items-center justify-center shrink-0 object-cover ${avatarBorder}`} />
+                        {senderEntityType === 'my-agent' && <div className="absolute -bottom-0.5 -right-0.5 text-[8px] bg-hx-bg-panel rounded-full relative z-10 font-mono">✨</div>}
+                      </div>
+                    ) : (
+                      <div
+                        className={`hx-msg-avatar flex items-center justify-center shrink-0 ${!isOutgoing ? `bg-gradient-to-br ${senderEntityType === 'human' ? 'from-hx-green/80 to-hx-green' : 'from-hx-purple to-hx-blue'} text-white font-semibold text-xs ${avatarBorder}` : 'bg-gray-200 text-gray-700'}`}
+                      >
+                        {isOutgoing ? getInitial(myName) : getInitial(activeConv?.peer_name || '?')}
+                      </div>
+                    )}
                     <div className="hx-msg-content">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-[11px] font-medium text-hx-text-secondary">
+                          {isOutgoing ? myName : (activeConv?.peer_name || '对方')}
+                        </span>
+                        {!isOutgoing && senderEntityType === 'my-agent' && (
+                          <span className="text-[9px] px-1 bg-hx-blue/10 text-hx-blue rounded-sm">我的 Agent</span>
+                        )}
+                        {!isOutgoing && senderEntityType === 'friend-agent' && (
+                          <span className="text-[9px] px-1 bg-purple-500/10 text-purple-500 rounded-sm">好友 Agent</span>
+                        )}
+                      </div>
                       <div className="hx-msg-bubble">
                         {msg.content.content_type === 'tool_call' ? (
                           <div className="font-mono text-[11px] opacity-70 p-1 bg-black/5 rounded">

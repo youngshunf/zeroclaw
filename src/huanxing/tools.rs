@@ -413,6 +413,7 @@ impl Tool for HxRegisterUser {
             fallback_provider: None,
             embedding_provider: None,
             llm_gateway: None,
+            avatar_url: None,
         };
 
         struct ToolProgress;

@@ -123,7 +123,7 @@ function AppContent() {
           for (const agent of (res.agents || [])) {
             if (!agent.hasn_id) {
               const displayName = agent.display_name || `${session.user?.nickname || '唤星用户'}的${agent.name}`;
-              await registerHasnAgent(session, agent.name, displayName, 'desktop');
+              await registerHasnAgent(session, agent.name, displayName, 'desktop', undefined, agent.avatar_url);
             }
           }
         } catch (agentErr) {

@@ -47,6 +47,9 @@ pub struct CreateAgentParams {
     /// Agent 绑定的 HASN Identity ID
     pub hasn_id: Option<String>,
 
+    /// 头像 URL（来自注册或前端动态覆盖）
+    pub avatar_url: Option<String>,
+
     /// 降级 fallback provider (e.g. "custom:https://llm.dcfuture.cn/v1")
     pub fallback_provider: Option<String>,
     /// 嵌入向量 provider (e.g. "custom:https://llm.dcfuture.cn/v1")

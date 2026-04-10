@@ -5,7 +5,9 @@
  * Web 浏览器：通过 fetch() 调用 HTTP API
  */
 
-// ---------- 类型定义（对齐 Tauri hasn.rs 响应类型）----------
+// ══════════════════════════════════════════════
+// 类型定义 — 阶段二对齐 (0-5 六级信任 / 三维权限矩阵)
+// ══════════════════════════════════════════════
 
 export interface Conversation {
   id: string;
@@ -20,12 +22,12 @@ export interface Conversation {
 export interface EntityRef {
   hasn_id: string;
   owner_id?: string;
-  entity_type: "human" | "agent" | "system";
+  entity_type: 'human' | 'agent' | 'system';
 }
 
 export interface MessageContent {
   content_type: string; // "text", "tool_call", "image", etc.
-  body: any; // E.g. { text: string } or { tool_name: string, ... }
+  body: any;
 }
 
 export interface MessageContext {
@@ -39,25 +41,73 @@ export interface MessageContext {
 }
 
 export interface MessageMetadata {
-  priority?: "critical" | "high" | "normal" | "low";
+  priority?: 'critical' | 'high' | 'normal' | 'low';
   created_at: string;
   server_received_at?: string;
 }
 
 export interface HasnEnvelope {
   id: string;
-  version: "1.0";
+  version: '1.0';
   from: EntityRef;
   to: EntityRef;
-  type: string; // "message", "capability_request", etc.
+  type: string;
   content: MessageContent;
   context: MessageContext;
   metadata: MessageMetadata;
-  // Legacy fields for backward compatibility during transition
   local_id?: string;
   send_status?: string;
 }
 
+// ── 信任等级常量 ────────────────────────────────
+export const TRUST_LEVELS = {
+  BLOCKED:  0,
+  STRANGER: 1,
+  NORMAL:   2,
+  FRIEND:   3,
+  TRUSTED:  4,
+  OWNER:    5,
+} as const;
+
+export type TrustLevel = typeof TRUST_LEVELS[keyof typeof TRUST_LEVELS];
+
+export const TRUST_LEVEL_LABELS: Record<number, string> = {
+  0: '已拉黑',
+  1: '陌生人',
+  2: '普通联系人',
+  3: '朋友',
+  4: '密友',
+  5: '所有者',
+};
+
+export const TRUST_LEVEL_COLORS: Record<number, string> = {
+  0: 'red',
+  1: 'gray',
+  2: 'blue',
+  3: 'green',
+  4: 'orange',
+  5: 'purple',
+};
+
+// ── 关系类型 ────────────────────────────────────
+export type RelationType = 'social' | 'commerce' | 'service' | 'professional' | 'platform';
+
+// ── 四态权限编码 ────────────────────────────────
+export type PermissionState = 'allow' | 'deny' | 'confirm_required' | 'scope_limited';
+
+// ── 联系人名下 Agent 摘要 ───────────────────────
+export interface AgentPeer {
+  hasn_id: string;
+  star_id: string;
+  name: string;
+  agent_name: string;
+  avatar_url?: string;
+  type: string;
+  role: string;
+}
+
+// ── 联系人 ─────────────────────────────────────
+/** 旧版简单 Contact，向后兼容保留 */
 export interface Contact {
   hasn_id: string;
   star_id: string;
@@ -66,6 +116,31 @@ export interface Contact {
   relation_type: string;
   trust_level: number;
   status: string;
+}
+
+/** 阶段二完整联系人（/contacts 接口实际返回体） */
+export interface ContactFull {
+  id: number;
+  peer: {
+    hasn_id: string;
+    star_id: string;
+    name: string;
+    type: string;       // 'human' | 'agent'
+    avatar_url?: string;
+    status?: string;
+  };
+  relation_type: RelationType;
+  trust_level: TrustLevel;
+  trust_level_label: string;
+  nickname?: string;
+  tags?: string[];
+  subscription: boolean;
+  status: string;
+  owned_agents: AgentPeer[];          // human 联系人名下 Agent 列表
+  custom_permissions: Record<string, PermissionState>;
+  scope?: Record<string, any>;
+  connected_at?: string;
+  last_interaction_at?: string;
 }
 
 export interface FriendRequest {
@@ -78,6 +153,8 @@ export interface FriendRequest {
   created_at?: string;
 }
 
+// ── Agent 信息 ─────────────────────────────────
+/** 阶段三增强版 AgentInfo（/me/agents 返回体） */
 export interface AgentInfo {
   hasn_id: string;
   star_id: string;
@@ -85,11 +162,16 @@ export interface AgentInfo {
   agent_name: string;
   type: string;
   node_id?: string;
+  avatar_url?: string;
+  role: string;
+  description?: string;
+  capabilities?: any[];
   online: boolean;
   created_via: string;
   created_time?: string;
 }
 
+// ── 节点 / API Key ────────────────────────────
 export interface HasnNodeInfo {
   node_id: string;
   user_id?: number | null;
@@ -128,20 +210,29 @@ export interface CreateOwnerApiKeyResult extends OwnerApiKeyInfo {
   owner_api_key: string;
 }
 
-// ---------- 环境检测与路径解析 ----------
+// ── 权限矩阵查询结果 ────────────────────────────
+export interface EffectivePermissions {
+  contact_id: number;
+  relation_type: RelationType;
+  trust_level: TrustLevel;
+  trust_level_label: string;
+  effective_permissions: Record<string, PermissionState>;
+}
+
+// ══════════════════════════════════════════════
+// 环境检测与路径解析
+// ══════════════════════════════════════════════
 
 import { HUANXING_CONFIG, getHuanxingSession } from '../config';
 import { hasnWs } from './hasn-ws';
 
-const isDesktop = typeof window !== 'undefined' && (!!((window as any).__TAURI_INTERNALS__) || !!((window as any).__TAURI__));
-// 云端后端 HASN API：DEV 模式走 Vite 代理（/api/v1/hasn/app → 8020），生产 Tauri 直连后端
+const isDesktop = typeof window !== 'undefined' && (!!(window as any).__TAURI_INTERNALS__ || !!(window as any).__TAURI__);
 const CLOUD_API_BASE = `${import.meta.env.DEV ? '' : (isDesktop ? HUANXING_CONFIG.backendBaseUrl : '')}/api/v1/hasn/app`;
-// 本地 Sidecar HASN API
-// - DEV 模式（Tauri dev / Vite）：使用相对路径，由 Vite 代理 /api/v1/hasn → localhost:42620，避免跨域
-// - 生产模式（Tauri 打包）：直连 sidecar（tauri:// 协议不受 CORS 限制）
 const SIDECAR_API_BASE = import.meta.env.DEV
   ? `/api/v1/hasn`
   : `${HUANXING_CONFIG.sidecarBaseUrl}/api/v1/hasn`;
+
+// ── 通用请求工具 ────────────────────────────────
 
 async function cloudGet<T>(path: string): Promise<T> {
   const token = getHuanxingSession()?.accessToken;
@@ -151,8 +242,8 @@ async function cloudGet<T>(path: string): Promise<T> {
   if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
   const json = await resp.json();
   let data = json.data ?? json;
-  
-  // Extract paginated arrays automatically for array-based APIs
+
+  // Extract paginated arrays automatically
   if (data && typeof data === 'object' && !Array.isArray(data)) {
     if (Array.isArray(data.items)) data = data.items;
     else if (Array.isArray(data.list)) data = data.list;
@@ -161,16 +252,31 @@ async function cloudGet<T>(path: string): Promise<T> {
     else if (Array.isArray(data.agents)) data = data.agents;
     else if (Array.isArray(data.requests)) data = data.requests;
   }
-  
+
   return data;
 }
 
 async function cloudPost<T>(path: string, body: Record<string, unknown>): Promise<T> {
   const token = getHuanxingSession()?.accessToken;
   const resp = await fetch(`${CLOUD_API_BASE}${path}`, {
-    method: "POST",
+    method: 'POST',
     headers: {
-      "Content-Type": "application/json",
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
+  const json = await resp.json();
+  return json.data ?? json;
+}
+
+async function cloudPut<T>(path: string, body: Record<string, unknown>): Promise<T> {
+  const token = getHuanxingSession()?.accessToken;
+  const resp = await fetch(`${CLOUD_API_BASE}${path}`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body: JSON.stringify(body),
@@ -183,7 +289,7 @@ async function cloudPost<T>(path: string, body: Record<string, unknown>): Promis
 async function cloudDelete<T>(path: string): Promise<T> {
   const token = getHuanxingSession()?.accessToken;
   const resp = await fetch(`${CLOUD_API_BASE}${path}`, {
-    method: "DELETE",
+    method: 'DELETE',
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
   if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
@@ -200,8 +306,8 @@ async function sidecarGet<T>(path: string): Promise<T> {
 
 async function sidecarPost<T>(path: string, body: Record<string, unknown>): Promise<T> {
   const resp = await fetch(`${SIDECAR_API_BASE}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
   if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
@@ -209,57 +315,53 @@ async function sidecarPost<T>(path: string, body: Record<string, unknown>): Prom
   return json.data ?? json;
 }
 
-// ---------- 连接管理 (呼叫 Sidecar) ----------
+// ══════════════════════════════════════════════
+// 连接管理 (Sidecar)
+// ══════════════════════════════════════════════
 
 export async function hasnConnect(nodeKey: string, hasnId: string, starId: string): Promise<any> {
-  localStorage.setItem("hasn:hasn_id", hasnId);
-  localStorage.setItem("hasn:star_id", starId);
-  const result = await sidecarPost("/connect", { token: nodeKey });
+  localStorage.setItem('hasn:hasn_id', hasnId);
+  localStorage.setItem('hasn:star_id', starId);
+  const result = await sidecarPost('/connect', { token: nodeKey });
   hasnWs.emitConnected();
   return result;
 }
 
 export async function hasnDisconnect(): Promise<void> {
-  await sidecarPost("/disconnect", {});
+  await sidecarPost('/disconnect', {});
   hasnWs.emitDisconnected();
 }
 
 export async function hasnStatus(): Promise<string> {
   try {
-    const res = await sidecarGet<any>("/status");
-    // sidecar 返回 {connected: boolean, node_id: string}
-    if (res.connected === true) return "connected";
+    const res = await sidecarGet<any>('/status');
+    if (res.connected === true) return 'connected';
     if (res.status) return res.status;
-    return "disconnected";
+    return 'disconnected';
   } catch {
-    return "disconnected";
+    return 'disconnected';
   }
 }
 
 export async function hasnAddOwner(ownerId: string, bearerToken: string): Promise<any> {
-  return sidecarPost("/node/owners", {
+  return sidecarPost('/node/owners', {
     owner_id: ownerId,
-    owner_proof: {
-      type: "bearer_token",
-      credential: bearerToken,
-    },
+    owner_proof: { type: 'bearer_token', credential: bearerToken },
   });
 }
 
 export async function hasnRenewOwner(ownerId: string, bearerToken: string): Promise<any> {
-  // 仅在 WS 已连接时才尝试续期，避免对断开的 connector 发帧导致 500
   const connStatus = await hasnStatus();
   if (connStatus !== 'connected') return;
-
   return sidecarPost(`/node/owners/${encodeURIComponent(ownerId)}/renew`, {
-    type: "bearer_token",
+    type: 'bearer_token',
     credential: bearerToken,
   });
 }
 
 export async function hasnRemoveOwner(ownerId: string): Promise<any> {
   const resp = await fetch(`${SIDECAR_API_BASE}/node/owners/${encodeURIComponent(ownerId)}`, {
-    method: "DELETE",
+    method: 'DELETE',
   });
   if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
   const json = await resp.json();
@@ -267,53 +369,47 @@ export async function hasnRemoveOwner(ownerId: string): Promise<any> {
 }
 
 export async function hasnAddAgent(agentId: string, ownerId: string): Promise<any> {
-  return sidecarPost("/node/agents", {
-    agent_id: agentId,
-    owner_id: ownerId,
-  });
+  return sidecarPost('/node/agents', { agent_id: agentId, owner_id: ownerId });
 }
 
 export async function hasnRemoveAgent(agentId: string): Promise<any> {
   const resp = await fetch(`${SIDECAR_API_BASE}/node/agents/${encodeURIComponent(agentId)}`, {
-    method: "DELETE",
+    method: 'DELETE',
   });
   if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
   const json = await resp.json();
   return json.data ?? json;
 }
 
-// ---------- 会话 API (呼叫 Cloud) ----------
+// ══════════════════════════════════════════════
+// 会话 API (Cloud)
+// ══════════════════════════════════════════════
 
 export async function getConversations(): Promise<Conversation[]> {
-  return cloudGet<Conversation[]>("/conversations");
+  return cloudGet<Conversation[]>('/conversations');
 }
 
-// 适配器：将后端的旧版 Message 转换为 v4.0 HasnEnvelope
 function mapLegacyMessageToEnvelope(msg: any): HasnEnvelope {
   return {
     id: msg.id ? String(msg.id) : `msg_${Date.now()}`,
-    version: "1.0",
+    version: '1.0',
     from: {
-      hasn_id: msg.from_id || "",
-      entity_type: msg.from_type === 1 ? "human" : "agent"
+      hasn_id: msg.from_id || '',
+      entity_type: msg.from_type === 1 ? 'human' : 'agent',
     },
     to: {
-      hasn_id: msg.to_id || "",
-      entity_type: "human" // Defaulting to human for legacy
+      hasn_id: msg.to_id || '',
+      entity_type: 'human',
     },
-    type: "message",
+    type: 'message',
     content: {
-      content_type: msg.content_type === 6 ? "tool_call" : "text",
-      body: { text: msg.content || "" }
+      content_type: msg.content_type === 6 ? 'tool_call' : 'text',
+      body: { text: msg.content || '' },
     },
-    context: {
-      conversation_id: msg.conversation_id || ""
-    },
-    metadata: {
-      created_at: msg.created_at || new Date().toISOString()
-    },
+    context: { conversation_id: msg.conversation_id || '' },
+    metadata: { created_at: msg.created_at || new Date().toISOString() },
     local_id: msg.local_id,
-    send_status: msg.send_status || "delivered"
+    send_status: msg.send_status || 'delivered',
   };
 }
 
@@ -323,45 +419,39 @@ export async function getMessages(
   beforeId?: number | string,
 ): Promise<HasnEnvelope[]> {
   const params = new URLSearchParams({ limit: String(limit) });
-  if (beforeId) params.set("before_id", String(beforeId));
+  if (beforeId) params.set('before_id', String(beforeId));
   try {
     const legacyMessages = await cloudGet<any[]>(`/conversations/${conversationId}/messages?${params}`);
     return legacyMessages.map(mapLegacyMessageToEnvelope);
   } catch (err: any) {
-    // 会话尚未创建时后端返回 404，属于正常情况
     if (err?.message?.includes('404')) return [];
     throw err;
   }
 }
 
 export async function sendMessage(to: string, content: string, replyToId?: number): Promise<HasnEnvelope> {
-  // 检查 HASN 连接状态
   const status = await hasnStatus();
-  if (status !== 'connected') {
-    throw new Error('HASN 未连接，无法发送消息');
-  }
+  if (status !== 'connected') throw new Error('HASN 未连接，无法发送消息');
 
-  // 发送消息通过 Sidecar 代理发出，实现双端一致性
-  const hasnId = localStorage.getItem("hasn:hasn_id") || "";
-  await sidecarPost("/send", {
+  const hasnId = localStorage.getItem('hasn:hasn_id') || '';
+  await sidecarPost('/send', {
     from_id: hasnId,
     to,
     content: { text: content },
     local_id: `temp_${Date.now()}`,
   });
-  
-  // 乐观构建一个 v4.0 HasnEnvelope 返回给前端
+
   return {
     id: `temp_${Date.now()}`,
-    version: "1.0",
-    from: { hasn_id: hasnId, entity_type: "human" },
-    to: { hasn_id: to, entity_type: "human" },
-    type: "message",
-    content: { content_type: "text", body: { text: content } },
-    context: { conversation_id: "" }, // Will be filled by WS return
+    version: '1.0',
+    from: { hasn_id: hasnId, entity_type: 'human' },
+    to: { hasn_id: to, entity_type: 'human' },
+    type: 'message',
+    content: { content_type: 'text', body: { text: content } },
+    context: { conversation_id: '' },
     metadata: { created_at: new Date().toISOString() },
     local_id: `temp_${Date.now()}`,
-    send_status: "sent"
+    send_status: 'sent',
   };
 }
 
@@ -369,33 +459,67 @@ export async function markConversationRead(conversationId: string, lastMsgId?: n
   await cloudPost(`/conversations/${conversationId}/read`, { last_msg_id: lastMsgId ?? 0 });
 }
 
-// ---------- 联系人 API (呼叫 Cloud) ----------
+// ══════════════════════════════════════════════
+// 联系人 API (Cloud) — 阶段二增强
+// ══════════════════════════════════════════════
 
-export async function getContacts(relationType?: string): Promise<Contact[]> {
-  const params = relationType ? `?relation_type=${relationType}` : "";
-  return cloudGet<Contact[]>(`/contacts${params}`);
+/** 获取联系人列表（完整 ContactFull 格式，含 owned_agents / custom_permissions） */
+export async function getContacts(relationType?: string): Promise<ContactFull[]> {
+  const params = relationType ? `?relation_type=${relationType}` : '';
+  const raw = await cloudGet<any>(`/contacts${params}`);
+  // 后端返回 {total, items}，cloudGet 会自动展开 items
+  const arr = Array.isArray(raw) ? raw : (raw?.items ?? []);
+  return arr as ContactFull[];
 }
 
 export async function sendFriendRequest(starId: string, message?: string): Promise<void> {
-  await cloudPost("/contacts/request", { target_star_id: starId, message });
+  await cloudPost('/contacts/request', { target_star_id: starId, message });
 }
 
 export async function getFriendRequests(): Promise<FriendRequest[]> {
-  return cloudGet<FriendRequest[]>("/contacts/requests");
+  return cloudGet<FriendRequest[]>('/contacts/requests');
 }
 
 export async function respondFriendRequest(requestId: number, accept: boolean): Promise<void> {
-  await cloudPost(`/contacts/requests/${requestId}/respond`, { action: accept ? "accept" : "reject" });
+  await cloudPost(`/contacts/requests/${requestId}/respond`, { action: accept ? 'accept' : 'reject' });
 }
 
-// ---------- Agent API (呼叫 Cloud) ----------
+/** 修改联系人信任等级 */
+export async function updateTrustLevel(
+  contactId: number,
+  trustLevel: TrustLevel,
+  relationType: RelationType = 'social',
+): Promise<void> {
+  await cloudPut(`/contacts/${contactId}/trust-level`, {
+    trust_level: trustLevel,
+    relation_type: relationType,
+  });
+}
 
+/** 覆盖联系人权限（铁律校验由后端执行） */
+export async function updateContactPermissions(
+  contactId: number,
+  permissions: Record<string, PermissionState>,
+): Promise<void> {
+  await cloudPut(`/contacts/${contactId}/permissions`, { permissions });
+}
+
+/** 查询联系人的合并有效权限 */
+export async function getEffectivePermissions(contactId: number): Promise<EffectivePermissions> {
+  return cloudGet<EffectivePermissions>(`/contacts/${contactId}/effective-permissions`);
+}
+
+// ══════════════════════════════════════════════
+// Agent API (Cloud) — 阶段三增强
+// ══════════════════════════════════════════════
+
+/** 获取我的 Agent 列表（含 avatar_url / role / description / capabilities） */
 export async function getMyAgents(): Promise<AgentInfo[]> {
-  return cloudGet<AgentInfo[]>("/agents");
+  return cloudGet<AgentInfo[]>('/me/agents');
 }
 
-export async function getMyNodes(): Promise<any[]> {
-  return cloudGet<HasnNodeInfo[]>("/me/nodes");
+export async function getMyNodes(): Promise<HasnNodeInfo[]> {
+  return cloudGet<HasnNodeInfo[]>('/me/nodes');
 }
 
 export async function reissueMyNodeKey(nodeId: string): Promise<{ node_id: string; node_key: string }> {
@@ -403,11 +527,11 @@ export async function reissueMyNodeKey(nodeId: string): Promise<{ node_id: strin
 }
 
 export async function getOwnerApiKeys(): Promise<OwnerApiKeyInfo[]> {
-  return cloudGet<OwnerApiKeyInfo[]>("/api-keys");
+  return cloudGet<OwnerApiKeyInfo[]>('/api-keys');
 }
 
 export async function createOwnerApiKey(payload: CreateOwnerApiKeyPayload): Promise<CreateOwnerApiKeyResult> {
-  return cloudPost<CreateOwnerApiKeyResult>("/api-keys", {
+  return cloudPost<CreateOwnerApiKeyResult>('/api-keys', {
     name: payload.name,
     scopes: payload.scopes,
     bound_node_id: payload.bound_node_id,
@@ -418,5 +542,3 @@ export async function createOwnerApiKey(payload: CreateOwnerApiKeyPayload): Prom
 export async function deleteOwnerApiKey(keyId: string): Promise<void> {
   await cloudDelete(`/api-keys/${encodeURIComponent(keyId)}`);
 }
-
-// 本地 Agent HASN 注册已统一为无需前端传递 client_id。

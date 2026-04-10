@@ -17,6 +17,7 @@ export interface AgentInfo {
   is_default: boolean;
   location?: 'local' | 'remote';
   icon_url?: string;
+  avatar_url?: string;    // CDN 头像 URL（Phase 1 阶段从 config.toml 同步）
 }
 
 export interface AgentListResponse {

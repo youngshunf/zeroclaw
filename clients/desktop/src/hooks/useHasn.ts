@@ -5,7 +5,7 @@
  * 对齐 hasn-api.ts 类型和 hasn-ws.ts 事件。
  */
 import { useState, useEffect, useCallback, useRef } from "react";
-import type { Conversation, HasnEnvelope, Contact, FriendRequest } from "../lib/hasn-api";
+import type { Conversation, HasnEnvelope, ContactFull, FriendRequest } from "../lib/hasn-api";
 import * as hasnApi from "../lib/hasn-api";
 import { hasnWs, type HasnWsEvent } from "../lib/hasn-ws";
 
@@ -235,7 +235,7 @@ export function useHasnMessages(conversationId: string | null) {
 // ---------- 联系人 ----------
 
 export function useHasnContacts() {
-  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [contacts, setContacts] = useState<ContactFull[]>([]);
   const [friendRequests, setFriendRequests] = useState<FriendRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -247,7 +247,7 @@ export function useHasnContacts() {
         hasnApi.getContacts(),
         hasnApi.getFriendRequests(),
       ]);
-      const c = Array.isArray(cRes) ? cRes : ((cRes as any).contacts || []);
+      const c = Array.isArray(cRes) ? cRes : ((cRes as any).items || []);
       const fr = Array.isArray(frRes) ? frRes : ((frRes as any).requests || []);
       setContacts(c);
       setFriendRequests(fr);

@@ -85,7 +85,9 @@ impl Tool for MemoryExportTool {
             until,
         };
 
-        match self.memory.export(&filter).await {
+        let memory = crate::tools::get_active_memory().unwrap_or_else(|| self.memory.clone());
+
+        match memory.export(&filter).await {
             Ok(entries) => {
                 let json_output = serde_json::to_string(&entries)
                     .unwrap_or_else(|e| format!("{{\"error\": \"serialization failed: {e}\"}}"));

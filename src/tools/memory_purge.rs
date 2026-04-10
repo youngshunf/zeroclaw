@@ -66,11 +66,13 @@ impl Tool for MemoryPurgeTool {
             });
         }
 
+        let memory = crate::tools::get_active_memory().unwrap_or_else(|| self.memory.clone());
+
         let mut total_purged = 0;
         let mut output_parts = Vec::new();
 
         if let Some(ns) = namespace {
-            match self.memory.purge_namespace(ns).await {
+            match memory.purge_namespace(ns).await {
                 Ok(count) => {
                     total_purged += count;
                     output_parts.push(format!("Purged {count} memories from namespace '{ns}'"));
@@ -86,7 +88,7 @@ impl Tool for MemoryPurgeTool {
         }
 
         if let Some(sid) = session_id {
-            match self.memory.purge_session(sid).await {
+            match memory.purge_session(sid).await {
                 Ok(count) => {
                     total_purged += count;
                     output_parts.push(format!("Purged {count} memories from session '{sid}'"));

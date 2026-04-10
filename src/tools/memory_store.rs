@@ -78,7 +78,9 @@ impl Tool for MemoryStoreTool {
             });
         }
 
-        match self.memory.store(key, content, category, None).await {
+        let memory = crate::tools::get_active_memory().unwrap_or_else(|| self.memory.clone());
+
+        match memory.store(key, content, category, None).await {
             Ok(()) => Ok(ToolResult {
                 success: true,
                 output: format!("Stored memory: {key}"),

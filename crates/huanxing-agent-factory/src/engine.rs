@@ -10,6 +10,7 @@ pub fn fallback_template(id: &str) -> TemplateDefinition {
         id: id.to_string(),
         name: id.to_string(),
         version: "1.0.0".to_string(),
+        icon_cdn_url: None,
         emoji: "🤖".to_string(),
         description: "Default fallback template".to_string(),
         model: "MiniMax-M2.7".to_string(),
@@ -35,6 +36,7 @@ fn substitute_placeholders(
         .unwrap_or(final_provider);
     let final_llm_gw = params.llm_gateway.as_deref().unwrap_or("");
 
+    let final_avatar = params.avatar_url.as_deref().or(def.icon_cdn_url.as_deref()).unwrap_or("");
     content
         .replace("{{star_name}}", &params.display_name)
         .replace("{{nickname}}", &params.user_nickname)
@@ -53,6 +55,7 @@ fn substitute_placeholders(
         .replace("{{user_id}}", &params.tenant_id)
         .replace("{{agent_id}}", &params.agent_name)
         .replace("{{hasn_id}}", params.hasn_id.as_deref().unwrap_or(""))
+        .replace("{{avatar_url}}", final_avatar)
         .replace("{{template}}", &params.template_id)
         .replace("{{created_at}}", now)
         .replace("{{createdAt}}", now)

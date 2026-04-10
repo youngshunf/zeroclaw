@@ -79,6 +79,7 @@ fn build_create_agent_params(
         provider: None,
         model: None,
         api_key: req.api_key.clone(),
+        avatar_url: req.avatar_url.clone(),
         hasn_id: None,
         fallback_provider: None,
         embedding_provider: None,
@@ -107,6 +108,8 @@ pub struct AgentInfo {
     pub is_default: bool,
     /// 代理图标 URL
     pub icon_url: Option<String>,
+    /// CDN 头像 URL（来自 config.toml 的 avatar_url，优先级高于本地 icon_url）
+    pub avatar_url: Option<String>,
 }
 
 /// 列出 Agent 响应
@@ -132,6 +135,8 @@ pub struct CreateAgentRequest {
     pub base_url: Option<String>,
     /// 是否使用桌面端覆盖层
     pub is_desktop: Option<bool>,
+    /// 头像 URL (可选)
+    pub avatar_url: Option<String>,
 }
 
 /// 创建 Agent 响应
@@ -225,18 +230,20 @@ async fn list_agents(
 
                 let display_name = ws_cfg
                     .display_name
+                    .clone()
                     .or_else(|| ws_cfg.name.clone())
                     .or_else(|| ws_cfg.identity.as_ref().and_then(|id| id.name.clone()));
                     // 不再回退到全局 config.display_name —— 那是进程级标识，不应作为 Agent 名称
 
                 agents.push(AgentInfo {
                     config_dir: path.join("workspace").to_string_lossy().to_string(), // point to the inner workspace
-                    model: ws_cfg.default_model,
+                    model: ws_cfg.default_model.clone(),
                     display_name,
-                    hasn_id: ws_cfg.hasn_id,
+                    hasn_id: ws_cfg.hasn_id(),
                     active: true,
                     is_default: false,
                     icon_url,
+                    avatar_url: ws_cfg.avatar_url(),
                     name,
                 });
             }
@@ -902,14 +909,33 @@ struct PartialIdentity {
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
+struct AgentSect {
+    pub hasn_id: Option<String>,
+    pub avatar_url: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
 struct WorkspaceConfig {
     pub display_name: Option<String>,
     pub name: Option<String>,
     pub hasn_id: Option<String>,
+    pub avatar_url: Option<String>,
     pub default_model: Option<String>,
     pub default_provider: Option<String>,
     pub default_temperature: Option<f64>,
     pub identity: Option<PartialIdentity>,
+    pub agent: Option<AgentSect>,
+}
+
+impl WorkspaceConfig {
+    pub fn hasn_id(&self) -> Option<String> {
+        self.agent.as_ref().and_then(|a| a.hasn_id.clone()).or_else(|| self.hasn_id.clone())
+    }
+    
+    pub fn avatar_url(&self) -> Option<String> {
+        self.agent.as_ref().and_then(|a| a.avatar_url.clone()).or_else(|| self.avatar_url.clone())
+    }
 }
 
 /// 从工作区目录加载 config.toml 的部分字段

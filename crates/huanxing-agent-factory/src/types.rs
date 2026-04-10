@@ -11,6 +11,8 @@ pub struct TemplateDefinition {
     #[serde(default)]
     pub description: String,
     #[serde(default)]
+    pub icon_cdn_url: Option<String>,
+    #[serde(default)]
     pub model: String,
     #[serde(default)]
     pub temperature: Option<f64>,

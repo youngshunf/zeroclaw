@@ -58,7 +58,9 @@ impl Tool for MemoryForgetTool {
             });
         }
 
-        match self.memory.forget(key).await {
+        let memory = crate::tools::get_active_memory().unwrap_or_else(|| self.memory.clone());
+
+        match memory.forget(key).await {
             Ok(true) => Ok(ToolResult {
                 success: true,
                 output: format!("Forgot memory: {key}"),

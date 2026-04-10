@@ -534,6 +534,7 @@ pub async fn download_and_install_agent(
         fallback_provider: None,
         embedding_provider: None,
         llm_gateway: None,
+        avatar_url: None,
     };
 
     struct TauriProgress {

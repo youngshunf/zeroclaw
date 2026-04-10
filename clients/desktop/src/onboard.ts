@@ -391,6 +391,7 @@ interface PendingAgentHasnRetry {
   agentName: string;
   displayName: string;
   agentType: string;
+  avatarUrl?: string;
   updatedAt: string;
   error: string;
 }
@@ -400,11 +401,13 @@ function savePendingAgentHasnRetry(
   displayName: string,
   agentType: string,
   error: string,
+  avatarUrl?: string,
 ): void {
   const payload: PendingAgentHasnRetry = {
     agentName,
     displayName,
     agentType,
+    avatarUrl,
     updatedAt: new Date().toISOString(),
     error,
   };
@@ -448,6 +451,8 @@ export async function retryPendingAgentHasnRegistration(
     pending.agentName,
     pending.displayName,
     pending.agentType,
+    undefined,
+    pending.avatarUrl,
   );
   clearPendingAgentHasnRetry(pending.agentName);
   return result;
@@ -465,6 +470,7 @@ export async function registerHasnAgent(
   displayName: string,
   agentType: string = 'desktop',
   nodeId?: string,
+  avatarUrl?: string,
 ): Promise<AgentHasnIdentity> {
   const body: Record<string, unknown> = {
     agent_name: agentName,
@@ -472,6 +478,7 @@ export async function registerHasnAgent(
     agent_type: agentType,
   };
   if (nodeId) body.node_id = nodeId;
+  if (avatarUrl) body.avatar_url = avatarUrl;
 
   const resp = await fetch(hasnApiUrl('/api/v1/hasn/app/auth/register-agent'), {
     method: 'POST',
@@ -539,6 +546,7 @@ export function rememberAgentHasnRetry(
   displayName: string,
   agentType: string,
   error: string,
+  avatarUrl?: string,
 ): void {
-  savePendingAgentHasnRetry(agentName, displayName, agentType, error);
+  savePendingAgentHasnRetry(agentName, displayName, agentType, error, avatarUrl);
 }

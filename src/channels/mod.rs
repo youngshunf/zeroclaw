@@ -3425,28 +3425,36 @@ fn process_channel_message(
         let ws = msg_ctx.workspace_dir.clone();
         let kg_cfg = msg_ctx.knowledge_config.clone();
 
-        let f1 = crate::tools::with_active_knowledge_config(kg_cfg, run_llm_future);
+        let f0 = crate::tools::with_active_knowledge_config(kg_cfg, run_llm_future);
+        let f1 = crate::tools::with_active_memory(msg_ctx.memory.clone(), f0);
 
-        // Macro to layer skills-directory task-locals (three-level skill cascade).
-        // Must be a macro (not a closure) because each call site produces a distinct
-        // opaque future type that Rust cannot unify in a generic closure.
-        macro_rules! scope_skills {
+        // Macro to layer skills-directory and session task-locals
+        macro_rules! scope_session_and_skills {
             ($fut:expr) => {{
-                let fut = $fut;
-                match (&msg_ctx.global_skills_dir, &msg_ctx.user_skills_dir) {
-                    (Some(gsd), Some(usd)) => {
-                        crate::skills::ACTIVE_USER_SKILLS_DIR.scope(
-                            usd.clone(),
-                            crate::skills::ACTIVE_GLOBAL_SKILLS_DIR.scope(gsd.clone(), fut),
-                        ).await
-                    }
-                    (Some(gsd), None) => {
-                        crate::skills::ACTIVE_GLOBAL_SKILLS_DIR.scope(gsd.clone(), fut).await
-                    }
-                    (None, Some(usd)) => {
-                        crate::skills::ACTIVE_USER_SKILLS_DIR.scope(usd.clone(), fut).await
-                    }
-                    (None, None) => fut.await,
+                let fut_inner = $fut;
+                macro_rules! scope_skills_inner {
+                    ($fut_s:expr) => {{
+                        let fut_s_inner = $fut_s;
+                        match (&msg_ctx.global_skills_dir, &msg_ctx.user_skills_dir) {
+                            (Some(gsd), Some(usd)) => {
+                                crate::skills::ACTIVE_USER_SKILLS_DIR.scope(
+                                    usd.clone(),
+                                    crate::skills::ACTIVE_GLOBAL_SKILLS_DIR.scope(gsd.clone(), fut_s_inner),
+                                ).await
+                            }
+                            (Some(gsd), None) => {
+                                crate::skills::ACTIVE_GLOBAL_SKILLS_DIR.scope(gsd.clone(), fut_s_inner).await
+                            }
+                            (None, Some(usd)) => {
+                                crate::skills::ACTIVE_USER_SKILLS_DIR.scope(usd.clone(), fut_s_inner).await
+                            }
+                            (None, None) => fut_s_inner.await,
+                        }
+                    }};
+                }
+                match &msg_ctx.session_manager {
+                    Some(sm) => scope_skills_inner!(crate::tools::with_active_session_backend(sm.clone(), fut_inner)),
+                    None => scope_skills_inner!(fut_inner),
                 }
             }};
         }
@@ -3454,27 +3462,27 @@ fn process_channel_message(
         if let Some(sec) = msg_ctx.security.clone() {
             let f2 = crate::tools::with_active_security(sec, f1);
             if let Some(kg) = msg_ctx.knowledge_graph.clone() {
-                scope_skills!(
+                scope_session_and_skills!(
                     crate::tools::with_active_workspace(
                         ws,
                         crate::tools::with_active_knowledge_graph(kg, f2),
                     )
                 )
             } else {
-                scope_skills!(
+                scope_session_and_skills!(
                     crate::tools::with_active_workspace(ws, f2)
                 )
             }
         } else {
             if let Some(kg) = msg_ctx.knowledge_graph.clone() {
-                scope_skills!(
+                scope_session_and_skills!(
                     crate::tools::with_active_workspace(
                         ws,
                         crate::tools::with_active_knowledge_graph(kg, f1),
                     )
                 )
             } else {
-                scope_skills!(
+                scope_session_and_skills!(
                     crate::tools::with_active_workspace(ws, f1)
                 )
             }
@@ -3705,7 +3713,12 @@ fn process_channel_message(
             // When knowledge graph is available and auto_capture is enabled,
             // uses combined extraction (memory + knowledge) in one LLM call.
             if ctx.auto_save_memory && msg.content.chars().count() >= AUTOSAVE_MIN_MESSAGE_CHARS {
-                let (consolidation_memory, consolidation_model, consolidation_provider) =
+                let (
+                    consolidation_memory,
+                    consolidation_model,
+                    consolidation_provider,
+                    wd,
+                ): (Arc<dyn Memory>, String, Arc<dyn Provider>, std::path::PathBuf) =
                     if is_multi_tenant {
                         (
                             Arc::clone(&msg_ctx.memory),
@@ -3715,12 +3728,14 @@ fn process_channel_message(
                                 .unwrap_or(ctx.model.as_str())
                                 .to_string(),
                             Arc::clone(&active_provider),
+                            msg_ctx.workspace_dir.as_path().to_path_buf(),
                         )
                     } else {
                         (
                             Arc::clone(&ctx.memory),
                             ctx.model.to_string(),
                             Arc::clone(&ctx.provider),
+                            ctx.workspace_dir.as_path().to_path_buf(),
                         )
                     };
                 let user_msg = msg.content.clone();
@@ -3743,6 +3758,7 @@ fn process_channel_message(
                             &consolidation_model,
                             consolidation_memory.as_ref(),
                             &graph,
+                            Some(&wd),
                             &user_msg,
                             &assistant_resp,
                             Some(&agent_id_for_capture),
@@ -3766,6 +3782,7 @@ fn process_channel_message(
                             consolidation_provider.as_ref(),
                             &consolidation_model,
                             consolidation_memory.as_ref(),
+                            Some(&wd),
                             &user_msg,
                             &assistant_resp,
                         )

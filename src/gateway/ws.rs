@@ -470,6 +470,7 @@ async fn process_chat_message(
                 let mem = state.mem.clone();
                 let provider = state.provider.clone();
                 let model = state.model.clone();
+                let wd = state.config.lock().workspace_dir.clone();
                 let user_msg = content.to_string();
                 let assistant_resp = response.clone();
                 tokio::spawn(async move {
@@ -477,6 +478,7 @@ async fn process_chat_message(
                         provider.as_ref(),
                         &model,
                         mem.as_ref(),
+                        Some(&wd),
                         &user_msg,
                         &assistant_resp,
                     )
