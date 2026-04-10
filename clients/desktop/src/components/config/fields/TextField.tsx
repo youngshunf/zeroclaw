@@ -28,7 +28,7 @@ export default function TextField({ field, value, onChange, isMasked }: FieldPro
           <button
             type="button"
             onClick={() => setShowPassword(!showPassword)}
-            className="p-1 text-gray-400 hover:text-gray-200 transition-colors"
+            className="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
           >
             {showPassword ? (
               <EyeOff className="h-3.5 w-3.5" />

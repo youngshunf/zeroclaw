@@ -95,7 +95,7 @@ export default function ConfigFormEditor({
               onClick={() => setActiveCategory(key)}
               className={`px-3 py-1 rounded-lg text-sm font-medium transition-colors ${
                 activeCategory === key
-                  ? 'bg-[var(--hx-purple)] text-white border border-[var(--hx-purple)]'
+                  ? 'bg-hx-primary text-white border border-hx-primary'
                   : 'bg-white dark:bg-gray-900 text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-gray-200'
               }`}
             >

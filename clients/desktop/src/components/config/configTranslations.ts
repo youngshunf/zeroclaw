@@ -14,6 +14,10 @@ export const CONFIG_TRANSLATIONS: Record<string, string> = {
   "e.g. anthropic/claude-sonnet-4.6": "例如. anthropic/claude-sonnet-4.6",
   "Temperature": "温度",
   "Default: 0.7 (range 0.0–2.0)": "默认: 0.7 (range 0.0–2.0)",
+  "Provider Timeout (s)": "提供商超时时间 (秒)",
+  "Default: 120": "默认: 120",
+
+  "Auto-detect": "自动检测",
   "Model Supports Vision": "模型支持视觉",
   "Whether the model supports image inputs": "模型是否支持图像输入",
   "Provider": "提供商",

@@ -12,6 +12,7 @@ default_temperature = 0.7
 [agent]
 name = "{{agent_id}}"
 template = "{{template}}"
+avatar_url = "https://qncdn.dcfuture.cn/1840958611768840194/20260410/dfc7d792dc1447d3a9ce75838219e654.png"
 # Desktop onboard 只创建本地 Agent 壳。
 # hasn_id 会在登录后的 HASN 注册成功后回写，因此首次生成时为空是预期行为。
 hasn_id = "{{hasn_id}}"

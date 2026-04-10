@@ -12,7 +12,7 @@ export default function ToggleField({ field, value, onChange }: FieldProps) {
         aria-label={field.label}
         onClick={() => onChange(!isOn)}
         className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-          isOn ? 'bg-blue-600' : 'bg-gray-700'
+          isOn ? 'bg-hx-primary' : 'bg-gray-300 dark:bg-gray-700'
         }`}
       >
         <span
@@ -21,7 +21,7 @@ export default function ToggleField({ field, value, onChange }: FieldProps) {
           }`}
         />
       </button>
-      <span className="text-sm text-gray-400">{isOn ? 'Enabled' : 'Disabled'}</span>
+      <span className="text-sm text-gray-500 dark:text-gray-400">{isOn ? 'Enabled' : 'Disabled'}</span>
     </div>
   );
 }

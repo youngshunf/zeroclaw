@@ -60,6 +60,13 @@ export const CONFIG_SECTIONS: SectionDef[] = [
       ]},
       { key: 'default_model', label: 'Default Model', type: 'text', description: 'e.g. anthropic/claude-sonnet-4.6', defaultValue: 'anthropic/claude-sonnet-4.6' },
       { key: 'default_temperature', label: 'Temperature', type: 'number', min: 0, max: 2, step: 0.1, defaultValue: 0.7, description: 'Default: 0.7 (range 0.0–2.0)' },
+      { key: 'provider_timeout_secs', label: 'Provider Timeout (s)', type: 'number', min: 10, max: 900, defaultValue: 120, description: 'Default: 120' },
+      { key: 'locale', label: 'Language', type: 'select', defaultValue: 'auto', options: [
+        { value: 'auto', label: 'Auto-detect' },
+        { value: 'en-US', label: 'English' },
+        { value: 'zh-CN', label: '简体中文' },
+        { value: 'tr-TR', label: 'Türkçe' },
+      ]},
       { key: 'model_support_vision', label: 'Model Supports Vision', type: 'toggle', description: 'Whether the model supports image inputs' },
     ],
   },

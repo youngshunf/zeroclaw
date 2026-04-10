@@ -4,6 +4,7 @@ pub mod agent_bridge;
 pub mod api_agents;
 pub mod api_client;
 pub mod api_sessions;
+pub mod api_user_config;
 pub mod bootstrap;
 pub mod channel_registry;
 pub mod channels;

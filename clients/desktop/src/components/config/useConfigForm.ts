@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { parse, stringify } from 'smol-toml';
-import { getConfig, putConfig } from '@/lib/api';
+import { getConfig, putConfig, getUserConfig, putUserConfig } from '@/lib/api';
 
 const MASKED = '***MASKED***';
 
@@ -99,7 +99,14 @@ export function useConfigForm(): ConfigFormState {
     setLoading(true);
     setError(null);
     try {
-      const data = await getConfig();
+      let data: string | { format?: string; content: string };
+      try {
+        data = await getUserConfig();
+      } catch (e) {
+        // Fallback to global config if user-config API isn't available (non-huanxing)
+        console.warn('Failed to fetch user config, falling back to global config', e);
+        data = await getConfig();
+      }
       const raw = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
       setRawTomlState(raw);
 
@@ -259,7 +266,13 @@ export function useConfigForm(): ConfigFormState {
       } else {
         toml = rawToml;
       }
-      await putConfig(toml);
+      try {
+        await putUserConfig(toml);
+      } catch (e) {
+        // Fallback to global config if user-config API isn't available (non-huanxing)
+        console.warn('Failed to save user config, falling back to global config', e);
+        await putConfig(toml);
+      }
       setSuccess('Configuration saved successfully.');
 
       // Auto-dismiss success after 4 seconds

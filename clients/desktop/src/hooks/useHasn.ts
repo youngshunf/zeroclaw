@@ -128,7 +128,7 @@ export function useHasnConversations() {
 
 // ---------- 消息列表 ----------
 
-export function useHasnMessages(conversationId: string | null) {
+export function useHasnMessages(conversationId: string | null, peerId?: string | null) {
   const [messages, setMessages] = useState<HasnEnvelope[]>([]);
   const [loading, setLoading] = useState(false);
   const convIdRef = useRef(conversationId);
@@ -196,23 +196,26 @@ export function useHasnMessages(conversationId: string | null) {
 
   const send = useCallback(async (content: string, replyToId?: number) => {
     if (!conversationId) return;
+    // 解析正确的发送目标: 优先用 peerId，否则回退到 conversationId（从联系人跳转时 conversationId 就是 peerId）
+    const sendTo = peerId || conversationId;
     // 乐观插入
+    const localId = hasnApi.generateUUID();
     const tempMsg: HasnEnvelope = {
-      id: `local_${Date.now()}`,
+      id: localId,
       version: "1.0",
       from: { hasn_id: localStorage.getItem('hasn:hasn_id') || "", entity_type: "human" },
-      to: { hasn_id: "", entity_type: "human" },
+      to: { hasn_id: sendTo, entity_type: "human" },
       type: "message",
       content: { content_type: "text", body: { text: content } },
       context: { conversation_id: conversationId },
       metadata: { created_at: new Date().toISOString() },
-      local_id: `local_${Date.now()}`,
+      local_id: localId,
       send_status: "sending"
     };
     setMessages((prev) => [...prev, tempMsg]);
 
     try {
-      const sent = await hasnApi.sendMessage(conversationId, content, replyToId);
+      const sent = await hasnApi.sendMessage(sendTo, content, replyToId);
       setMessages((prev) =>
         prev.map((m) => (m.local_id === tempMsg.local_id ? { ...sent, send_status: "sent" } : m)),
       );
@@ -221,7 +224,7 @@ export function useHasnMessages(conversationId: string | null) {
         prev.map((m) => (m.local_id === tempMsg.local_id ? { ...m, send_status: "failed" } : m)),
       );
     }
-  }, [conversationId]);
+  }, [conversationId, peerId]);
 
   const loadMore = useCallback(() => {
     if (messages.length > 0) {

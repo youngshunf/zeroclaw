@@ -34,13 +34,13 @@ export default function TagListField({ field, value, onChange }: FieldProps) {
         {tags.map((tag, i) => (
           <span
             key={tag}
-            className="inline-flex items-center gap-1 bg-gray-700 text-gray-200 rounded-full px-2.5 py-0.5 text-xs"
+            className="inline-flex items-center gap-1 bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200 rounded-full px-2.5 py-0.5 text-xs border border-gray-200 dark:border-gray-600"
           >
             {tag}
             <button
               type="button"
               onClick={() => removeTag(i)}
-              className="text-gray-400 hover:text-white transition-colors"
+              className="text-gray-400 hover:text-gray-700 dark:hover:text-white transition-colors"
             >
               <X className="h-3 w-3" />
             </button>

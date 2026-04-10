@@ -129,13 +129,16 @@ export default function HasnChat() {
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
-  // 消息
-  const { messages, loading: msgsLoading, send, loadMore } = useHasnMessages(activeConvId);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  // activeConv: 先按 id 查，再按 peer_id 查（兼容临时会话 id === peerId 的情况）
   const activeConv = conversations.find((c) => c.id === activeConvId)
     || conversations.find((c) => c.peer_id === activeConvId);
+
+  // 消息
+  const activePeerId = activeConv?.peer_id || activeConvId;
+  const { messages, loading: msgsLoading, send, loadMore } = useHasnMessages(activeConvId, activePeerId);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+
+
 
   // ── HASN 联系人 + Agent 技能（提供给 HxChatInput） ──────────
   const hasnContacts = useHasnContacts();

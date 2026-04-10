@@ -59,6 +59,18 @@ export interface HasnEnvelope {
   send_status?: string;
 }
 
+// ── 工具函数 ────────────────────────────────
+export function generateUUID(): string {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
+
 // ── 信任等级常量 ────────────────────────────────
 export const TRUST_LEVELS = {
   BLOCKED:  0,
@@ -386,7 +398,7 @@ export async function hasnRemoveAgent(agentId: string): Promise<any> {
 // ══════════════════════════════════════════════
 
 export async function getConversations(): Promise<Conversation[]> {
-  return cloudGet<Conversation[]>('/conversations');
+  return cloudGet<Conversation[]>('/im/conversations');
 }
 
 function mapLegacyMessageToEnvelope(msg: any): HasnEnvelope {
@@ -421,8 +433,20 @@ export async function getMessages(
   const params = new URLSearchParams({ limit: String(limit) });
   if (beforeId) params.set('before_id', String(beforeId));
   try {
-    const legacyMessages = await cloudGet<any[]>(`/conversations/${conversationId}/messages?${params}`);
-    return legacyMessages.map(mapLegacyMessageToEnvelope);
+    const rawEnvelopes = await cloudGet<any[]>(`/im/conversations/${conversationId}/messages?${params}`);
+    // 后端已返回 HasnEnvelope 格式，直接映射字段名
+    return rawEnvelopes.map((env: any) => ({
+      id: env.id || `msg_${Date.now()}`,
+      version: env.version || '1.0',
+      from: env.from || { hasn_id: env.from_id || '', entity_type: 'human' },
+      to: env.to || { hasn_id: env.to_id || '', entity_type: 'human' },
+      type: env.type || 'message',
+      content: env.content || { content_type: 'text', body: { text: '' } },
+      context: env.context || { conversation_id: conversationId },
+      metadata: env.metadata || { created_at: new Date().toISOString() },
+      local_id: env.local_id,
+      send_status: 'delivered',
+    } as HasnEnvelope));
   } catch (err: any) {
     if (err?.message?.includes('404')) return [];
     throw err;
@@ -434,15 +458,16 @@ export async function sendMessage(to: string, content: string, replyToId?: numbe
   if (status !== 'connected') throw new Error('HASN 未连接，无法发送消息');
 
   const hasnId = localStorage.getItem('hasn:hasn_id') || '';
+  const localId = generateUUID();
   await sidecarPost('/send', {
     from_id: hasnId,
     to,
     content: { text: content },
-    local_id: `temp_${Date.now()}`,
+    local_id: localId,
   });
 
   return {
-    id: `temp_${Date.now()}`,
+    id: localId,
     version: '1.0',
     from: { hasn_id: hasnId, entity_type: 'human' },
     to: { hasn_id: to, entity_type: 'human' },
@@ -450,13 +475,13 @@ export async function sendMessage(to: string, content: string, replyToId?: numbe
     content: { content_type: 'text', body: { text: content } },
     context: { conversation_id: '' },
     metadata: { created_at: new Date().toISOString() },
-    local_id: `temp_${Date.now()}`,
+    local_id: localId,
     send_status: 'sent',
   };
 }
 
 export async function markConversationRead(conversationId: string, lastMsgId?: number): Promise<void> {
-  await cloudPost(`/conversations/${conversationId}/read`, { last_msg_id: lastMsgId ?? 0 });
+  await cloudPost(`/im/conversations/${conversationId}/read`, { last_msg_id: lastMsgId ?? 0 });
 }
 
 // ══════════════════════════════════════════════

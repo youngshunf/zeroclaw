@@ -1044,6 +1044,10 @@ pub async fn run_gateway(
     #[cfg(feature = "huanxing")]
     let inner = inner.merge(crate::huanxing::api_agents::agent_routes());
 
+    // ── HuanXing 用户级配置 API（桌面端，requires huanxing feature）──
+    #[cfg(feature = "huanxing")]
+    let inner = inner.merge(crate::huanxing::api_user_config::user_config_routes());
+
     // ── HuanXing SOP API（桌面端，requires huanxing feature）──
     #[cfg(feature = "huanxing")]
     let inner = inner.merge(

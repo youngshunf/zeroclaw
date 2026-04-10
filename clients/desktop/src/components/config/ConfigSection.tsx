@@ -63,13 +63,13 @@ export default function ConfigSection({
   }, [section.path, section.defaultCollapsed]);
 
   return (
-    <div className="bg-gray-900 rounded-xl border border-gray-800">
+    <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800">
       <button
         type="button"
         onClick={() => setCollapsed(!collapsed)}
         aria-expanded={!collapsed}
         aria-controls={sectionPanelId}
-        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-800/30 transition-colors rounded-t-xl"
+        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-800/30 transition-colors rounded-t-xl"
       >
         {collapsed ? (
           <ChevronRight className="h-4 w-4 text-gray-500 flex-shrink-0" />
@@ -77,7 +77,7 @@ export default function ConfigSection({
           <ChevronDown className="h-4 w-4 text-gray-500 flex-shrink-0" />
         )}
         <Icon className="h-4 w-4 text-blue-400 flex-shrink-0" />
-        <span className="text-sm font-medium text-white">{section.title}</span>
+        <span className="text-sm font-medium text-gray-900 dark:text-white">{section.title}</span>
         {section.description && (
           <span className="text-xs text-gray-500 hidden sm:inline">
             — {section.description}
@@ -91,7 +91,7 @@ export default function ConfigSection({
       {!collapsed && (
         <div
           id={sectionPanelId}
-          className="border-t border-gray-800 px-4 py-4 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-4"
+          className="border-t border-gray-200 dark:border-gray-800 px-4 py-4 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-4"
         >
           {fields.map((field) => {
             const value = getFieldValue(section.path, field.key);
@@ -100,7 +100,7 @@ export default function ConfigSection({
 
             return (
               <div key={field.key} className={`flex flex-col${spanFull ? ' sm:col-span-2' : ''}`}>
-                <label className="flex items-center gap-2 text-sm font-medium text-gray-300 mb-1.5">
+                <label className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
                   <span>{field.label}</span>
                   {field.sensitive && (
                     <span className="text-[10px] text-yellow-400 bg-yellow-900/30 border border-yellow-800/50 px-1.5 py-0.5 rounded">

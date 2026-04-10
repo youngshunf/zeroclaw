@@ -7,7 +7,7 @@ export default function SelectField({ field, value, onChange }: FieldProps) {
 
   return (
     <Select value={strValue || 'none'} onValueChange={(v) => onChange(v === 'none' ? '' : v)}>
-      <SelectTrigger className="w-full bg-gray-800 border-gray-700 text-white min-h-[38px]">
+      <SelectTrigger className="w-full bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-900 dark:text-white min-h-[38px]">
         <SelectValue placeholder={t('config.select_placeholder')} />
       </SelectTrigger>
       <SelectContent>

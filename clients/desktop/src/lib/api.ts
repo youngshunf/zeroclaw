@@ -179,6 +179,24 @@ export function putConfig(toml: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// User Config (HuanXing Tenant Scoped)
+// ---------------------------------------------------------------------------
+
+export function getUserConfig(): Promise<string> {
+  return apiFetch<string | { format?: string; content: string }>('/api/user-config').then((data) =>
+    typeof data === 'string' ? data : data.content,
+  );
+}
+
+export function putUserConfig(toml: string): Promise<void> {
+  return apiFetch<void>('/api/user-config', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/toml' },
+    body: toml,
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Tools
 // ---------------------------------------------------------------------------
 
