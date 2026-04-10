@@ -1,5 +1,9 @@
 /**
  * 联系人页面 — 接入 HASN 联系人 API
+ *
+ * 对齐线框图 §四 通讯录主界面：
+ * - 左侧 hx-panel: 我的星组顶置 + 好友按信任等级分组(含Agent从属) + Agent Tab 按归属分组
+ * - 右侧 hx-chat: 完整 ContactProfile 详情面板
  */
 import { useState, useCallback, useMemo } from 'react';
 import {
@@ -9,17 +13,16 @@ import {
   Check,
   X,
   Loader2,
-  MessageSquare,
   ChevronLeft,
+  Bot,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Input } from '@/components/ui/Input';
 import { Textarea } from '@/components/ui/Textarea';
 import { useHasnContacts } from '@/hooks/useHasnContacts';
-// We still need useHasnFriendRequests if we separate them, or we can use the old hook for friendRequests. Actually we will pull friendRequests out of useHasn or add it to useHasnContacts. Let's create useHasnFriendRequests inline or import from useHasn if we rename it. Wait, I will just add friendRequests to useHasnContacts inside hooks/useHasnContacts.ts.
+import ContactProfile from '@/components/hasn/ContactProfile';
 import * as hasnApi from '@/lib/hasn-api';
-import type { ContactFull } from '@/lib/hasn-api';
-import { TRUST_LEVEL_LABELS, TRUST_LEVEL_COLORS } from '@/lib/hasn-api';
+import type { ContactFull, AgentPeer } from '@/lib/hasn-api';
 import { usePlatform } from '@/hooks/usePlatform';
 import BottomSheet from '@/components/ui/BottomSheet';
 
@@ -29,15 +32,15 @@ function getInitial(name: string): string {
 
 function TrustBadge({ level, label }: { level: number; label?: string }) {
   const colorMap: Record<number, string> = {
-    0: '#9ca3af',  // blocked  - gray
-    1: '#94a3b8',  // stranger - slate
-    2: '#60a5fa',  // normal   - blue
-    3: '#34d399',  // friend   - green
-    4: '#f59e0b',  // trusted  - amber
-    5: '#a78bfa',  // owner    - purple
+    0: '#9ca3af',
+    1: '#94a3b8',
+    2: '#60a5fa',
+    3: '#34d399',
+    4: '#f59e0b',
+    5: '#a78bfa',
   };
   const color = colorMap[level] ?? colorMap[1];
-  const displayLabel = label ?? TRUST_LEVEL_LABELS[level] ?? `L${level}`;
+  const displayLabel = label ?? `L${level}`;
   return (
     <span
       className="text-[10px] px-1.5 py-[1px] rounded-lg font-medium"
@@ -89,10 +92,38 @@ export default function Contacts() {
 
   // 跳转聊天
   const handleStartChat = useCallback((contact: ContactFull) => {
-    navigate('/hasn-chat', { state: { peerId: contact.peer.hasn_id } });
+    navigate('/hasn-chat', {
+      state: {
+        peerId: contact.peer.hasn_id,
+        peerName: contact.nickname || contact.peer.name,
+        peerType: contact.peer.type,
+      },
+    });
   }, [navigate]);
 
-  // 过滤分组的联系人
+  // 选择 Agent 从属（将其包装为 ContactFull 以复用详情面板）
+  const handleSelectAgentPeer = useCallback((agent: AgentPeer) => {
+    const contactMock: ContactFull = {
+      id: 0,
+      peer: {
+        hasn_id: agent.hasn_id,
+        star_id: agent.star_id || '',
+        name: agent.name,
+        type: 'agent',
+        avatar_url: agent.avatar_url,
+      },
+      relation_type: 'social',
+      trust_level: 2,
+      trust_level_label: '好友Agent',
+      subscription: false,
+      status: 'connected',
+      owned_agents: [],
+      custom_permissions: {},
+    };
+    setSelectedContact(contactMock);
+  }, []);
+
+  // ── 过滤分组的联系人 ──
   const filteredGroups = useMemo(() => {
     if (!searchQuery) return contactsByTrust;
     const lowerQuery = searchQuery.toLowerCase();
@@ -105,19 +136,66 @@ export default function Contacts() {
     })).filter((g: any) => g.contacts.length > 0);
   }, [contactsByTrust, searchQuery]);
 
-  // 过滤 Agent
-  const filteredAgents = useMemo(() => {
-    if (!searchQuery) return rawAgents;
-    const lowerQuery = searchQuery.toLowerCase();
-    return rawAgents.filter((a: any) => 
-      a.name.toLowerCase().includes(lowerQuery) || 
-      (a.agent_name && a.agent_name.toLowerCase().includes(lowerQuery))
-    );
-  }, [rawAgents, searchQuery]);
+  // ── 过滤 Agent（按归属人分组） ──
+  const agentGroups = useMemo(() => {
+    // 收集所有 peer_type === 'agent' 的联系人
+    const agentContacts = rawContacts.filter(c => c.peer.type === 'agent');
+    
+    // 我的 Agent
+    const myAgentGroup = {
+      owner: '我的 Agent',
+      emoji: '🤖',
+      agents: rawAgents.map(a => ({
+        hasn_id: a.hasn_id,
+        star_id: a.node_id || 'LOCAL',
+        name: a.name,
+        agent_name: a.agent_name,
+        avatar_url: a.avatar_url,
+        type: a.type,
+        role: a.role,
+      })),
+    };
 
-  // ── 移动端导航栈 ──────────────────────────────────────────
+    // 其他人的 Agent (从联系人中提取)
+    const otherAgentGroups: Record<string, { owner: string; emoji: string; agents: AgentPeer[] }> = {};
+    for (const c of agentContacts) {
+      // 简单用 peer.name 做分组 key
+      const ownerKey = c.nickname || c.peer.name;
+      if (!otherAgentGroups[ownerKey]) {
+        otherAgentGroups[ownerKey] = {
+          owner: `${ownerKey} 的 Agent`,
+          emoji: '🟡',
+          agents: [],
+        };
+      }
+      otherAgentGroups[ownerKey].agents.push({
+        hasn_id: c.peer.hasn_id,
+        star_id: c.peer.star_id,
+        name: c.peer.name,
+        agent_name: c.peer.name,
+        avatar_url: c.peer.avatar_url,
+        type: c.peer.type,
+        role: c.relation_type,
+      });
+    }
+
+    const allGroups = [myAgentGroup, ...Object.values(otherAgentGroups)];
+    
+    if (!searchQuery) return allGroups;
+    const lowerQuery = searchQuery.toLowerCase();
+    return allGroups.map(g => ({
+      ...g,
+      agents: g.agents.filter(a =>
+        a.name.toLowerCase().includes(lowerQuery) ||
+        (a.agent_name && a.agent_name.toLowerCase().includes(lowerQuery))
+      )
+    })).filter(g => g.agents.length > 0);
+  }, [rawContacts, rawAgents, searchQuery]);
+
+  // ── 移动端导航栈 ──
   const { isMobile } = usePlatform();
   const mobileView = isMobile ? (selectedContact ? 'detail' : 'list') : 'both';
+
   // 添加好友表单内容（BottomSheet 和 Dialog 复用）
   const addFriendForm = (
     <div className="flex flex-col gap-3">
@@ -161,11 +239,11 @@ export default function Contacts() {
       className={isMobile ? (mobileView === 'list' ? 'hx-mobile-show-panel' : '') : ''}
       style={{ display: 'flex', flex: 1, minWidth: 0, height: '100%' }}
     >
-      {/* 左侧面板 */}
+      {/* ===== 左侧面板 ===== */}
       <div className="hx-panel">
         <div className="hx-panel-header">
           <div className="flex items-center justify-between">
-            <h2 className="hx-panel-title">通讯录</h2>
+            <h2 className="hx-panel-title">👥 通讯录</h2>
             <button
               className="hx-nav-item !w-8 !h-8 shrink-0"
               title="添加好友"
@@ -177,25 +255,25 @@ export default function Contacts() {
           {/* Tab 切换 */}
           <div className="flex gap-1 px-3 pb-2 flex-wrap">
             <button
-              onClick={() => setTab('friends')}
+              onClick={() => { setTab('friends'); setSearchQuery(''); }}
               className={`hx-nav-item !w-auto !h-auto px-3 py-1.5 rounded-hx-radius-sm gap-1.5 flex items-center text-[13px] font-medium transition-colors ${
                 tab === 'friends' ? 'active' : ''
               }`}
             >
               <Users size={15} />
-              好友 ({rawContacts.length})
+              好友 ({rawContacts.filter(c => c.peer.type === 'human').length})
             </button>
             <button
-              onClick={() => setTab('agents')}
+              onClick={() => { setTab('agents'); setSearchQuery(''); }}
               className={`hx-nav-item !w-auto !h-auto px-3 py-1.5 rounded-hx-radius-sm gap-1.5 flex items-center text-[13px] font-medium transition-colors ${
                 tab === 'agents' ? 'active' : ''
               }`}
             >
-              <span className="text-[15px]">🤖</span>
+              <Bot size={15} />
               Agent ({rawAgents.length})
             </button>
             <button
-              onClick={() => setTab('requests')}
+              onClick={() => { setTab('requests'); setSearchQuery(''); }}
               className={`hx-nav-item !w-auto !h-auto px-3 py-1.5 rounded-hx-radius-sm gap-1.5 flex items-center text-[13px] font-medium transition-colors relative ${
                 tab === 'requests' ? 'active' : ''
               }`}
@@ -215,7 +293,7 @@ export default function Contacts() {
               <Search size={16} className="text-hx-text-tertiary" />
               <Input
                 type="text"
-                placeholder={tab === 'friends' ? '搜索好友...' : '搜索 Agent...'}
+                placeholder={tab === 'friends' ? '搜索姓名、唤星号...' : '搜索 Agent...'}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="pl-9"
@@ -231,67 +309,162 @@ export default function Contacts() {
               <p className="text-[13px] mt-2">加载中...</p>
             </div>
           ) : tab === 'friends' ? (
-            /* 好友列表（按分组） */
-            filteredGroups.length === 0 ? (
-              <div className="hx-empty-state py-[60px]">
-                <Users size={40} className="opacity-30 mb-2" />
-                <p className="text-[13px] text-hx-text-tertiary m-0">
-                  {searchQuery ? '未找到匹配的联系人' : '暂无好友'}
-                </p>
-              </div>
-            ) : (
-              filteredGroups.map((group: any) => (
-                <div key={`group-${group.level}`} className="mb-2">
-                  <div className="px-3 py-1.5 text-[11px] font-semibold text-hx-text-tertiary uppercase flex items-center gap-1">
-                    <span>{group.emoji}</span>
-                    <span>{group.label}</span>
-                    <span className="opacity-60 ml-1">({group.contacts.length})</span>
+            <>
+              {/* ── 📂 我的星组 (顶部固定) ── */}
+              {rawAgents.length > 0 && (
+                <div className="hx-my-stars-section">
+                  <div className="hx-my-stars-header">
+                    <span>📂</span>
+                    <span>我的星组 (My Entities)</span>
                   </div>
-                  {group.contacts.map((contact: any) => (
-                    <div
-                      key={contact.peer.hasn_id}
-                      className={`hx-conv-item ${selectedContact?.peer.hasn_id === contact.peer.hasn_id ? 'active' : ''}`}
-                      onClick={() => setSelectedContact(contact)}
-                    >
-                      {contact.peer.avatar_url ? (
-                        <div className="relative shrink-0">
-                          <img
-                            src={contact.peer.avatar_url}
-                            alt={contact.peer.name}
-                            className={`hx-conv-avatar object-cover ${contact.peer.type === 'agent' ? 'ring-2 ring-purple-400 ring-offset-1 ring-offset-hx-bg-panel' : 'ring-2 ring-hx-green ring-offset-1 ring-offset-hx-bg-panel'}`}
-                          />
-                        </div>
-                      ) : (
-                        <div
-                          className={`hx-conv-avatar shrink-0 !text-white !text-sm ${
-                            contact.peer.type === 'agent'
-                              ? 'bg-gradient-to-br from-[#6366F1] to-[#7C3AED] ring-2 ring-purple-400 ring-offset-1 ring-offset-hx-bg-panel'
-                              : 'bg-gradient-to-br from-[#7C3AED] to-[#6366F1] ring-2 ring-hx-green ring-offset-1 ring-offset-hx-bg-panel'
-                          }`}
-                        >
-                          {getInitial(contact.nickname || contact.peer.name)}
-                        </div>
-                      )}
-                      <div className="hx-conv-info">
-                        <div className="hx-conv-name-row">
-                          <span className="hx-conv-name">
-                            {contact.nickname || contact.peer.name}
-                            {contact.peer.type === 'agent' && <span className="text-hx-text-tertiary font-normal ml-0.5"> (Agent)</span>}
-                          </span>
-                          <TrustBadge level={contact.trust_level} label={contact.trust_level_label} />
-                        </div>
-                        <div className="hx-conv-preview">
-                          @{contact.peer.star_id} · {contact.relation_type}
+                  {rawAgents.map((agent: any) => {
+                    const contactMock: ContactFull = {
+                      id: 0,
+                      peer: {
+                        hasn_id: agent.hasn_id,
+                        star_id: agent.node_id || 'LOCAL',
+                        name: agent.name,
+                        type: 'agent',
+                        avatar_url: agent.avatar_url,
+                      },
+                      relation_type: 'social',
+                      trust_level: 5,
+                      trust_level_label: '所有者',
+                      subscription: true,
+                      status: 'connected',
+                      owned_agents: [],
+                      custom_permissions: {},
+                    };
+                    const isActive = selectedContact?.peer.hasn_id === agent.hasn_id;
+                    return (
+                      <div
+                        key={`myagent-${agent.hasn_id}`}
+                        className={`hx-conv-item ${isActive ? 'active' : ''}`}
+                        onClick={() => setSelectedContact(contactMock)}
+                      >
+                        {agent.avatar_url ? (
+                          <div className="relative shrink-0">
+                            <img
+                              src={agent.avatar_url}
+                              alt={agent.name}
+                              className="hx-conv-avatar object-cover ring-2 ring-hx-blue ring-offset-1 ring-offset-hx-bg-panel"
+                            />
+                            <div className="absolute -bottom-0.5 -right-0.5 text-[10px] bg-hx-bg-panel rounded-full z-10 font-mono">✨</div>
+                          </div>
+                        ) : (
+                          <div className="relative shrink-0">
+                            <div className="hx-conv-avatar !text-white !text-sm bg-gradient-to-br from-hx-blue to-hx-purple ring-2 ring-hx-blue ring-offset-1 ring-offset-hx-bg-panel">
+                              {getInitial(agent.name)}
+                            </div>
+                            <div className="absolute -bottom-0.5 -right-0.5 text-[10px] bg-hx-bg-panel rounded-full z-10 font-mono">✨</div>
+                          </div>
+                        )}
+                        <div className="hx-conv-info">
+                          <div className="hx-conv-name-row">
+                            <span className="hx-conv-name">✨ {agent.name}</span>
+                            <span className={`w-2 h-2 rounded-full shrink-0 ${agent.online !== false ? 'bg-hx-green' : 'bg-amber-400'}`} />
+                          </div>
+                          <div className="hx-conv-preview">
+                            #{agent.star_id || agent.node_id || 'LOCAL'}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
-              ))
-            )
+              )}
+
+              {/* ── 好友列表（按信任等级分组 + Agent 从属子列表） ── */}
+              {filteredGroups.length === 0 ? (
+                <div className="hx-empty-state py-[60px]">
+                  <Users size={40} className="opacity-30 mb-2" />
+                  <p className="text-[13px] text-hx-text-tertiary m-0">
+                    {searchQuery ? '未找到匹配的联系人' : '暂无好友'}
+                  </p>
+                </div>
+              ) : (
+                filteredGroups.map((group: any) => {
+                  // 跳过 owner 等级（已在我的星组中显示）
+                  if (group.level === 5) return null;
+                  return (
+                    <div key={`group-${group.level}`} className="mb-2">
+                      <div className="hx-entity-section">
+                        <span>{group.emoji}</span>
+                        <span>{group.label}</span>
+                        <span className="count">({group.contacts.length})</span>
+                      </div>
+                      {group.contacts.map((contact: any) => (
+                        <div key={contact.peer.hasn_id}>
+                          {/* 联系人主行 */}
+                          <div
+                            className={`hx-conv-item ${selectedContact?.peer.hasn_id === contact.peer.hasn_id ? 'active' : ''}`}
+                            onClick={() => setSelectedContact(contact)}
+                          >
+                            {contact.peer.avatar_url ? (
+                              <div className="relative shrink-0">
+                                <img
+                                  src={contact.peer.avatar_url}
+                                  alt={contact.peer.name}
+                                  className="hx-conv-avatar object-cover ring-2 ring-hx-green ring-offset-1 ring-offset-hx-bg-panel"
+                                />
+                              </div>
+                            ) : (
+                              <div
+                                className="hx-conv-avatar shrink-0 !text-white !text-sm bg-gradient-to-br from-[#7C3AED] to-[#6366F1] ring-2 ring-hx-green ring-offset-1 ring-offset-hx-bg-panel"
+                              >
+                                {getInitial(contact.nickname || contact.peer.name)}
+                              </div>
+                            )}
+                            <div className="hx-conv-info">
+                              <div className="hx-conv-name-row">
+                                <span className="hx-conv-name">
+                                  👥 {contact.nickname || contact.peer.name}
+                                </span>
+                                <span className={`w-2 h-2 rounded-full shrink-0 ${contact.status === 'connected' ? 'bg-hx-green' : 'bg-hx-red'}`} />
+                              </div>
+                              <div className="hx-conv-preview">
+                                @{contact.peer.star_id} · {contact.trust_level_label || contact.relation_type}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Agent 从属子列表 */}
+                          {contact.owned_agents && contact.owned_agents.length > 0 && (
+                            contact.owned_agents.map((agent: AgentPeer) => (
+                              <div
+                                key={`child-${agent.hasn_id}`}
+                                className="hx-agent-child-row"
+                                onClick={() => handleSelectAgentPeer(agent)}
+                              >
+                                <span className="hx-agent-child-prefix">└›</span>
+                                {agent.avatar_url ? (
+                                  <img
+                                    src={agent.avatar_url}
+                                    alt={agent.name}
+                                    className="hx-agent-child-avatar object-cover"
+                                  />
+                                ) : (
+                                  <div className="hx-agent-child-avatar bg-gradient-to-br from-[#6366F1] to-[#7C3AED]">
+                                    {getInitial(agent.name)}
+                                  </div>
+                                )}
+                                <div className="hx-agent-child-info">
+                                  <span className="hx-agent-child-name">🟡 {agent.name}</span>
+                                  <span className="hx-agent-child-role">{agent.role || 'Agent'}</span>
+                                </div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })
+              )}
+            </>
           ) : tab === 'agents' ? (
-            /* 我的 Agent 列表 (伪造成 ContactFull 以复用右侧渲染) */
-            filteredAgents.length === 0 ? (
+            /* ── Agent Tab — 按归属人分组 ── */
+            agentGroups.every(g => g.agents.length === 0) ? (
               <div className="hx-empty-state py-[60px]">
                 <div className="text-[40px] opacity-30 mb-2">🤖</div>
                 <p className="text-[13px] text-hx-text-tertiary m-0">
@@ -299,70 +472,79 @@ export default function Contacts() {
                 </p>
               </div>
             ) : (
-              <div className="mb-2">
-                <div className="px-3 py-1.5 text-[11px] font-semibold text-hx-text-tertiary uppercase flex items-center gap-1">
-                  <span>🤖</span>
-                  <span>我的星组</span>
-                  <span className="opacity-60 ml-1">({filteredAgents.length})</span>
-                </div>
-                {filteredAgents.map((agent: any) => {
-                  // 伪造 ContactFull 以在详情页复用
-                  const contactMock: ContactFull = {
-                    id: 0,
-                    peer: {
-                      hasn_id: agent.hasn_id,
-                      star_id: agent.node_id || 'LOCAL',
-                      name: agent.name,
-                      type: 'agent',
-                      avatar_url: agent.avatar_url,
-                    },
-                    relation_type: 'social',
-                    trust_level: 5,
-                    trust_level_label: '所有者',
-                    subscription: true,
-                    status: 'connected',
-                    owned_agents: [],
-                    custom_permissions: {}
-                  };
-                  return (
-                    <div
-                      key={`myagent-${agent.hasn_id}`}
-                      className={`hx-conv-item ${selectedContact?.peer.hasn_id === agent.hasn_id ? 'active' : ''}`}
-                      onClick={() => setSelectedContact(contactMock)}
-                    >
-                      {agent.avatar_url ? (
-                        <div className="relative shrink-0">
-                          <img
-                            src={agent.avatar_url}
-                            alt={agent.name}
-                            className="hx-conv-avatar object-cover ring-2 ring-hx-blue ring-offset-1 ring-offset-hx-bg-panel"
-                          />
-                          <div className="absolute -bottom-0.5 -right-0.5 text-[10px] bg-hx-bg-panel rounded-full relative z-10 font-mono">✨</div>
-                        </div>
-                      ) : (
-                        <div className="relative shrink-0">
-                          <div className="hx-conv-avatar !text-white !text-sm bg-gradient-to-br from-hx-blue to-hx-purple ring-2 ring-hx-blue ring-offset-1 ring-offset-hx-bg-panel">
-                            {getInitial(agent.name)}
-                          </div>
-                          <div className="absolute -bottom-0.5 -right-0.5 text-[10px] bg-hx-bg-panel rounded-full relative z-10 font-mono">✨</div>
-                        </div>
-                      )}
-                      <div className="hx-conv-info">
-                        <div className="hx-conv-name-row">
-                          <span className="hx-conv-name">{agent.name}</span>
-                          <TrustBadge level={5} label="我的Agent" />
-                        </div>
-                        <div className="hx-conv-preview">
-                          ID: {agent.hasn_id.substring(0,8)}... · {agent.role}
-                        </div>
-                      </div>
+              agentGroups.map((group) => {
+                if (group.agents.length === 0) return null;
+                return (
+                  <div key={group.owner} className="mb-2">
+                    <div className="hx-entity-section">
+                      <span>{group.emoji}</span>
+                      <span>{group.owner}</span>
+                      <span className="count">({group.agents.length})</span>
                     </div>
-                  );
-                })}
-              </div>
+                    {group.agents.map((agent) => {
+                      // 伪造 ContactFull 以在详情页复用
+                      const contactMock: ContactFull = {
+                        id: 0,
+                        peer: {
+                          hasn_id: agent.hasn_id,
+                          star_id: agent.star_id || 'LOCAL',
+                          name: agent.name,
+                          type: 'agent',
+                          avatar_url: agent.avatar_url,
+                        },
+                        relation_type: 'social',
+                        trust_level: group.emoji === '🤖' ? 5 : 2,
+                        trust_level_label: group.emoji === '🤖' ? '所有者' : '好友Agent',
+                        subscription: group.emoji === '🤖',
+                        status: 'connected',
+                        owned_agents: [],
+                        custom_permissions: {},
+                      };
+                      const isActive = selectedContact?.peer.hasn_id === agent.hasn_id;
+                      const isMyAgent = group.emoji === '🤖';
+                      return (
+                        <div
+                          key={`agent-${agent.hasn_id}`}
+                          className={`hx-conv-item ${isActive ? 'active' : ''}`}
+                          onClick={() => setSelectedContact(contactMock)}
+                        >
+                          {agent.avatar_url ? (
+                            <div className="relative shrink-0">
+                              <img
+                                src={agent.avatar_url}
+                                alt={agent.name}
+                                className={`hx-conv-avatar object-cover ${isMyAgent ? 'ring-2 ring-hx-blue ring-offset-1 ring-offset-hx-bg-panel' : 'ring-2 ring-purple-400 ring-offset-1 ring-offset-hx-bg-panel'}`}
+                              />
+                              {isMyAgent && <div className="absolute -bottom-0.5 -right-0.5 text-[10px] bg-hx-bg-panel rounded-full z-10 font-mono">✨</div>}
+                            </div>
+                          ) : (
+                            <div className="relative shrink-0">
+                              <div className={`hx-conv-avatar !text-white !text-sm ${isMyAgent ? 'bg-gradient-to-br from-hx-blue to-hx-purple ring-2 ring-hx-blue ring-offset-1 ring-offset-hx-bg-panel' : 'bg-gradient-to-br from-[#6366F1] to-[#7C3AED] ring-2 ring-purple-400 ring-offset-1 ring-offset-hx-bg-panel'}`}>
+                                {getInitial(agent.name)}
+                              </div>
+                              {isMyAgent && <div className="absolute -bottom-0.5 -right-0.5 text-[10px] bg-hx-bg-panel rounded-full z-10 font-mono">✨</div>}
+                            </div>
+                          )}
+                          <div className="hx-conv-info">
+                            <div className="hx-conv-name-row">
+                              <span className="hx-conv-name">
+                                {isMyAgent ? '✨' : '🟡'} {agent.name}
+                              </span>
+                              <TrustBadge level={isMyAgent ? 5 : 2} label={isMyAgent ? '我的Agent' : '好友Agent'} />
+                            </div>
+                            <div className="hx-conv-preview">
+                              #{agent.star_id || agent.hasn_id.substring(0, 8)} · {agent.role || agent.type}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })
             )
           ) : (
-            /* 好友请求列表 */
+            /* ── 好友请求列表 ── */
             friendRequests.length === 0 ? (
               <div className="hx-empty-state py-[60px]">
                 <UserPlus size={40} className="opacity-30 mb-2" />
@@ -409,81 +591,28 @@ export default function Contacts() {
         </div>
       </div>
 
-      {/* 右侧详情 */}
+      {/* ===== 右侧详情 ===== */}
       {(!isMobile || mobileView === 'detail') && (
         <div className="hx-chat flex-1 bg-hx-bg-main relative">
           {selectedContact ? (
-          <div className="flex flex-col items-center justify-center h-full gap-4">
+            <>
               {/* 移动端返回按钮 */}
               {isMobile && (
                 <button
                   className="hx-mobile-header-back"
                   onClick={() => setSelectedContact(null)}
-                  style={{ position: 'absolute', top: 8, left: 8 }}
+                  style={{ position: 'absolute', top: 8, left: 8, zIndex: 10 }}
                 >
                   <ChevronLeft size={22} />
                 </button>
               )}
-              {selectedContact.peer.avatar_url ? (
-                <img
-                  src={selectedContact.peer.avatar_url}
-                  alt={selectedContact.peer.name}
-                  className="w-[72px] h-[72px] rounded-full object-cover"
-                />
-              ) : (
-                <div
-                  className={`w-[72px] h-[72px] rounded-full text-white font-bold text-[28px] flex items-center justify-center ${
-                    selectedContact.peer.type === 'agent'
-                      ? 'bg-gradient-to-br from-[#6366F1] to-[#7C3AED]'
-                      : 'bg-gradient-to-br from-[#7C3AED] to-[#6366F1]'
-                  }`}
-                >
-                  {getInitial(selectedContact.nickname || selectedContact.peer.name)}
-                </div>
-              )}
-              <div className="text-center">
-                <h3 className="text-lg font-semibold text-hx-text-primary m-0">
-                  {selectedContact.nickname || selectedContact.peer.name}
-                </h3>
-                <p className="text-[13px] text-hx-text-secondary my-1">
-                  @{selectedContact.peer.star_id}
-                </p>
-                <div className="flex gap-2 justify-center mt-1 items-center">
-                  <TrustBadge level={selectedContact.trust_level} label={selectedContact.trust_level_label} />
-                  <span className="text-[11px] text-hx-text-tertiary">
-                    {selectedContact.relation_type} · {selectedContact.peer.type}
-                  </span>
-                </div>
-                {/* owned_agents 子列表 */}
-                {selectedContact.owned_agents.length > 0 && (
-                  <div className="mt-3 text-left px-2">
-                    <p className="text-[11px] text-hx-text-tertiary mb-1">名下 Agent</p>
-                    <div className="flex flex-col gap-1">
-                      {selectedContact.owned_agents.map((a) => (
-                        <div key={a.hasn_id} className="flex items-center gap-2">
-                          {a.avatar_url ? (
-                            <img src={a.avatar_url} alt={a.name} className="w-5 h-5 rounded-full object-cover" />
-                          ) : (
-                            <div className="w-5 h-5 rounded-full bg-gradient-to-br from-[#6366F1] to-[#7C3AED] flex items-center justify-center text-white text-[10px]">
-                              {getInitial(a.name)}
-                            </div>
-                          )}
-                          <span className="text-[12px] text-hx-text-secondary">{a.name}</span>
-                          <span className="text-[10px] text-hx-text-tertiary">({a.role})</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-              <button
-                onClick={() => handleStartChat(selectedContact)}
-                className="mt-2 px-6 py-2 rounded-hx-radius-md border-none bg-hx-purple text-white text-[13px] font-medium cursor-pointer flex items-center gap-1.5 transition-opacity hover:opacity-90"
-              >
-                <MessageSquare size={16} />
-                发消息
-              </button>
-            </div>
+              <ContactProfile
+                contact={selectedContact}
+                onStartChat={handleStartChat}
+                onSelectAgent={handleSelectAgentPeer}
+                onRefresh={refresh}
+              />
+            </>
           ) : (
             <div className="hx-empty-state h-full">
               <div className="icon">👥</div>

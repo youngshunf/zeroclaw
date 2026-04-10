@@ -109,21 +109,294 @@
    .hx-agent-dot {
      @apply w-2 h-2 rounded-full bg-hx-green;
    }
-   
-   /* Empty states */
-   .hx-empty-state {
-     @apply flex flex-col items-center justify-center text-center p-6 h-full;
-   }
-   
-   .hx-empty-state .icon {
-     @apply text-[32px] mb-4 opacity-70;
-   }
-   
-   .hx-empty-state h3 {
-     @apply text-[15px] font-semibold text-hx-text-primary mb-1 mt-0;
-   }
-   
-   .hx-empty-state p {
-     @apply text-[13px] text-hx-text-secondary max-w-[240px] m-0;
-   }
-   
+      /* Empty states */
+    .hx-empty-state {
+      @apply flex flex-col items-center justify-center text-center p-6 h-full;
+    }
+    
+    .hx-empty-state .icon {
+      @apply text-[32px] mb-4 opacity-70;
+    }
+    
+    .hx-empty-state h3 {
+      @apply text-[15px] font-semibold text-hx-text-primary mb-1 mt-0;
+    }
+    
+    .hx-empty-state p {
+      @apply text-[13px] text-hx-text-secondary max-w-[240px] m-0;
+    }
+
+    /* ══════════════════════════════════════════
+       HASN Social Entity Styles
+       ══════════════════════════════════════════ */
+
+    /* Entity section headers (我的在线 Agent / 最近聊天 / 密友 etc.) */
+    .hx-entity-section {
+      @apply px-3 py-1.5 text-[11px] font-semibold text-hx-text-tertiary uppercase tracking-wider flex items-center gap-1.5;
+    }
+
+    .hx-entity-section .count {
+      @apply opacity-60 ml-0.5;
+    }
+
+    /* ── Agent delegation bubble (好友 Agent 代管消息) ── */
+    .hx-agent-delegation-bubble {
+      @apply rounded-hx-radius-lg;
+      padding: 14px 16px;
+      font-size: 14px;
+      line-height: 1.65;
+      word-break: break-word;
+      border-left: 3px solid;
+      border-image: linear-gradient(180deg, #a78bfa 0%, #f59e0b 100%) 1;
+      background: linear-gradient(135deg, rgba(167, 139, 250, 0.06), rgba(245, 158, 11, 0.04));
+    }
+
+    [data-theme="dark"] .hx-agent-delegation-bubble {
+      background: linear-gradient(135deg, rgba(167, 139, 250, 0.1), rgba(245, 158, 11, 0.06));
+    }
+
+    .hx-agent-delegation-label {
+      @apply text-[10px] font-semibold px-1.5 py-[2px] rounded-sm mb-2 inline-flex items-center gap-1;
+      background: linear-gradient(135deg, rgba(167, 139, 250, 0.15), rgba(245, 158, 11, 0.1));
+      color: #a78bfa;
+    }
+
+    /* ── Negotiation divider (交涉完成分割线) ── */
+    .hx-negotiation-divider {
+      @apply flex items-center gap-4 py-6 text-hx-text-tertiary text-[12px] font-medium;
+    }
+
+    .hx-negotiation-divider::before,
+    .hx-negotiation-divider::after {
+      content: '';
+      @apply flex-1 h-px;
+      background: linear-gradient(90deg, transparent, var(--hx-border), transparent);
+    }
+
+    /* ── Intervene button (介入按钮) ── */
+    .hx-intervene-btn {
+      @apply px-3 py-1.5 rounded-hx-radius-md text-[12px] font-semibold cursor-pointer transition-all duration-200 border-none;
+      background: linear-gradient(135deg, #f59e0b, #ef4444);
+      color: white;
+      box-shadow: 0 2px 8px rgba(245, 158, 11, 0.3);
+    }
+
+    .hx-intervene-btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(245, 158, 11, 0.4);
+    }
+
+    /* ── Negotiation status banner ── */
+    .hx-negotiation-banner {
+      @apply flex items-center gap-2 px-4 py-3 text-[12px] rounded-hx-radius-md mx-6 mb-4;
+      background: linear-gradient(135deg, rgba(245, 158, 11, 0.08), rgba(239, 68, 68, 0.05));
+      border: 1px solid rgba(245, 158, 11, 0.2);
+      color: #f59e0b;
+    }
+
+    /* ══════════════════════════════════════════
+       Contact Profile (Right Panel)
+       ══════════════════════════════════════════ */
+    
+    .hx-contact-profile {
+      @apply flex-1 overflow-y-auto;
+      padding: 0;
+    }
+
+    .hx-profile-header {
+      @apply flex flex-col items-center py-8 px-6;
+      border-bottom: 1px solid var(--hx-border-light);
+    }
+
+    .hx-profile-avatar {
+      @apply w-[80px] h-[80px] rounded-full overflow-hidden mb-4 relative;
+    }
+
+    .hx-profile-avatar img {
+      @apply w-full h-full object-cover;
+    }
+
+    .hx-profile-avatar-fallback {
+      @apply w-full h-full flex items-center justify-center text-white font-bold text-[32px];
+    }
+
+    .hx-profile-name {
+      @apply text-[18px] font-bold text-hx-text-primary mt-0 mb-1;
+    }
+
+    .hx-profile-star-id {
+      @apply text-[13px] text-hx-text-secondary mb-2;
+    }
+
+    .hx-profile-badges {
+      @apply flex items-center gap-2 mb-4 flex-wrap justify-center;
+    }
+
+    .hx-profile-owner-info {
+      @apply text-[12px] text-hx-text-secondary flex items-center gap-1;
+    }
+
+    .hx-profile-actions {
+      @apply flex items-center gap-2 flex-wrap justify-center;
+    }
+
+    .hx-profile-action-btn {
+      @apply px-4 py-2 rounded-hx-radius-md text-[13px] font-medium cursor-pointer transition-all duration-200 flex items-center gap-1.5 border-none;
+    }
+
+    .hx-profile-action-btn.primary {
+      @apply bg-hx-purple text-white;
+    }
+
+    .hx-profile-action-btn.primary:hover {
+      @apply bg-hx-purple-hover;
+      transform: translateY(-1px);
+    }
+
+    .hx-profile-action-btn.secondary {
+      @apply bg-hx-bg-hover text-hx-text-primary border border-hx-border;
+    }
+
+    .hx-profile-action-btn.secondary:hover {
+      @apply border-hx-purple text-hx-purple;
+    }
+
+    /* Profile sections */
+    .hx-profile-section {
+      @apply px-6 py-4;
+      border-bottom: 1px solid var(--hx-border-light);
+    }
+
+    .hx-profile-section:last-child {
+      border-bottom: none;
+    }
+
+    .hx-profile-section-title {
+      @apply text-[13px] font-semibold text-hx-text-primary mb-3 flex items-center gap-2;
+    }
+
+    .hx-profile-section-content {
+      @apply text-[13px] text-hx-text-secondary leading-relaxed;
+    }
+
+    .hx-profile-capability-item {
+      @apply flex items-start gap-2 py-1.5;
+    }
+
+    .hx-profile-capability-item::before {
+      content: '·';
+      @apply text-hx-purple font-bold text-lg leading-none mt-[-2px];
+    }
+
+    /* ── Trust Level Selector ── */
+    .hx-trust-selector-backdrop {
+      @apply fixed inset-0 z-[999];
+    }
+
+    .hx-trust-selector {
+      @apply absolute z-[1000] w-[200px] bg-hx-bg-panel border border-hx-border rounded-hx-radius-lg py-1 shadow-[0_8px_32px_rgba(0,0,0,0.15)] backdrop-blur-md;
+      animation: hx-menu-fade-in 0.15s ease-out;
+    }
+
+    .hx-trust-selector-item {
+      @apply flex items-center gap-2 w-full px-3 py-2 border-none bg-transparent text-hx-text-primary text-[13px] cursor-pointer transition-colors duration-150;
+    }
+
+    .hx-trust-selector-item:hover {
+      @apply bg-hx-bg-hover;
+    }
+
+    .hx-trust-selector-item.active {
+      @apply bg-hx-purple-bg text-hx-purple font-semibold;
+    }
+
+    .hx-trust-selector-dot {
+      @apply w-2.5 h-2.5 rounded-full shrink-0;
+    }
+
+    /* ── Permission rows ── */
+    .hx-permission-row {
+      @apply flex items-center justify-between py-2 px-1;
+      border-bottom: 1px solid var(--hx-border-light);
+    }
+
+    .hx-permission-row:last-child {
+      border-bottom: none;
+    }
+
+    .hx-permission-label {
+      @apply text-[12px] text-hx-text-secondary flex items-center gap-1.5;
+    }
+
+    .hx-permission-label .iron-law {
+      @apply text-[10px] opacity-60;
+    }
+
+    .hx-permission-toggle {
+      @apply relative w-9 h-5 rounded-full cursor-pointer transition-colors duration-200 border-none;
+      background: var(--hx-border);
+    }
+
+    .hx-permission-toggle.active {
+      @apply bg-hx-green;
+    }
+
+    .hx-permission-toggle.locked {
+      @apply opacity-50 cursor-not-allowed;
+    }
+
+    .hx-permission-toggle::after {
+      content: '';
+      @apply absolute top-[2px] left-[2px] w-4 h-4 bg-white rounded-full transition-transform duration-200 shadow-sm;
+    }
+
+    .hx-permission-toggle.active::after {
+      transform: translateX(16px);
+    }
+
+    /* ── Agent child row (从属子列表) ── */
+    .hx-agent-child-row {
+      @apply flex items-center gap-2.5 px-3 py-2 cursor-pointer transition-colors duration-150 rounded-hx-radius-sm ml-6;
+    }
+
+    .hx-agent-child-row:hover {
+      @apply bg-hx-bg-hover;
+    }
+
+    .hx-agent-child-prefix {
+      @apply text-[12px] text-hx-text-tertiary flex items-center;
+    }
+
+    .hx-agent-child-avatar {
+      @apply w-7 h-7 rounded-full overflow-hidden flex items-center justify-center text-white text-[11px] font-semibold;
+    }
+
+    .hx-agent-child-info {
+      @apply flex-1 min-w-0;
+    }
+
+    .hx-agent-child-name {
+      @apply text-[12px] text-hx-text-primary font-medium truncate;
+    }
+
+    .hx-agent-child-role {
+      @apply text-[10px] text-hx-text-tertiary;
+    }
+
+    /* ── My Stars section (我的星组) ── */
+    .hx-my-stars-section {
+      @apply border-b border-hx-border pb-2 mb-2;
+    }
+
+    .hx-my-stars-header {
+      @apply px-3 py-2 text-[11px] font-semibold text-hx-text-tertiary uppercase tracking-wider flex items-center gap-1.5;
+    }
+
+    /* ── Negotiation entity icon pair ── */
+    .hx-negotiation-pair {
+      @apply flex items-center gap-1 text-[13px];
+    }
+
+    .hx-negotiation-pair .arrow {
+      @apply text-hx-text-tertiary text-[10px] mx-0.5;
+    }

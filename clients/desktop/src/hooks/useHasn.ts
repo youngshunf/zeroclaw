@@ -200,7 +200,7 @@ export function useHasnMessages(conversationId: string | null) {
     const tempMsg: HasnEnvelope = {
       id: `local_${Date.now()}`,
       version: "1.0",
-      from: { hasn_id: "", entity_type: "human" },
+      from: { hasn_id: localStorage.getItem('hasn:hasn_id') || "", entity_type: "human" },
       to: { hasn_id: "", entity_type: "human" },
       type: "message",
       content: { content_type: "text", body: { text: content } },
