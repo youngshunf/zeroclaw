@@ -13431,6 +13431,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "zeroclaw-desktop"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-shell",
+ "tauri-plugin-single-instance",
+ "tauri-plugin-store",
+ "tokio",
+]
+
+[[package]]
+name = "zeroclaw-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
 name = "zeroclaw-robot-kit"
 version = "0.1.0"
 dependencies = [
@@ -13454,7 +13482,7 @@ dependencies = [
 
 [[package]]
 name = "zeroclawlabs"
-version = "0.6.8"
+version = "0.6.9"
 dependencies = [
  "aardvark-sys",
  "aes",
@@ -13563,7 +13591,8 @@ dependencies = [
  "webpki-roots 1.0.6",
  "which 8.0.2",
  "wiremock",
- "zip 8.4.0",
+ "zeroclaw-macros",
+ "zip",
 ]
 
 [[package]]

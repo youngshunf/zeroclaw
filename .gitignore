@@ -79,3 +79,6 @@ playground/
 rust_out
 clients/desktop/design_preview*.html
 clients/desktop/src-tauri/knowledge
+
+# Auto-generated Tauri schemas
+apps/tauri/gen/schemas/linux-schema.json
