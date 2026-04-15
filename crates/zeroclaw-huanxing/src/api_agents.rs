@@ -457,7 +457,7 @@ async fn update_agent_hasn_id(
     let workspace = config
         .huanxing
         .resolve_agent_workspace(config_dir, Some(&tenant_dir), &name);
-    let _ = zeroclaw_config::schema::promote_legacy_agent_config_from_workspace(&workspace);
+    let _ = zeroclaw_config::huanxing::promote_legacy_agent_config_from_workspace(&workspace);
     let config_path =
         config
             .huanxing
@@ -950,8 +950,8 @@ impl WorkspaceConfig {
 
 /// 从工作区目录加载 config.toml 的部分字段
 async fn load_workspace_config(workspace: &std::path::Path) -> WorkspaceConfig {
-    let _ = zeroclaw_config::schema::promote_legacy_agent_config_from_workspace(workspace);
-    let path = zeroclaw_config::schema::agent_config_path_from_workspace(workspace);
+    let _ = zeroclaw_config::huanxing::promote_legacy_agent_config_from_workspace(workspace);
+    let path = zeroclaw_config::huanxing::agent_config_path_from_workspace(workspace);
     let Ok(content) = tokio::fs::read_to_string(&path).await else {
         return WorkspaceConfig::default();
     };

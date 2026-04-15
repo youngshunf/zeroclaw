@@ -44,19 +44,18 @@ impl ReadSkillTool {
     /// falling back to `{config_dir}/skills/` for vanilla ZeroClaw.
     fn derive_global_skills_dir(&self) -> Option<PathBuf> {
         let config_dir = self.config.config_path.parent()?;
-        #[cfg(feature = "huanxing")]
-        {
-            if self.config.huanxing.enabled {
-                let common_dir = self.config.huanxing.resolve_common_skills_dir(config_dir);
-                // resolve_common_skills_dir returns {config_dir}/skills/ by default.
-                // The actual skills may be directly in this dir or in a `skills/` subdirectory.
-                let nested = common_dir.join("skills");
-                if nested.exists() {
-                    return Some(nested);
-                }
-                if common_dir.exists() {
-                    return Some(common_dir);
-                }
+        // HuanXing 的 Config.huanxing 字段在 RFC D1 之后已经无条件存在
+        // （见 zeroclaw-config/src/schema.rs），这里直接读取无需 cfg 门。
+        if self.config.huanxing.enabled {
+            let common_dir = self.config.huanxing.resolve_common_skills_dir(config_dir);
+            // resolve_common_skills_dir returns {config_dir}/skills/ by default.
+            // The actual skills may be directly in this dir or in a `skills/` subdirectory.
+            let nested = common_dir.join("skills");
+            if nested.exists() {
+                return Some(nested);
+            }
+            if common_dir.exists() {
+                return Some(common_dir);
             }
         }
         // Vanilla ZeroClaw: check {config_dir}/skills/
@@ -132,7 +131,7 @@ impl Tool for ReadSkillTool {
             global_dir = ?global_dir,
             user_dir = ?user_dir,
             config_path = %self.config.config_path.display(),
-            huanxing_enabled = cfg!(feature = "huanxing"),
+            huanxing_enabled = self.config.huanxing.enabled,
             "【read_skill 调试】开始加载技能"
         );
 

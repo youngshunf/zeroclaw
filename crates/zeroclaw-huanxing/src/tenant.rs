@@ -14,7 +14,8 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use zeroclaw_infra::session_backend::SessionBackend;
-use zeroclaw_memory::{self, Memory};
+use zeroclaw_memory as memory;
+use zeroclaw_memory::Memory;
 
 use zeroclaw_runtime::security::SecurityPolicy;
 
@@ -48,9 +49,9 @@ struct WorkspaceOverrides {
     /// [security] 节覆盖安全配置（canary_tokens / outbound_leak_guard 等）
     #[serde(default)]
     security: Option<toml::Table>,
-    /// [channels_config] 节覆盖渠道配置
-    #[serde(default)]
-    channels_config: Option<toml::Table>,
+    /// [channels] 节覆盖渠道配置（serde alias 保留对旧 config 的兼容）
+    #[serde(default, alias = "channels_config")]
+    channels: Option<toml::Table>,
     /// [heartbeat] 节覆盖心跳配置
     #[serde(default)]
     heartbeat: Option<toml::Table>,
@@ -188,7 +189,7 @@ pub struct TenantContext {
 
     /// Per-tenant reliability config (from [reliability] override or global).
     /// Used when creating per-request resilient providers.
-    pub reliability: zeroclaw_config::ReliabilityConfig,
+    pub reliability: zeroclaw_config::schema::ReliabilityConfig,
 
     /// Per-tenant knowledge graph instance.
     /// In unified tenant mode this is typically shared via owner_dir.
@@ -199,7 +200,7 @@ pub struct TenantContext {
         Option<std::sync::Arc<crate::knowledge_cross::CrossWorkspaceKnowledgeIndex>>,
 
     /// Per-tenant knowledge config (for auto_capture, suggest_on_query, etc.).
-    pub knowledge_config: zeroclaw_config::KnowledgeConfig,
+    pub knowledge_config: zeroclaw_config::schema::KnowledgeConfig,
 
     /// Effective runtime config after tenant-level path and config resolution.
     resolved_config: zeroclaw_config::schema::Config,
@@ -363,7 +364,19 @@ impl TenantContext {
     }
 
     pub async fn create_agent(&self) -> anyhow::Result<zeroclaw_runtime::agent::Agent> {
-        zeroclaw_runtime::agent::Agent::from_tenant_context(self).await
+        // Agent::from_tenant_context 原先定义在 zeroclaw-runtime，在 Phase 5.4d
+        // cfg 泄漏清理中被移除。现在这里直接调用 from_config_with_overrides。
+        zeroclaw_runtime::agent::Agent::from_config_with_overrides(
+            self.runtime_config(),
+            zeroclaw_runtime::agent::AgentRuntimeOverrides {
+                owner_dir: Some(self.owner_dir.clone()),
+                memory: Some(self.memory.clone()),
+                security: self.security.clone(),
+                response_cache_root: Some(self.owner_dir.clone()),
+                system_prompt_override: Some(self.system_prompt.clone()),
+            },
+        )
+        .await
     }
 
     /// Load a tenant context from workspace directory.
@@ -439,8 +452,8 @@ impl TenantContext {
             merge_config_section(&global_config.security, overrides.security.as_ref())
                 .context("merge [security] overrides")?;
         let effective_channels_config = merge_config_section(
-            &global_config.channels_config,
-            overrides.channels_config.as_ref(),
+            &global_config.channels,
+            overrides.channels.as_ref(),
         )
         .context("merge [channels_config] overrides")?;
         let effective_heartbeat =
@@ -522,9 +535,12 @@ impl TenantContext {
         // Resolve autonomy level: workspace [autonomy] > global [autonomy]
         let autonomy_level = effective_autonomy.level.clone();
 
+        // Phase 5.3: 上游 build_system_prompt_with_mode 在 RFC D1 之后签名从
+        // 10 参数减到 9 参数，删除了 owner_dir。唤星需要 owner_dir 的地方改为
+        // 构造 prompt 后自行拼接或从 TenantContext 读取。
+        let _owner_dir_for_prompt = &owner_dir;
         let system_prompt = zeroclaw_channels::build_system_prompt_with_mode(
             &workspace_dir,
-            &owner_dir,
             model_name,
             &tool_descs,
             &skills,
@@ -704,7 +720,7 @@ impl TenantContext {
         resolved_config.autonomy = effective_autonomy;
         resolved_config.skills = effective_skills_config;
         resolved_config.security = effective_security_config;
-        resolved_config.channels_config = effective_channels_config.clone();
+        resolved_config.channels = effective_channels_config.clone();
         resolved_config.heartbeat = effective_heartbeat.clone();
         resolved_config.cron = effective_cron.clone();
         resolved_config.multimodal = effective_multimodal.clone();
@@ -784,8 +800,8 @@ impl TenantContext {
             merge_config_section(&global_config.security, overrides.security.as_ref())
                 .context("merge guardian [security] overrides")?;
         let effective_channels_config = merge_config_section(
-            &global_config.channels_config,
-            overrides.channels_config.as_ref(),
+            &global_config.channels,
+            overrides.channels.as_ref(),
         )
         .context("merge guardian [channels_config] overrides")?;
         let effective_heartbeat =
@@ -846,7 +862,6 @@ impl TenantContext {
         // Build full system prompt from guardian workspace files
         let system_prompt = if workspace_dir.join("SOUL.md").exists() {
             zeroclaw_channels::build_system_prompt_with_mode(
-                &workspace_dir,
                 &workspace_dir,
                 model_name,
                 &tool_descs,
@@ -913,7 +928,7 @@ impl TenantContext {
         resolved_config.autonomy = effective_autonomy;
         resolved_config.skills = effective_skills_config;
         resolved_config.security = effective_security_config;
-        resolved_config.channels_config = effective_channels_config.clone();
+        resolved_config.channels = effective_channels_config.clone();
         resolved_config.heartbeat = effective_heartbeat.clone();
         resolved_config.cron = effective_cron.clone();
         resolved_config.multimodal = effective_multimodal.clone();
@@ -1064,7 +1079,7 @@ async fn load_cascaded_overrides(
     let user_config = load_overrides_from_path(&tenant_root.join("config.toml")).await;
 
     // Try agent_wrapper_dir/config.toml first, fallback to workspace_dir/config.toml
-    let agent_config_path = match zeroclaw_config::promote_legacy_agent_config(
+    let agent_config_path = match zeroclaw_config::huanxing::promote_legacy_agent_config(
         agent_wrapper_dir,
         workspace_dir,
     ) {
@@ -1164,7 +1179,7 @@ fn merge_overrides(lower: WorkspaceOverrides, higher: WorkspaceOverrides) -> Wor
         autonomy: merge_optional_table(lower.autonomy, higher.autonomy),
         skills: merge_optional_table(lower.skills, higher.skills),
         security: merge_optional_table(lower.security, higher.security),
-        channels_config: merge_optional_table(lower.channels_config, higher.channels_config),
+        channels: merge_optional_table(lower.channels, higher.channels),
         heartbeat: merge_optional_table(lower.heartbeat, higher.heartbeat),
         cron: merge_optional_table(lower.cron, higher.cron),
         multimodal: merge_optional_table(lower.multimodal, higher.multimodal),
@@ -1198,14 +1213,14 @@ pub fn create_session_backend_for_workspace(
     workspace_dir: &std::path::Path,
     global_config: &zeroclaw_config::schema::Config,
 ) -> Option<Arc<dyn SessionBackend>> {
-    create_session_backend(workspace_dir, &global_config.channels_config)
+    create_session_backend(workspace_dir, &global_config.channels)
 }
 
 /// Create a session backend based on `channels_config.session_backend`.
 /// Returns `None` if session persistence is disabled or creation fails.
 fn create_session_backend(
     workspace_dir: &std::path::Path,
-    channels_config: &zeroclaw_config::ChannelsConfig,
+    channels_config: &zeroclaw_config::schema::ChannelsConfig,
 ) -> Option<Arc<dyn SessionBackend>> {
     if !channels_config.session_persistence {
         return None;
@@ -1241,7 +1256,7 @@ fn create_session_backend(
 }
 
 fn create_jsonl_fallback(workspace_dir: &std::path::Path) -> Option<Arc<dyn SessionBackend>> {
-    match zeroclaw_channels::session_store::SessionStore::new(workspace_dir) {
+    match zeroclaw_infra::session_store::SessionStore::new(workspace_dir) {
         Ok(store) => Some(Arc::new(store)),
         Err(e) => {
             tracing::warn!(
@@ -1470,7 +1485,7 @@ message_timeout_secs = 42
         );
         assert_eq!(tenant.message_timeout_secs, 42);
         assert_eq!(
-            tenant.runtime_config().channels_config.message_timeout_secs,
+            tenant.runtime_config().channels.message_timeout_secs,
             42
         );
     }

@@ -4,6 +4,7 @@ pub mod autonomy;
 pub mod cost;
 pub mod domain_matcher;
 pub mod helpers;
+pub mod huanxing;
 pub mod migration;
 pub mod pairing;
 pub mod platform;

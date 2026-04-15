@@ -621,11 +621,11 @@ async fn handle_ws_frame(
                                 Ok(_) => {
                                     info!("[HASN] 工作区创建成功。绑定 hasn_id: {}", aid);
                                     let _ =
-                                        zeroclaw_config::schema::promote_legacy_agent_config_from_workspace(
+                                        zeroclaw_config::huanxing::promote_legacy_agent_config_from_workspace(
                                             &agent_workspace,
                                         );
                                     let config_path =
-                                        zeroclaw_config::schema::agent_config_path_from_workspace(
+                                        zeroclaw_config::huanxing::agent_config_path_from_workspace(
                                             &agent_workspace,
                                         );
                                     if let Ok(content) =

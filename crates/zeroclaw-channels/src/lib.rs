@@ -3,6 +3,12 @@
 pub mod orchestrator;
 pub mod util;
 
+// 唤星扩展需要访问 orchestrator 内部符号（建 per-tenant 会话历史、调用
+// build_system_prompt_with_mode 等），在顶层 re-export 方便 zeroclaw-huanxing。
+pub use orchestrator::{
+    ConversationHistoryMap, MAX_CONVERSATION_SENDERS, build_system_prompt_with_mode,
+};
+
 // Always-compiled channels and utilities (no feature gate)
 pub mod cli;
 pub mod link_enricher;

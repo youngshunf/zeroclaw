@@ -20,6 +20,9 @@ zeroclaw-tools.workspace = true
 zeroclaw-runtime.workspace = true
 zeroclaw-gateway.workspace = true
 
+# 上游扩展（proc-macro + 辅助）
+zeroclaw-macros.workspace = true
+
 # 唤星扩展 crates
 hasn-client-core = { path = "../hasn-client-core" }
 huanxing-agent-factory = { path = "../huanxing-agent-factory" }
@@ -78,6 +81,12 @@ shellexpand = "3.1"
 regex = "1.10"
 urlencoding = "2.1"
 once_cell = "1"
+
+# Schema / macro 辅助
+schemars = "1.2"
+lru = "0.16"
+hostname = "0.4.2"
+cron = "0.15"
 
 # Image / 多模态
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }

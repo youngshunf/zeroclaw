@@ -540,7 +540,7 @@ auto_save = true
             result
         };
 
-        let config_path = zeroclaw_config::schema::agent_config_path_from_workspace(workspace_dir);
+        let config_path = zeroclaw_config::huanxing::agent_config_path_from_workspace(workspace_dir);
         tokio::fs::write(config_path, config).await?;
         Ok(())
     }

@@ -565,8 +565,8 @@ async fn configure_agent_llm(
     llm_token: &str,
     default_provider: &str,
 ) -> anyhow::Result<()> {
-    let _ = zeroclaw_config::schema::promote_legacy_agent_config_from_workspace(workspace);
-    let config_path = zeroclaw_config::schema::agent_config_path_from_workspace(workspace);
+    let _ = zeroclaw_config::huanxing::promote_legacy_agent_config_from_workspace(workspace);
+    let config_path = zeroclaw_config::huanxing::agent_config_path_from_workspace(workspace);
     if config_path.exists() {
         // Read existing config and update api_key
         let content = tokio::fs::read_to_string(&config_path).await?;

@@ -95,12 +95,16 @@ pub struct AgentBuilder {
     hook_runner: Option<Arc<crate::hooks::HookRunner>>,
 }
 
-struct AgentRuntimeOverrides {
-    owner_dir: Option<std::path::PathBuf>,
-    memory: Option<Arc<dyn Memory>>,
-    security: Option<Arc<SecurityPolicy>>,
-    response_cache_root: Option<std::path::PathBuf>,
-    system_prompt_override: Option<String>,
+/// Runtime overrides for constructing an Agent from a shared Config plus
+/// per-tenant state. Used by zeroclaw-huanxing to spin up per-tenant agents
+/// without re-deriving the whole Config (see
+/// `zeroclaw_huanxing::tenant::TenantContext::create_agent`).
+pub struct AgentRuntimeOverrides {
+    pub owner_dir: Option<std::path::PathBuf>,
+    pub memory: Option<Arc<dyn Memory>>,
+    pub security: Option<Arc<SecurityPolicy>>,
+    pub response_cache_root: Option<std::path::PathBuf>,
+    pub system_prompt_override: Option<String>,
 }
 
 impl Default for AgentBuilder {
@@ -384,8 +388,8 @@ impl Agent {
         self.memory_session_id = session_id;
     }
 
-    /// HUANXING: ws.rs 在每次 turn 前注入 WsObserver，收集工具调用事件用于 WS 推送
-    #[cfg(feature = "huanxing")]
+    /// 由外部系统（如 HASN WS / hx_ws）在每次 turn 前注入 Observer，
+    /// 收集工具调用事件用于 WS 推送。
     pub fn set_observer(&mut self, observer: std::sync::Arc<dyn crate::observability::Observer>) {
         self.observer = observer;
     }
@@ -423,7 +427,7 @@ impl Agent {
         .await
     }
 
-    async fn from_config_with_overrides(
+    pub async fn from_config_with_overrides(
         config: &Config,
         overrides: AgentRuntimeOverrides,
     ) -> Result<Self> {
@@ -658,22 +662,10 @@ impl Agent {
             .build()
     }
 
-    #[cfg(feature = "huanxing")]
-    pub async fn from_tenant_context(
-        tenant: &crate::huanxing::tenant::TenantContext,
-    ) -> Result<Self> {
-        Self::from_config_with_overrides(
-            tenant.runtime_config(),
-            AgentRuntimeOverrides {
-                owner_dir: Some(tenant.owner_dir.clone()),
-                memory: Some(tenant.memory.clone()),
-                security: tenant.security.clone(),
-                response_cache_root: Some(tenant.owner_dir.clone()),
-                system_prompt_override: Some(tenant.system_prompt.clone()),
-            },
-        )
-        .await
-    }
+    // Note: `from_tenant_context` was previously defined here behind
+    // `#[cfg(feature = "huanxing")]` but referenced `crate::huanxing::...`
+    // which no longer exists after the RFC D1 workspace split. The huanxing
+    // crate now builds agents directly via `from_config_with_overrides`.
 
     fn trim_history(&mut self) {
         let max = self.config.max_history_messages;

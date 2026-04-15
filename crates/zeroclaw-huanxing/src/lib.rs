@@ -17,6 +17,7 @@
 //! 4. `src/gateway/mod.rs` merge `zeroclaw_huanxing::api::router()`
 
 #![warn(clippy::all)]
+
 #![allow(
     clippy::module_name_repetitions,
     clippy::too_many_lines,
@@ -42,6 +43,13 @@ pub mod channel_registry;
 pub mod channels;
 pub mod config;
 pub mod context_resolver;
+
+/// Re-export shim for `zeroclaw_macros::Configurable` derive macro, which
+/// expands to `crate::security::SecurityPolicy` paths on fields marked
+/// `#[secret]`. Mirrors the shim that zeroclaw-config itself maintains.
+pub mod security {
+    pub use zeroclaw_config::security::*;
+}
 pub mod db;
 pub mod device_fingerprint;
 pub mod doc_tools;

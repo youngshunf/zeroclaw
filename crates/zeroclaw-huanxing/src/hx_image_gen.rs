@@ -45,9 +45,9 @@ impl HxImageGenTool {
 
     /// Read api_key from a tenant's workspace config.toml at runtime.
     async fn resolve_tenant_api_key(workspace_dir: &std::path::Path) -> Option<String> {
-        let _ = zeroclaw_config::schema::promote_legacy_agent_config_from_workspace(workspace_dir);
+        let _ = zeroclaw_config::huanxing::promote_legacy_agent_config_from_workspace(workspace_dir);
         let canonical_path =
-            zeroclaw_config::schema::agent_config_path_from_workspace(workspace_dir);
+            zeroclaw_config::huanxing::agent_config_path_from_workspace(workspace_dir);
         let legacy_path = workspace_dir.join("config.toml");
         let config_path = if canonical_path.exists() {
             canonical_path

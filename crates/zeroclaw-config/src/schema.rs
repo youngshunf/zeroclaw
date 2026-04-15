@@ -188,6 +188,39 @@ pub struct Config {
     #[nested]
     pub channels: ChannelsConfig,
 
+    // ── 唤星 compat shims（上游 RFC D1 删除的顶层字段） ──────────────
+    /// 【唤星 compat】API key for the selected provider.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
+    /// 【唤星 compat】API base URL override.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_url: Option<String>,
+    /// 【唤星 compat】API path suffix override.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_path: Option<String>,
+    /// 【唤星 compat】Default provider id.
+    #[serde(default, alias = "model_provider", skip_serializing_if = "Option::is_none")]
+    pub default_provider: Option<String>,
+    /// 【唤星 compat】Default model name.
+    #[serde(default, alias = "model", skip_serializing_if = "Option::is_none")]
+    pub default_model: Option<String>,
+    /// 【唤星 compat】Title-generation model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title_model: Option<String>,
+    /// 【唤星 compat】Instance display name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    /// 【唤星 compat】Default temperature (0.0–2.0).
+    #[serde(default = "crate::huanxing::huanxing_compat_default_temperature")]
+    pub default_temperature: f64,
+
+    /// HuanXing 多租户扩展配置 (`[huanxing]`)。
+    /// 由唤星 fork 添加，schema 定义在 `crate::huanxing` 模块，
+    /// 运行时逻辑在 `zeroclaw-huanxing` crate 中。
+    #[serde(default)]
+    #[nested]
+    pub huanxing: crate::huanxing::HuanXingConfig,
+
     /// Memory backend configuration: sqlite, markdown, embeddings (`[memory]`).
     #[serde(default)]
     #[nested]
@@ -1162,6 +1195,32 @@ pub struct TtsConfig {
     #[serde(default)]
     #[nested]
     pub piper: Option<PiperTtsConfig>,
+    /// 【唤星扩展】Generic OpenAI-compatible TTS provider (`[tts.generic_openai]`).
+    /// Works with any endpoint implementing OpenAI `/v1/audio/speech`
+    /// (e.g. SiliconFlow, Azure OpenAI, self-hosted).
+    #[serde(default)]
+    #[nested]
+    pub generic_openai: Option<GenericOpenAiTtsConfig>,
+}
+
+/// 【唤星扩展】Generic OpenAI-compatible TTS provider configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, Configurable, Default)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
+#[prefix = "tts.generic_openai"]
+pub struct GenericOpenAiTtsConfig {
+    /// API endpoint URL (e.g. `"https://api.siliconflow.cn/v1/audio/speech"`).
+    #[serde(default)]
+    pub api_url: String,
+    /// API key for authentication.
+    #[serde(default)]
+    pub api_key: Option<String>,
+    /// Model name (e.g. `"tts-1"`).
+    #[serde(default = "default_generic_openai_tts_model")]
+    pub model: String,
+}
+
+fn default_generic_openai_tts_model() -> String {
+    "tts-1".to_string()
 }
 
 impl Default for TtsConfig {
@@ -1177,6 +1236,7 @@ impl Default for TtsConfig {
             google: None,
             edge: None,
             piper: None,
+            generic_openai: None,
         }
     }
 }
@@ -2961,6 +3021,9 @@ impl Default for ShellToolConfig {
 // ── Web search ───────────────────────────────────────────────────
 
 /// Web search tool configuration (`[web_search]` section).
+///
+/// 唤星扩展：支持多 provider（tavily/perplexity/exa/jina/firecrawl），
+/// 以及 fallback provider 链、API key 轮换、过滤器等高级选项。
 #[derive(Debug, Clone, Serialize, Deserialize, Configurable)]
 #[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
 #[prefix = "web-search"]
@@ -2968,22 +3031,77 @@ pub struct WebSearchConfig {
     /// Enable `web_search_tool` for web searches
     #[serde(default)]
     pub enabled: bool,
-    /// Search provider: "duckduckgo" (free), "brave" (requires API key), or "searxng" (self-hosted)
+    /// Search provider: "duckduckgo"/"ddg", "brave", "firecrawl", "tavily",
+    /// "perplexity", "exa", "jina", or "searxng" (self-hosted)
     #[serde(default = "default_web_search_provider")]
     pub provider: String,
+    /// Generic provider API key (firecrawl/tavily/brave fallback). 逗号分隔支持 round-robin。
+    #[serde(default)]
+    pub api_key: Option<String>,
+    /// Provider API URL override (self-hosted).
+    #[serde(default)]
+    pub api_url: Option<String>,
     /// Brave Search API key (required if provider is "brave")
     #[serde(default)]
     #[secret]
     pub brave_api_key: Option<String>,
+    /// Perplexity API key.
+    #[serde(default)]
+    pub perplexity_api_key: Option<String>,
+    /// Exa API key.
+    #[serde(default)]
+    pub exa_api_key: Option<String>,
+    /// Jina API key (optional).
+    #[serde(default)]
+    pub jina_api_key: Option<String>,
     /// SearXNG instance URL (required if provider is "searxng"), e.g. "https://searx.example.com"
     #[serde(default)]
     pub searxng_instance_url: Option<String>,
+    /// Fallback providers chain after primary fails.
+    #[serde(default)]
+    pub fallback_providers: Vec<String>,
+    /// Retry count per provider before falling back.
+    #[serde(default = "default_web_search_retries_per_provider")]
+    pub retries_per_provider: u32,
+    /// Retry backoff in ms.
+    #[serde(default = "default_web_search_retry_backoff_ms")]
+    pub retry_backoff_ms: u64,
+    /// Domain filter forwarded to providers that support it.
+    #[serde(default)]
+    pub domain_filter: Vec<String>,
+    /// Language filter forwarded to providers that support it.
+    #[serde(default)]
+    pub language_filter: Vec<String>,
+    /// Country filter (e.g. "US").
+    #[serde(default)]
+    pub country: Option<String>,
+    /// Recency filter forwarded to providers that support it.
+    #[serde(default)]
+    pub recency_filter: Option<String>,
+    /// Max tokens cap (provider-specific, e.g. Perplexity).
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
+    /// Max tokens per page (provider-specific).
+    #[serde(default)]
+    pub max_tokens_per_page: Option<u32>,
+    /// Exa search type override: "auto" (default), "keyword", or "neural".
+    #[serde(default = "default_web_search_exa_search_type")]
+    pub exa_search_type: String,
+    /// Include textual content payloads for Exa responses.
+    #[serde(default)]
+    pub exa_include_text: bool,
+    /// Site filters for Jina provider.
+    #[serde(default)]
+    pub jina_site_filters: Vec<String>,
     /// Maximum results per search (1-10)
     #[serde(default = "default_web_search_max_results")]
     pub max_results: usize,
     /// Request timeout in seconds
     #[serde(default = "default_web_search_timeout_secs")]
     pub timeout_secs: u64,
+    /// User-Agent string (env: ZEROCLAW_WEB_SEARCH_USER_AGENT).
+    #[serde(default = "default_web_search_user_agent")]
+    pub user_agent: String,
 }
 
 fn default_web_search_provider() -> String {
@@ -2998,15 +3116,49 @@ fn default_web_search_timeout_secs() -> u64 {
     15
 }
 
+fn default_web_search_retries_per_provider() -> u32 {
+    2
+}
+
+fn default_web_search_retry_backoff_ms() -> u64 {
+    500
+}
+
+fn default_web_search_exa_search_type() -> String {
+    "auto".into()
+}
+
+fn default_web_search_user_agent() -> String {
+    "Mozilla/5.0 (compatible; ZeroClawBot/1.0)".into()
+}
+
 impl Default for WebSearchConfig {
     fn default() -> Self {
         Self {
             enabled: true,
             provider: default_web_search_provider(),
+            api_key: None,
+            api_url: None,
             brave_api_key: None,
+            perplexity_api_key: None,
+            exa_api_key: None,
+            jina_api_key: None,
             searxng_instance_url: None,
+            fallback_providers: Vec::new(),
+            retries_per_provider: default_web_search_retries_per_provider(),
+            retry_backoff_ms: default_web_search_retry_backoff_ms(),
+            domain_filter: Vec::new(),
+            language_filter: Vec::new(),
+            country: None,
+            recency_filter: None,
+            max_tokens: None,
+            max_tokens_per_page: None,
+            exa_search_type: default_web_search_exa_search_type(),
+            exa_include_text: false,
+            jina_site_filters: Vec::new(),
             max_results: default_web_search_max_results(),
             timeout_secs: default_web_search_timeout_secs(),
+            user_agent: default_web_search_user_agent(),
         }
     }
 }
@@ -9092,6 +9244,15 @@ impl Default for Config {
             heartbeat: HeartbeatConfig::default(),
             cron: CronConfig::default(),
             channels: ChannelsConfig::default(),
+            api_key: None,
+            api_url: None,
+            api_path: None,
+            default_provider: None,
+            default_model: None,
+            title_model: None,
+            display_name: None,
+            default_temperature: crate::huanxing::huanxing_compat_default_temperature(),
+            huanxing: crate::huanxing::HuanXingConfig::default(),
             memory: MemoryConfig::default(),
             storage: StorageConfig::default(),
             tunnel: TunnelConfig::default(),
@@ -12272,6 +12433,15 @@ default_temperature = 0.7
             heartbeat: HeartbeatConfig::default(),
             cron: CronConfig::default(),
             channels: ChannelsConfig::default(),
+            api_key: None,
+            api_url: None,
+            api_path: None,
+            default_provider: None,
+            default_model: None,
+            title_model: None,
+            display_name: None,
+            default_temperature: crate::huanxing::huanxing_compat_default_temperature(),
+            huanxing: crate::huanxing::HuanXingConfig::default(),
             memory: MemoryConfig::default(),
             storage: StorageConfig::default(),
             tunnel: TunnelConfig::default(),
