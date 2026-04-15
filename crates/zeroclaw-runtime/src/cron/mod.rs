@@ -2,7 +2,7 @@ use crate::security::SecurityPolicy;
 use anyhow::{Result, anyhow, bail};
 use zeroclaw_config::schema::Config;
 
-mod schedule;
+pub mod schedule;
 mod store;
 mod types;
 

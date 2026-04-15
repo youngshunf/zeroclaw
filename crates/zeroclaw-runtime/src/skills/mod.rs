@@ -17,6 +17,55 @@ pub mod creator;
 pub mod improver;
 pub mod testing;
 
+// ── 唤星三级技能级联（HuanXing multi-tenant skill cascade）─────────
+//
+// Level 1: Global skill pool   ({config_dir}/skills/)
+// Level 2: User/tenant pool    ({config_dir}/users/{td}/workspace/skills/)
+// Level 3: Agent-specific      ({config_dir}/users/{td}/agents/{id}/workspace/skills/)
+//
+// Skills are merged cumulatively; child levels override same-named skills
+// from parent levels (Agent > User > Global).
+tokio::task_local! {
+    pub static ACTIVE_GLOBAL_SKILLS_DIR: PathBuf;
+    pub static ACTIVE_USER_SKILLS_DIR: PathBuf;
+}
+
+/// Retrieve the per-request global skills directory, if injected.
+pub fn get_active_global_skills_dir() -> Option<PathBuf> {
+    ACTIVE_GLOBAL_SKILLS_DIR.try_with(|p| p.clone()).ok()
+}
+
+/// Retrieve the per-request user skills directory, if injected.
+pub fn get_active_user_skills_dir() -> Option<PathBuf> {
+    ACTIVE_USER_SKILLS_DIR.try_with(|p| p.clone()).ok()
+}
+
+/// Load skills using three-level cascade: Global → User → Agent.
+pub fn load_skills_cascaded(
+    global_skills_dir: Option<&Path>,
+    user_skills_dir: Option<&Path>,
+    agent_workspace_dir: &Path,
+    config: &zeroclaw_config::schema::Config,
+) -> Vec<Skill> {
+    let allow_scripts = config.skills.allow_scripts;
+    let mut skills_map: HashMap<String, Skill> = HashMap::new();
+
+    if let Some(dir) = global_skills_dir {
+        for skill in load_skills_from_directory(dir, allow_scripts) {
+            skills_map.insert(skill.name.clone(), skill);
+        }
+    }
+    if let Some(dir) = user_skills_dir {
+        for skill in load_skills_from_directory(dir, allow_scripts) {
+            skills_map.insert(skill.name.clone(), skill);
+        }
+    }
+    for skill in load_workspace_skills(agent_workspace_dir, allow_scripts) {
+        skills_map.insert(skill.name.clone(), skill);
+    }
+    skills_map.into_values().collect()
+}
+
 const OPEN_SKILLS_REPO_URL: &str = "https://github.com/besoeasy/open-skills";
 const OPEN_SKILLS_SYNC_MARKER: &str = ".zeroclaw-open-skills-sync";
 const OPEN_SKILLS_SYNC_INTERVAL_SECS: u64 = 60 * 60 * 24 * 7;

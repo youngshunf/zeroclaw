@@ -140,9 +140,47 @@ use crate::security::{SecurityPolicy, create_sandbox};
 use async_trait::async_trait;
 use parking_lot::RwLock;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use zeroclaw_config::schema::{Config, DelegateAgentConfig};
 use zeroclaw_memory::Memory;
+
+// ── Per-request task-local overrides (唤星多租户支持) ─────────────
+//
+// During channel message processing, the orchestrator can inject a
+// per-tenant security policy / workspace via `with_active_*`. Tool
+// implementations call `get_active_*()` to prefer this request-scoped
+// value over the one baked into the tool at construction time.
+tokio::task_local! {
+    static ACTIVE_SECURITY: Arc<SecurityPolicy>;
+    static ACTIVE_WORKSPACE: PathBuf;
+}
+
+/// Retrieve the per-request security policy, if one was injected.
+pub fn get_active_security() -> Option<Arc<SecurityPolicy>> {
+    ACTIVE_SECURITY.try_with(|s| s.clone()).ok()
+}
+
+/// Retrieve the per-request workspace directory, if one was injected.
+pub fn get_active_workspace() -> Option<PathBuf> {
+    ACTIVE_WORKSPACE.try_with(|w| w.clone()).ok()
+}
+
+/// Run a future with a per-request security policy injected into the task-local scope.
+pub async fn with_active_security<F, T>(policy: Arc<SecurityPolicy>, future: F) -> T
+where
+    F: std::future::Future<Output = T>,
+{
+    ACTIVE_SECURITY.scope(policy, future).await
+}
+
+/// Run a future with a per-request workspace directory injected into the task-local scope.
+pub async fn with_active_workspace<F, T>(workspace: PathBuf, future: F) -> T
+where
+    F: std::future::Future<Output = T>,
+{
+    ACTIVE_WORKSPACE.scope(workspace, future).await
+}
 
 /// Shared handle to the delegate tool's parent-tools list.
 /// Callers can push additional tools (e.g. MCP wrappers) after construction.
@@ -426,8 +464,7 @@ pub fn all_tools_with_runtime(
     ) {
         tool_arcs.push(Arc::new(ReadSkillTool::new(
             workspace_dir.to_path_buf(),
-            root_config.skills.open_skills_enabled,
-            root_config.skills.open_skills_dir.clone(),
+            Arc::new(root_config.clone()),
         )));
     }
 
@@ -715,11 +752,12 @@ pub fn all_tools_with_runtime(
         let sop_engine = Arc::new(std::sync::Mutex::new(crate::sop::SopEngine::new(
             root_config.sop.clone(),
         )));
-        tool_arcs.push(Arc::new(SopListTool::new(Arc::clone(&sop_engine))));
-        tool_arcs.push(Arc::new(SopExecuteTool::new(Arc::clone(&sop_engine))));
-        tool_arcs.push(Arc::new(SopAdvanceTool::new(Arc::clone(&sop_engine))));
-        tool_arcs.push(Arc::new(SopApproveTool::new(Arc::clone(&sop_engine))));
-        tool_arcs.push(Arc::new(SopStatusTool::new(Arc::clone(&sop_engine))));
+        let sop_workspace = workspace_dir.to_path_buf();
+        tool_arcs.push(Arc::new(SopListTool::new(Arc::clone(&sop_engine), sop_workspace.clone())));
+        tool_arcs.push(Arc::new(SopExecuteTool::new(Arc::clone(&sop_engine), sop_workspace.clone())));
+        tool_arcs.push(Arc::new(SopAdvanceTool::new(Arc::clone(&sop_engine), sop_workspace.clone())));
+        tool_arcs.push(Arc::new(SopApproveTool::new(Arc::clone(&sop_engine), sop_workspace.clone())));
+        tool_arcs.push(Arc::new(SopStatusTool::new(Arc::clone(&sop_engine), sop_workspace)));
     }
 
     if let Some(key) = composio_key

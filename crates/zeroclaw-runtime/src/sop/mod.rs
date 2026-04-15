@@ -119,6 +119,7 @@ fn load_sop(sop_dir: &Path, default_execution_mode: SopExecutionMode) -> Result<
 
     let SopMeta {
         name,
+        display_name,
         description,
         version,
         priority,
@@ -137,6 +138,7 @@ fn load_sop(sop_dir: &Path, default_execution_mode: SopExecutionMode) -> Result<
 
     Ok(Sop {
         name,
+        display_name,
         description,
         version,
         priority,
@@ -145,6 +147,7 @@ fn load_sop(sop_dir: &Path, default_execution_mode: SopExecutionMode) -> Result<
         steps,
         cooldown_secs,
         max_concurrent,
+        requirements: manifest.requirements,
         location: Some(sop_dir.to_path_buf()),
         deterministic,
     })

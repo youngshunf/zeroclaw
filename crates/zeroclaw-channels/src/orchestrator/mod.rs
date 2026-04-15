@@ -3318,6 +3318,7 @@ async fn process_channel_message(
                         provider.as_ref(),
                         &model,
                         memory.as_ref(),
+                        None, // workspace_dir — 唤星多租户由上层注入；此处无 workspace 信息
                         &user_msg,
                         &assistant_resp,
                     )

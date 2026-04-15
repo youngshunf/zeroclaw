@@ -7,7 +7,7 @@ use zeroclaw_api::tool::{Tool, ToolResult};
 /// Compact-mode helper for loading a skill's source file on demand.
 pub struct ReadSkillTool {
     workspace_dir: PathBuf,
-    config: Arc<crate::config::Config>,
+    config: Arc<zeroclaw_config::schema::Config>,
     /// Global skills directory (Level 1 — platform-wide shared skills)
     global_skills_dir: Option<PathBuf>,
     /// User/tenant skills directory (Level 2 — user-shared skills)
@@ -17,7 +17,7 @@ pub struct ReadSkillTool {
 impl ReadSkillTool {
     pub fn new(
         workspace_dir: PathBuf,
-        config: Arc<crate::config::Config>,
+        config: Arc<zeroclaw_config::schema::Config>,
     ) -> Self {
         Self {
             workspace_dir,
