@@ -25,7 +25,8 @@ pub struct DashScopeTtsProvider {
 }
 
 /// Configuration for DashScope TTS provider.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema, zeroclaw_macros::Configurable)]
+#[prefix = "tts.dashscope"]
 pub struct DashScopeTtsConfig {
     /// API key for DashScope. Falls back to `DASHSCOPE_API_KEY` env var.
     #[serde(default)]

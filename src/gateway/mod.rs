@@ -901,28 +901,86 @@ pub async fn run_gateway(
                 )
             });
 
-            let node_key = config.huanxing.hasn.api_key.clone()
-                .filter(|k| !k.trim().is_empty());
-
-            if let Some(node_key) = node_key {
-                let url = format!("{}?protocol=hasn/2.0", base_url);
-                let auth_headers = vec![("Authorization".to_string(), format!("NodeKey {}", node_key))];
+                tracing::info!("[HASN] 触发 HASN 自动连接...");
                 let st = std::sync::Arc::new(state.clone());
-                let max_retries = config.huanxing.hasn.max_retries;
+                let fp_node_id = crate::huanxing::device_fingerprint::get_global_fingerprint()
+                    .map(|fp| fp.node_id.clone())
+                    .unwrap_or_default();
+                    
                 tokio::spawn(async move {
-                    tracing::info!("[HASN] Gateway启动，触发 HASN 自动连接...");
-                    if let Err(e) = crate::huanxing::hasn_connector::global_connector()
-                        .connect_with_retry(&url, auth_headers, max_retries, st)
-                        .await
-                    {
-                        tracing::error!("[HASN] 自动连接 HASN 中央节点失败: {}", e);
+                    // v2.1 简化认证：用 Bearer Token + X-Node-Id 建连
+                    // 从 HuanXing session 获取 access_token
+                    let access_token = {
+                        let cfg = st.config.lock();
+                        // 优先从 huanxing session 中获取 token
+                        cfg.huanxing.hasn.api_key.clone()
+                            .filter(|k| !k.trim().is_empty())
+                            .or_else(|| {
+                                // 回退：从运行时 session 获取
+                                None
+                            })
+                    };
+
+                    // 获取带有版本的 OS 字符串
+                    let os_version = {
+                        let arch = std::env::consts::ARCH;
+                        #[cfg(target_os = "macos")]
+                        {
+                            std::process::Command::new("sw_vers")
+                                .arg("-productVersion")
+                                .output()
+                                .ok()
+                                .and_then(|o| String::from_utf8(o.stdout).ok())
+                                .map(|v| format!("macOS {} ({})", v.trim(), arch))
+                                .unwrap_or_else(|| format!("macOS ({})", arch))
+                        }
+                        #[cfg(target_os = "linux")]
+                        {
+                            std::process::Command::new("uname")
+                                .arg("-r")
+                                .output()
+                                .ok()
+                                .and_then(|o| String::from_utf8(o.stdout).ok())
+                                .map(|v| format!("Linux {} ({})", v.trim(), arch))
+                                .unwrap_or_else(|| format!("Linux ({})", arch))
+                        }
+                        #[cfg(target_os = "windows")]
+                        {
+                            format!("Windows ({})", arch)
+                        }
+                        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+                        {
+                            format!("{} ({})", std::env::consts::OS, arch)
+                        }
+                    };
+
+                    if let Some(token) = access_token {
+                        let url = format!("{}?protocol=hasn/2.0", base_url);
+                        // v2.1: Bearer Token + X-Node-Id（后端自动 upsert hasn_nodes + auto bind owner）
+                        let mut auth_headers = if token.starts_with("hasn_ok_") {
+                            vec![("Authorization".to_string(), format!("OwnerKey {}", token))]
+                        } else {
+                            vec![("Authorization".to_string(), format!("Bearer {}", token))]
+                        };
+                        if !fp_node_id.is_empty() {
+                            auth_headers.push(("X-Node-Id".to_string(), fp_node_id));
+                        }
+                        auth_headers.push(("X-Node-Name".to_string(), os_version));
+                        let max_retries = st.config.lock().huanxing.hasn.max_retries;
+                        
+                        if let Err(e) = crate::huanxing::hasn_connector::global_connector()
+                            .connect_with_retry(&url, auth_headers, max_retries, st)
+                            .await
+                        {
+                            tracing::error!("[HASN] 自动连接 HASN 中央节点失败: {}", e);
+                        }
+                    } else {
+                        tracing::warn!(
+                            "[HASN] 未配置认证凭据 (api_key/access_token)，无法建立 HASN 连接。\
+                             桌面端用户登录后将由前端触发连接。"
+                        );
                     }
                 });
-            } else {
-                tracing::warn!(
-                    "[HASN] HASN 已启用 auto_connect，但未配置 Node Key，无法建立认证连接"
-                );
-            }
         }
     }
 
@@ -1108,6 +1166,30 @@ pub async fn run_gateway(
         .route(
             "/api/v1/hasn/send",
             axum::routing::post(crate::huanxing::hasn_api::hasn_send),
+        )
+        .route(
+            "/api/v1/hasn/chat/sessions",
+            axum::routing::get(crate::huanxing::hasn_chat_api::hasn_chat_get_sessions),
+        )
+        .route(
+            "/api/v1/hasn/chat/messages",
+            axum::routing::get(crate::huanxing::hasn_chat_api::hasn_chat_get_messages),
+        )
+        .route(
+            "/api/v1/hasn/chat/read",
+            axum::routing::post(crate::huanxing::hasn_chat_api::hasn_chat_mark_read),
+        )
+        .route(
+            "/api/v1/hasn/chat/contacts",
+            axum::routing::get(crate::huanxing::hasn_chat_api::hasn_chat_get_contacts),
+        )
+        .route(
+            "/api/v1/hasn/chat/contacts/detail",
+            axum::routing::get(crate::huanxing::hasn_chat_api::hasn_chat_get_contact),
+        )
+        .route(
+            "/api/v1/hasn/chat/sync/status",
+            axum::routing::get(crate::huanxing::hasn_chat_api::hasn_chat_sync_status),
         )
         .route(
             "/api/v1/hasn/node/owners",

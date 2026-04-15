@@ -340,10 +340,20 @@ impl TenantDb {
     ) -> Result<()> {
         let conn = self.conn.lock().await;
         conn.execute(
-            "INSERT OR REPLACE INTO users (
+            "INSERT INTO users (
                 user_id, phone, nickname, tenant_dir, hasn_id,
                 access_token, llm_token, gateway_token, server_id
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+             ON CONFLICT(user_id) DO UPDATE SET
+                phone = excluded.phone,
+                nickname = COALESCE(excluded.nickname, users.nickname),
+                tenant_dir = COALESCE(excluded.tenant_dir, users.tenant_dir),
+                hasn_id = COALESCE(excluded.hasn_id, users.hasn_id),
+                access_token = excluded.access_token,
+                llm_token = excluded.llm_token,
+                gateway_token = excluded.gateway_token,
+                server_id = excluded.server_id,
+                last_active = datetime('now')",
             rusqlite::params![
                 user_id,
                 phone,
@@ -358,8 +368,13 @@ impl TenantDb {
         )?;
 
         conn.execute(
-            "INSERT OR REPLACE INTO agents (agent_id, user_id, template, star_name)
-             VALUES (?1, ?2, ?3, ?4)",
+            "INSERT INTO agents (agent_id, user_id, template, star_name)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(agent_id) DO UPDATE SET
+                user_id = excluded.user_id,
+                template = excluded.template,
+                star_name = COALESCE(excluded.star_name, agents.star_name),
+                updated_at = datetime('now')",
             rusqlite::params![agent_id, user_id, template, star_name],
         )?;
 
@@ -494,7 +509,8 @@ impl TenantDb {
 
     pub async fn find_by_hasn_id(&self, hasn_id: &str) -> Result<Option<TenantRecord>> {
         let conn = self.conn.lock().await;
-        let mut stmt = conn.prepare_cached(
+        
+        let query = if hasn_id.starts_with("a_") {
             "SELECT u.user_id, a.agent_id, u.nickname, u.phone, a.template,
                     u.plan, u.status, a.star_name, u.tenant_dir,
                     u.plan_expires, u.created_at, u.last_active,
@@ -502,12 +518,37 @@ impl TenantDb {
                     u.hasn_id
              FROM agents a
              JOIN users u ON a.user_id = u.user_id
-             WHERE a.hasn_id = ?1 AND u.status = 'active' LIMIT 1",
-        )?;
+             WHERE a.hasn_id = ?1 AND u.status = 'active' LIMIT 1"
+        } else {
+            "SELECT u.user_id, a.agent_id, u.nickname, u.phone, a.template,
+                    u.plan, u.status, a.star_name, u.tenant_dir,
+                    u.plan_expires, u.created_at, u.last_active,
+                    u.access_token, u.llm_token, u.gateway_token, NULL as token_expires, u.server_id,
+                    u.hasn_id
+             FROM users u
+             LEFT JOIN agents a ON u.user_id = a.user_id
+             WHERE u.hasn_id = ?1 AND u.status = 'active' LIMIT 1"
+        };
+        
+        let mut stmt = conn.prepare_cached(query)?;
         match stmt.query_row(rusqlite::params![hasn_id], |row| {
             Ok(Self::row_to_record(row))
         }) {
             Ok(record) => Ok(Some(record)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    pub async fn get_tenant_dir_by_user_hasn_id(&self, hasn_id: &str) -> std::result::Result<Option<String>, anyhow::Error> {
+        let conn = self.conn.lock().await;
+        // Search in users table
+        let mut stmt = conn.prepare_cached("SELECT tenant_dir FROM users WHERE hasn_id = ?1")?;
+        match stmt.query_row(rusqlite::params![hasn_id], |row| {
+            let val: Option<String> = row.get(0)?;
+            Ok(val)
+        }) {
+            Ok(dir) => Ok(dir),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(e.into()),
         }

@@ -101,32 +101,88 @@ pub async fn hasn_connect(
             )
         });
 
-    let auth_headers = if let Some(token) = &req.token {
-        if token.starts_with("hasn_nk_") {
-            vec![("Authorization".to_string(), format!("NodeKey {}", token))]
-        } else {
-            vec![("Authorization".to_string(), format!("Bearer {}", token))]
-        }
+    // v2.1 简化认证：用 Bearer/OwnerKey + X-Node-Id
+    let token = if let Some(t) = &req.token {
+        t.clone()
     } else if let Some(api_key) = &hasn_config.api_key {
-        vec![("Authorization".to_string(), format!("NodeKey {}", api_key))]
+        if api_key.trim().is_empty() {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "缺少认证凭据 (token 或 api_key)"})),
+            )
+                .into_response();
+        }
+        api_key.clone()
     } else {
         return (
             StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({"error": "缺少认证凭据 (node_key)"})),
+            Json(serde_json::json!({"error": "缺少认证凭据 (token 或 api_key)"})),
         )
             .into_response();
     };
 
+    let mut auth_headers = if token.starts_with("hasn_ok_") {
+        vec![("Authorization".to_string(), format!("OwnerKey {}", token))]
+    } else if token.starts_with("hasn_nk_") {
+        // 向后兼容旧版 NodeKey（过渡期）
+        vec![("Authorization".to_string(), format!("NodeKey {}", token))]
+    } else {
+        vec![("Authorization".to_string(), format!("Bearer {}", token))]
+    };
+
+    // 附加 X-Node-Id
+    let fp_node_id = crate::huanxing::device_fingerprint::get_global_fingerprint()
+        .map(|fp| fp.node_id.clone())
+        .unwrap_or_default();
+    if !fp_node_id.is_empty() {
+        auth_headers.push(("X-Node-Id".to_string(), fp_node_id));
+    }
+
+    // 附加 X-Node-Name（OS 版本标识）
+    let os_version = {
+        let arch = std::env::consts::ARCH;
+        #[cfg(target_os = "macos")]
+        {
+            std::process::Command::new("sw_vers")
+                .arg("-productVersion")
+                .output()
+                .ok()
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .map(|v| format!("macOS {} ({})", v.trim(), arch))
+                .unwrap_or_else(|| format!("macOS ({})", arch))
+        }
+        #[cfg(target_os = "linux")]
+        {
+            format!("Linux ({})", arch)
+        }
+        #[cfg(target_os = "windows")]
+        {
+            format!("Windows ({})", arch)
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+        {
+            format!("{} ({})", std::env::consts::OS, arch)
+        }
+    };
+    auth_headers.push(("X-Node-Name".to_string(), os_version));
+
     let url = format!("{}?protocol=hasn/2.0", base_url);
 
     let connector = hasn_connector::global_connector();
-    let max_retries = hasn_config.max_retries;
 
-    match connector
-        .connect_with_retry(&url, auth_headers, max_retries, Arc::new(state))
-        .await
+    // ⚠️ 不能在 HTTP 处理器里跑 connect_with_retry：
+    //   默认 max_retries=10 + 指数退避 (1s→30s)，最坏阻塞 ~3 分钟，
+    //   Vite 代理/浏览器的 socket 空闲时间会先超时返回 408。
+    //   这里只做一次握手，带 15s 硬超时，重试交给前端 5 分钟心跳兜底。
+    const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
+    match tokio::time::timeout(
+        CONNECT_TIMEOUT,
+        connector.connect(&url, auth_headers, Arc::new(state)),
+    )
+    .await
     {
-        Ok(()) => {
+        Ok(Ok(())) => {
             info!("[HASN API] 连接成功");
             (
                 StatusCode::OK,
@@ -134,11 +190,28 @@ pub async fn hasn_connect(
             )
                 .into_response()
         }
-        Err(e) => {
+        Ok(Err(e)) => {
             error!("[HASN API] 连接失败: {}", e);
             (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": format!("连接失败: {e}")})),
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({
+                    "status": "failed",
+                    "error": format!("连接失败: {e}"),
+                })),
+            )
+                .into_response()
+        }
+        Err(_) => {
+            error!(
+                "[HASN API] 连接超时（{}s），中央节点未在期限内响应",
+                CONNECT_TIMEOUT.as_secs()
+            );
+            (
+                StatusCode::GATEWAY_TIMEOUT,
+                Json(serde_json::json!({
+                    "status": "timeout",
+                    "error": format!("HASN 中央节点 {}s 内未握手完成", CONNECT_TIMEOUT.as_secs()),
+                })),
             )
                 .into_response()
         }

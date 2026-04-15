@@ -283,12 +283,35 @@ pub fn huanxing_all_tools(
                 .parent()
                 .unwrap_or(&root_config.workspace_dir);
             // Look up the first tenant directory from users.db
-            let td: Option<String> = tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current()
-                    .block_on(async {
-                        hx_db.get_first_tenant_dir().await.ok().flatten()
+            let td: Option<String> = if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread {
+                    tokio::task::block_in_place(|| {
+                        handle.block_on(hx_db.get_first_tenant_dir()).ok().flatten()
                     })
-            });
+                } else {
+                    let db = hx_db.clone();
+                    std::thread::spawn(move || {
+                        let rt = tokio::runtime::Builder::new_current_thread()
+                            .enable_all()
+                            .build()
+                            .unwrap();
+                        rt.block_on(db.get_first_tenant_dir()).ok().flatten()
+                    })
+                    .join()
+                    .unwrap()
+                }
+            } else {
+                let db = hx_db.clone();
+                std::thread::spawn(move || {
+                    let rt = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .unwrap();
+                    rt.block_on(db.get_first_tenant_dir()).ok().flatten()
+                })
+                .join()
+                .unwrap()
+            };
             if let Some(tenant_dir) = td.as_deref() {
                 let owner_config_path = hx_config
                     .resolve_tenant_root(config_dir, Some(tenant_dir))

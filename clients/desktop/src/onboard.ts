@@ -107,7 +107,7 @@ async function tauriOnboard(session: HuanxingSession): Promise<OnboardResult> {
         owner_key: session.ownerKey || null,
         api_base_url: HUANXING_CONFIG.backendBaseUrl,
         llm_gateway_url: HUANXING_CONFIG.llmGatewayV1,
-        hasn_node_key: session.hasnNodeKey || null,
+        hasn_node_key: null,  // v2.1: 已废弃，保留字段兼容 Rust 结构体
         default_provider: HUANXING_CONFIG.defaultProvider,
         fallback_provider: HUANXING_CONFIG.fallbackProvider,
         embedding_provider: HUANXING_CONFIG.embeddingProvider,

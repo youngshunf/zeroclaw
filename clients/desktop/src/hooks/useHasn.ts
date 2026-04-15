@@ -98,12 +98,23 @@ export function useHasnConversations() {
       if (event.type === "message") {
         const msg = event.data;
         setConversations((prev) => {
-          const idx = prev.findIndex((c) => c.id === msg.conversation_id);
+          const idx = prev.findIndex((c) => c.id === msg.conversation_id || c.peer_id === msg.from_id || c.peer_id === msg.to_id);
           if (idx >= 0) {
+            let textContent = "[消息]";
+            if (typeof msg.content === "string") {
+              textContent = msg.content;
+            } else if (msg.content?.body?.text) {
+              textContent = msg.content.body.text;
+            } else if (msg.content?.text) {
+              textContent = msg.content.text;
+            } else if (msg.payload?.content?.text) {
+              textContent = msg.payload.content.text;
+            }
+
             const updated = [...prev];
             updated[idx] = {
               ...updated[idx],
-              last_message: typeof msg.content === "string" ? msg.content : "[消息]",
+              last_message: textContent,
               last_message_at: msg.created_at || new Date().toISOString(),
               unread_count: updated[idx].unread_count + 1,
             };
@@ -132,7 +143,9 @@ export function useHasnMessages(conversationId: string | null, peerId?: string |
   const [messages, setMessages] = useState<HasnEnvelope[]>([]);
   const [loading, setLoading] = useState(false);
   const convIdRef = useRef(conversationId);
+  const peerIdRef = useRef(peerId);
   convIdRef.current = conversationId;
+  peerIdRef.current = peerId;
 
   const loadMessages = useCallback(async (beforeId?: number | string) => {
     if (!conversationId) return;
@@ -160,23 +173,39 @@ export function useHasnMessages(conversationId: string | null, peerId?: string |
   // 实时消息推送
   useEffect(() => {
     const unsub = hasnWs.subscribe((event: HasnWsEvent) => {
-      if (event.type === "message" && event.data.conversation_id === convIdRef.current) {
+      const isCurrentConv =
+        (event.data.conversation_id && event.data.conversation_id === convIdRef.current) ||
+        (event.data.from_id && event.data.from_id === peerIdRef.current) ||
+        (event.data.to_id && event.data.to_id === peerIdRef.current);
+
+      if (event.type === "message" && isCurrentConv) {
         // Map WsMessagePayload to HasnEnvelope
         const msg = event.data;
+        let parsedText = "";
+        if (typeof msg.content === "string") {
+          parsedText = msg.content;
+        } else if (msg.content?.body?.text) {
+          parsedText = msg.content.body.text;
+        } else if (msg.content?.text) {
+          parsedText = msg.content.text;
+        } else if (msg.payload?.content?.text) {
+          parsedText = msg.payload.content.text;
+        }
+        
         const mappedEnv: HasnEnvelope = {
           id: msg.id ? String(msg.id) : `msg_${Date.now()}`,
           version: "1.0",
           from: { hasn_id: msg.from_id || "", entity_type: msg.from_type === 1 ? "human" : "agent" },
           to: { hasn_id: msg.to_id || "", entity_type: "human" },
           type: "message",
-          content: { content_type: msg.content_type === 6 ? "tool_call" : "text", body: { text: msg.content || "" } },
+          content: { content_type: msg.content_type === 6 ? "tool_call" : "text", body: { text: parsedText } },
           context: { conversation_id: msg.conversation_id || "" },
           metadata: { created_at: msg.created_at || new Date().toISOString() },
           local_id: msg.local_id,
           send_status: msg.send_status || "delivered"
         };
         setMessages((prev) => [...prev, mappedEnv]);
-      } else if (event.type === "ack" && event.data.conversation_id === convIdRef.current) {
+      } else if (event.type === "ack" && isCurrentConv) {
         // 更新消息发送状态
         setMessages((prev) =>
           prev.map((m) =>

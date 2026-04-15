@@ -7,7 +7,8 @@ use std::fs;
 use std::path::PathBuf;
 
 /// Top-level `[huanxing]` configuration section in config.toml.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, zeroclaw_macros::Configurable)]
+#[prefix = "huanxing"]
 #[serde(default)]
 pub struct HuanXingConfig {
     /// Enable multi-tenant routing. When false, behaves as standard single-agent.
@@ -101,18 +102,22 @@ pub struct HuanXingConfig {
 
     /// Hub Gitee 同步配置。
     #[serde(default)]
+    #[nested]
     pub hub_sync: HubSyncConfig,
 
     /// Multi-tenant heartbeat configuration.
     #[serde(default)]
+    #[nested]
     pub tenant_heartbeat: TenantHeartbeatConfig,
 
     /// HuanXing custom image generation tool (`[huanxing.hx_image_gen]`).
     #[serde(default)]
+    #[nested]
     pub hx_image_gen: HxImageGenConfig,
 
     /// HASN node connection configuration (`[huanxing.hasn]`).
     #[serde(default)]
+    #[nested]
     pub hasn: HasnNodeConfig,
 }
 
@@ -121,7 +126,8 @@ pub struct HuanXingConfig {
 /// When enabled, registers an `hx_image_gen` tool that generates images via
 /// a custom gateway (e.g. new-api) using OpenAI-compatible payload and saves them
 /// to the workspace `images/` directory.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, zeroclaw_macros::Configurable)]
+#[prefix = "huanxing.hx_image_gen"]
 pub struct HxImageGenConfig {
     /// Enable the HuanXing image generation tool. Default: false.
     #[serde(default)]
@@ -160,7 +166,8 @@ impl Default for HxImageGenConfig {
 /// When enabled, the daemon scans all active tenants' `HEARTBEAT.md` files
 /// and executes tasks whose cron schedule matches the current time.
 /// Results are delivered through the tenant's bound channel (QQ/Feishu/etc).
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, zeroclaw_macros::Configurable)]
+#[prefix = "huanxing.tenant_heartbeat"]
 #[serde(default)]
 pub struct TenantHeartbeatConfig {
     /// Enable multi-tenant heartbeat scanning. Default: `false`.
@@ -495,7 +502,8 @@ pub fn promote_legacy_agent_config_from_workspace(
 ///
 /// 配置当前 ZeroClaw 实例作为 HASN 节点接入中央网络。
 /// 桌面端和云端使用完全相同的配置结构，仅参数值不同。
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, zeroclaw_macros::Configurable)]
+#[prefix = "huanxing.hasn"]
 #[serde(default)]
 pub struct HasnNodeConfig {
     /// 是否启用 HASN 节点功能。默认: false
@@ -568,7 +576,8 @@ pub struct TemplateConfig {
 }
 
 /// Napcat (QQ via OneBot) channel configuration.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, zeroclaw_macros::Configurable, Default)]
+#[prefix = "channels.napcat"]
 pub struct NapcatConfig {
     /// Napcat WebSocket endpoint (for example `ws://127.0.0.1:3001`)
     #[serde(alias = "ws_url")]
@@ -584,7 +593,8 @@ pub struct NapcatConfig {
 }
 
 /// WeChatPadPro (WeChat iPad protocol) channel configuration.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, zeroclaw_macros::Configurable, Default)]
+#[prefix = "channels.wechat_pad"]
 pub struct WechatPadConfig {
     /// WeChatPadPro REST API base URL (e.g. "http://127.0.0.1:8849")
     pub api_base_url: String,
@@ -632,7 +642,8 @@ fn default_true() -> bool {
 /// Hub Gitee 同步配置。
 ///
 /// 控制从 Gitee 拉取 huanxing-hub 仓库（模板和技能）的行为。
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, zeroclaw_macros::Configurable)]
+#[prefix = "huanxing.hub_sync"]
 #[serde(default)]
 pub struct HubSyncConfig {
     /// Gitee 仓库路径（"owner/repo"）。
@@ -664,7 +675,8 @@ impl Default for HubSyncConfig {
 ///
 /// 通过桌面端扫码登录后，凭证自动写入此配置节；
 /// ZeroClaw 启动时读取此节创建 `WeixinChannel` 实例。
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, zeroclaw_macros::Configurable, Default)]
+#[prefix = "channels.weixin"]
 pub struct WeixinConfig {
     /// iLink API 的 bot_token（扫码登录后获取）。
     pub bot_token: String,

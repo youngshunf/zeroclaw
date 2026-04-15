@@ -310,21 +310,47 @@ async function cloudDelete<T>(path: string): Promise<T> {
 }
 
 async function sidecarGet<T>(path: string): Promise<T> {
-  const resp = await fetch(`${SIDECAR_API_BASE}${path}`);
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
-  const json = await resp.json();
-  return json.data ?? json;
+  const url = `${SIDECAR_API_BASE}${path}`;
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
+    
+    // Check Content-Type to avoid parse errors on HTML or empty responses
+    const cType = resp.headers.get('content-type') || '';
+    const text = await resp.text();
+    if (!text.trim()) return {} as T;
+    
+    try {
+      const json = JSON.parse(text);
+      return json.data ?? json;
+    } catch (err: any) {
+      console.error(`[sidecarGet] JSON parse failed for ${url}. Body:`, text);
+      throw err;
+    }
+  } catch (err: any) {
+    console.error(`[sidecarGet] Network/fetch failed for ${url}:`, err);
+    throw err;
+  }
 }
 
 async function sidecarPost<T>(path: string, body: Record<string, unknown>): Promise<T> {
-  const resp = await fetch(`${SIDECAR_API_BASE}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
-  const json = await resp.json();
-  return json.data ?? json;
+  const url = `${SIDECAR_API_BASE}${path}`;
+  try {
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
+    const text = await resp.text();
+    if (!text.trim()) return {} as T;
+    
+    const json = JSON.parse(text);
+    return json.data ?? json;
+  } catch (err: any) {
+    console.error(`[sidecarPost] failed for ${url}:`, err);
+    throw err;
+  }
 }
 
 // ══════════════════════════════════════════════
@@ -398,7 +424,17 @@ export async function hasnRemoveAgent(agentId: string): Promise<any> {
 // ══════════════════════════════════════════════
 
 export async function getConversations(): Promise<Conversation[]> {
-  return cloudGet<Conversation[]>('/im/conversations');
+  const hasnId = (localStorage.getItem('hasn:hasn_id') || '').trim();
+  const result = await sidecarGet<{ sessions: any[] }>(`/chat/sessions?hasn_id=${encodeURIComponent(hasnId)}`);
+  return result.sessions.map(s => ({
+    id: s.conversation_id,
+    peer_id: s.peer_id,
+    peer_name: s.title || s.peer_id,
+    peer_type: s.session_type === 'group' ? 'group' : (s.peer_id?.startsWith('a_') ? 'agent' : 'human'),
+    last_message: s.last_message_preview || undefined,
+    last_message_at: s.updated_at,
+    unread_count: s.unread_count || 0
+  }));
 }
 
 function mapLegacyMessageToEnvelope(msg: any): HasnEnvelope {
@@ -430,23 +466,34 @@ export async function getMessages(
   limit = 50,
   beforeId?: number | string,
 ): Promise<HasnEnvelope[]> {
-  const params = new URLSearchParams({ limit: String(limit) });
-  if (beforeId) params.set('before_id', String(beforeId));
+  const hasnId = (localStorage.getItem('hasn:hasn_id') || '').trim();
+  const params = new URLSearchParams({ 
+    hasn_id: hasnId,
+    conversation_id: conversationId,
+    limit: String(limit) 
+  });
+  
   try {
-    const rawEnvelopes = await cloudGet<any[]>(`/im/conversations/${conversationId}/messages?${params}`);
-    // 后端已返回 HasnEnvelope 格式，直接映射字段名
-    return rawEnvelopes.map((env: any) => ({
-      id: env.id || `msg_${Date.now()}`,
-      version: env.version || '1.0',
-      from: env.from || { hasn_id: env.from_id || '', entity_type: 'human' },
-      to: env.to || { hasn_id: env.to_id || '', entity_type: 'human' },
-      type: env.type || 'message',
-      content: env.content || { content_type: 'text', body: { text: '' } },
-      context: env.context || { conversation_id: conversationId },
-      metadata: env.metadata || { created_at: new Date().toISOString() },
-      local_id: env.local_id,
-      send_status: 'delivered',
-    } as HasnEnvelope));
+    const raw = await sidecarGet<{ messages: any[] }>(`/chat/messages?${params}`);
+    return raw.messages.map((msg: any) => {
+      let bodyContent = { text: '' };
+      try {
+         bodyContent = JSON.parse(msg.content);
+      } catch (e) {
+         bodyContent.text = msg.content;
+      }
+      return {
+        id: msg.message_id,
+        version: '1.0',
+        from: { hasn_id: msg.sender_id, entity_type: msg.sender_id?.startsWith('a_') ? 'agent' : 'human' },
+        to: { hasn_id: msg.receiver_id, entity_type: msg.receiver_id?.startsWith('a_') ? 'agent' : 'human' },
+        type: 'message',
+        content: { content_type: msg.content_type || 'text', body: bodyContent },
+        context: { conversation_id: msg.conversation_id },
+        metadata: { created_at: msg.created_at },
+        send_status: msg.status,
+      } as HasnEnvelope;
+    });
   } catch (err: any) {
     if (err?.message?.includes('404')) return [];
     throw err;
@@ -481,20 +528,49 @@ export async function sendMessage(to: string, content: string, replyToId?: numbe
 }
 
 export async function markConversationRead(conversationId: string, lastMsgId?: number): Promise<void> {
-  await cloudPost(`/im/conversations/${conversationId}/read`, { last_msg_id: lastMsgId ?? 0 });
+  const hasnId = (localStorage.getItem('hasn:hasn_id') || '').trim();
+  await sidecarPost(`/chat/read?hasn_id=${encodeURIComponent(hasnId)}&conversation_id=${encodeURIComponent(conversationId)}`, {});
 }
 
 // ══════════════════════════════════════════════
 // 联系人 API (Cloud) — 阶段二增强
 // ══════════════════════════════════════════════
 
-/** 获取联系人列表（完整 ContactFull 格式，含 owned_agents / custom_permissions） */
+/** 获取联系人列表（完整 ContactFull 格式，从本地数据库返回同步的记录） */
 export async function getContacts(relationType?: string): Promise<ContactFull[]> {
-  const params = relationType ? `?relation_type=${relationType}` : '';
-  const raw = await cloudGet<any>(`/contacts${params}`);
-  // 后端返回 {total, items}，cloudGet 会自动展开 items
-  const arr = Array.isArray(raw) ? raw : (raw?.items ?? []);
-  return arr as ContactFull[];
+  const hasnId = (localStorage.getItem('hasn:hasn_id') || '').trim();
+  const raw = await sidecarGet<{ contacts: any[] }>(`/chat/contacts?hasn_id=${encodeURIComponent(hasnId)}`);
+  
+  let contacts = raw.contacts.map((c: any) => ({
+    id: 0,
+    peer: {
+      hasn_id: c.hasn_id,
+      star_id: '',
+      name: c.nickname || c.hasn_id,
+      type: c.contact_type || 'human',
+      avatar_url: c.avatar_url,
+      status: c.status
+    },
+    relation_type: c.relation_type,
+    trust_level: c.trust_level,
+    trust_level_label: TRUST_LEVEL_LABELS[c.trust_level as TrustLevel] || '未知',
+    subscription: false,
+    status: c.status,
+    owned_agents: [],
+    custom_permissions: {},
+    connected_at: c.created_at,
+  } as ContactFull));
+
+  if (relationType) {
+    contacts = contacts.filter((c: ContactFull) => c.relation_type === relationType);
+  }
+  
+  return contacts;
+}
+
+export async function hasnChatSyncStatus(): Promise<any> {
+  const hasnId = (localStorage.getItem('hasn:hasn_id') || '').trim();
+  return sidecarGet(`/chat/sync/status?hasn_id=${encodeURIComponent(hasnId)}`);
 }
 
 export async function sendFriendRequest(starId: string, message?: string): Promise<void> {

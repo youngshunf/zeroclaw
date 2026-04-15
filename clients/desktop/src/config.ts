@@ -53,7 +53,7 @@ export interface HuanxingLoginData {
   refresh_token: string;
   refresh_token_expire_time: string;
   llm_token: string;
-  hasn_node_key?: string;
+  // hasn_node_key 已废弃（v2.1: 使用 access_token 直接认证）
   hasn_node_id?: string;
   owner_key?: string;
   agent_key: string;
@@ -77,7 +77,7 @@ export interface HuanxingSession {
   refreshToken: string;
   refreshTokenExpireTime: string;  // ISO datetime
   llmToken: string;
-  hasnNodeKey?: string;
+  // hasnNodeKey 已废弃（v2.1）
   ownerKey?: string;
   agentKey: string;
   gatewayToken: string;
@@ -96,7 +96,7 @@ export function saveHuanxingSession(data: HuanxingLoginData): HuanxingSession {
     refreshToken: data.refresh_token,
     refreshTokenExpireTime: data.refresh_token_expire_time,
     llmToken: data.llm_token,
-    hasnNodeKey: data.hasn_node_key,
+    // hasnNodeKey 已废弃（v2.1）
     ownerKey: data.owner_key,
     agentKey: data.agent_key,
     gatewayToken: data.gateway_token,

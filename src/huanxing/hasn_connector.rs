@@ -29,7 +29,6 @@ use hasn_client_core::model::{
 use hasn_client_core::ws::HasnWsClient;
 
 use crate::gateway::AppState;
-use crate::huanxing::agent_bridge;
 use crate::huanxing::db::TenantDb;
 
 /// HASN 事件（广播到前端 /ws/hasn-events）
@@ -183,10 +182,10 @@ impl HasnConnector {
                         frame,
                         &event_tx,
                         &node_id,
-                        &local_entities,
+                        local_entities.clone(),
                         &connected,
-                        &sessions,
-                        &state,
+                        sessions.clone(),
+                        state.clone(),
                         ws_ref,
                     )
                     .await;
@@ -231,10 +230,10 @@ impl HasnConnector {
                             frame,
                             &event_tx,
                             &node_id,
-                            &local_entities,
+                            local_entities.clone(),
                             &connected,
-                            &sessions,
-                            &state,
+                            sessions.clone(),
+                            state.clone(),
                             ws_ref,
                         )
                         .await;
@@ -353,7 +352,8 @@ impl HasnConnector {
 
     /// 获取连接状态
     pub async fn is_connected(&self) -> bool {
-        *self.connected.read().await
+        let is_ws_connected = self.ws.status().await == hasn_client_core::ws::WsStatus::Connected;
+        *self.connected.read().await && is_ws_connected
     }
 
     /// 获取 node_id
@@ -367,13 +367,15 @@ async fn handle_ws_frame(
     frame: HasnFrame,
     event_tx: &broadcast::Sender<HasnEvent>,
     node_id: &RwLock<Option<String>>,
-    local_entities: &RwLock<HashSet<String>>,
+    local_entities: Arc<RwLock<HashSet<String>>>,
     connected: &RwLock<bool>,
-    sessions: &RwLock<HashMap<String, Arc<HasnAgentSession>>>,
-    state: &AppState,
+    sessions: Arc<RwLock<HashMap<String, Arc<HasnAgentSession>>>>,
+    state: Arc<AppState>,
     ws: Arc<HasnWsClient>,
 ) {
     let method = frame.method.as_str();
+    // 调试：记录所有入站帧方法
+    info!("[HASN] 收到帧: method={}", method);
 
     match method {
         "hasn.connected" => {
@@ -394,6 +396,37 @@ async fn handle_ws_frame(
         "hasn.node.add_owner_ack" => {
             if let Ok(params) = serde_json::from_value::<AddOwnerAckParams>(frame.params) {
                 local_entities.write().await.insert(params.owner_id.clone());
+
+                let owner_id = params.owner_id.clone();
+                
+                // 启动当前用户的后台增量同步任务
+                crate::huanxing::hasn_sync::spawn_periodic_sync(state.clone(), owner_id.clone());
+
+                let state_clone = state.clone();
+                let ws_clone = ws.clone();
+                let local_entities_clone = local_entities.clone();
+
+                tokio::spawn(async move {
+                    let config = state_clone.config.lock().clone();
+                    let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir);
+                    let db_path = config.huanxing.resolve_db_path(config_dir);
+
+                    if let Ok(db) = TenantDb::open(&db_path) {
+                        if let Ok(Some(tenant)) = db.find_by_hasn_id(&owner_id).await {
+                            if let Ok(agents) = db.get_user_agents(&tenant.user_id).await {
+                                for agent in agents {
+                                    if let Some(agent_hasn_id) = agent.hasn_id {
+                                        tracing::info!("[HASN] 自动发现本地 Agent {} ({}), 发起驻留注册", agent.agent_id, agent_hasn_id);
+                                        local_entities_clone.write().await.insert(agent_hasn_id.clone());
+                                        let req_frame = build_add_agent(&agent_hasn_id, &owner_id);
+                                        let _ = ws_clone.send_frame(&req_frame).await;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+
                 let _ = event_tx.send(HasnEvent::OwnerBound {
                     owner_id: params.owner_id,
                     binding_id: params.binding_id,
@@ -440,160 +473,14 @@ async fn handle_ws_frame(
                 }
 
                 if is_local {
-                    if target.starts_with("a_") {
-                        info!("[HASN] 收到路由到本地 Agent {} 的消息", target);
-
-                        let session_id = params.message.conversation_id.clone();
-                        let content_text = params.message.text_content();
-                        let from_id = params.message.from_id.clone();
-
-                        // 1. 获取或创建状态化 Session
-                        let session = {
-                            let mut lock = sessions.write().await;
-                            if let Some(s) = lock.get(&session_id) {
-                                s.clone()
-                            } else {
-                                let bridge = agent_bridge::global_bridge();
-                                if let Some(tenant) =
-                                    bridge.resolve_tenant_by_hasn_id(state, target).await
-                                {
-                                    match tenant.create_agent().await {
-                                        Ok(mut agent) => {
-                                            agent.set_memory_session_id(Some(session_id.clone()));
-                                            let session_key = format!("hasn_{session_id}");
-                                            let per_user_backend = tenant
-                                                .session_manager
-                                                .clone()
-                                                .or_else(|| state.session_backend.clone());
-
-                                            if let Some(ref backend) = per_user_backend {
-                                                let history = backend.load(&session_key);
-                                                if !history.is_empty() {
-                                                    agent.seed_history(&history);
-                                                }
-                                            }
-
-                                            let new_session = Arc::new(HasnAgentSession {
-                                                agent: tokio::sync::Mutex::new(agent),
-                                                session_key,
-                                                session_backend: per_user_backend,
-                                            });
-                                            lock.insert(session_id.clone(), new_session.clone());
-                                            new_session
-                                        }
-                                        Err(e) => {
-                                            error!("[HASN] 创建 Agent 失败: {}", e);
-                                            return;
-                                        }
-                                    }
-                                } else {
-                                    warn!("[HASN] 未找到 Agent TenantContext: {}", target);
-                                    return;
-                                }
-                            }
-                        };
-
-                        // 2. 持久化入站消息
-                        if let Some(ref backend) = session.session_backend {
-                            let user_msg = crate::providers::ChatMessage::user(&content_text);
-                            let _ = backend.append(&session.session_key, &user_msg);
-                        }
-
-                        // 3. 流式执行并推送回去
-                        let ws_clone = ws.clone();
-                        let to_target = from_id.clone();
-                        let from_target = target.to_string();
-
-                        tokio::spawn(async move {
-                            let mut agent_lock = session.agent.lock().await;
-                            let (event_tx_ch, mut event_rx) =
-                                tokio::sync::mpsc::channel::<crate::agent::TurnEvent>(100);
-
-                            let rep_ws = ws_clone.clone();
-                            let rep_from = from_target.clone();
-                            let rep_to = to_target.clone();
-                            tokio::spawn(async move {
-                                while let Some(event) = event_rx.recv().await {
-                                    match event {
-                                        crate::agent::TurnEvent::ToolCall { name, args } => {
-                                            let frame = build_send(
-                                                &rep_from,
-                                                &rep_to,
-                                                serde_json::json!({
-                                                    "tool_name": name,
-                                                    "status": "running",
-                                                    "args": args
-                                                }),
-                                                Some(6),
-                                                None,
-                                                None,
-                                                None,
-                                            );
-                                            let _ = rep_ws.send_frame(&frame).await;
-                                        }
-                                        crate::agent::TurnEvent::ToolResult { name, output } => {
-                                            let frame = build_send(
-                                                &rep_from,
-                                                &rep_to,
-                                                serde_json::json!({
-                                                    "tool_name": name,
-                                                    "status": "success",
-                                                    "result": output
-                                                }),
-                                                Some(6),
-                                                None,
-                                                None,
-                                                None,
-                                            );
-                                            let _ = rep_ws.send_frame(&frame).await;
-                                        }
-                                        crate::agent::TurnEvent::Chunk { delta } => {
-                                            let _ = delta;
-                                        }
-                                        _ => {}
-                                    }
-                                }
-                            });
-
-                            match agent_lock.turn_streamed(&content_text, event_tx_ch).await {
-                                Ok(full_reply) => {
-                                    let frame = build_send(
-                                        &from_target,
-                                        &to_target,
-                                        serde_json::json!({"text": full_reply}),
-                                        Some(1),
-                                        None,
-                                        None,
-                                        None,
-                                    );
-                                    let _ = ws_clone.send_frame(&frame).await;
-
-                                    if let Some(ref backend) = session.session_backend {
-                                        let ast_msg =
-                                            crate::providers::ChatMessage::assistant(&full_reply);
-                                        let _ = backend.append(&session.session_key, &ast_msg);
-                                    }
-                                }
-                                Err(e) => {
-                                    error!("[HASN] Agent turn 返回失败: {}", e);
-                                    let err_msg = format!("[系统提示] Agent 会话失败: {}", e);
-                                    let frame = build_send(
-                                        &from_target,
-                                        &to_target,
-                                        serde_json::json!({"text": err_msg}),
-                                        Some(1),
-                                        None,
-                                        None,
-                                        None,
-                                    );
-                                    let _ = ws_clone.send_frame(&frame).await;
-                                }
-                            }
-                        });
-                    } else {
-                        info!("[HASN] 收到路由到本地 Human {} 的消息", target);
+                    let router = crate::huanxing::hasn_router::MessageRouter::new(
+                        state.clone(),
+                        ws.clone(),
+                        sessions.clone(),
+                    );
+                    if let Err(e) = router.dispatch(params.message.clone()).await {
+                        error!("[HASN] 消息路由失败: {}", e);
                     }
-
                     let payload = serde_json::to_value(&params.message).unwrap_or_default();
                     let _ = event_tx.send(HasnEvent::Message { payload });
                 } else {
@@ -838,6 +725,11 @@ async fn handle_ws_frame(
                     status: params.status,
                 });
             }
+        }
+
+        "hasn.node.add_agent_ack" => {
+            // Agent 驻留注册确认 — 仅记录日志
+            info!("[HASN] Agent 驻留注册确认: {:?}", frame.params);
         }
 
         _ => {

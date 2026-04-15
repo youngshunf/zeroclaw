@@ -140,7 +140,7 @@ mod huanxing_feature_coverage {
         ($test_name:ident, $type:ident, $expected_name:expr) => {
             #[test]
             fn $test_name() {
-                let tool = zeroclaw::huanxing::doc_tools::$type::new(test_api(), test_db());
+                let tool = zeroclaw::huanxing::doc_tools::$type::new(test_api(), "test_owner_key".to_string());
                 assert_tool_spec(&tool, $expected_name);
             }
         };
@@ -286,7 +286,7 @@ agent_key = "test-key-123"
 "#;
         let config: zeroclaw::config::Config = toml::from_str(toml_str).unwrap();
         assert!(config.huanxing.enabled);
-        assert_eq!(config.huanxing.server_id, Some("test-server".to_string()));
+        assert_eq!(config.huanxing.node_id, Some("test-server".to_string()));
     }
 
     #[test]

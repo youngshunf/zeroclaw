@@ -130,15 +130,14 @@ function AppContent() {
           console.warn('[App] Agent HASN 批量注册（非致命）:', agentErr);
         }
 
-        // 建立 HASN WebSocket 连接
+        // 建立 HASN WebSocket 连接（v2.1 简化：用 access_token 建连，后端自动绑定 Owner）
         if (!cancelled && identity.hasn_id) {
           try {
-            const { hasnConnect, hasnAddOwner, hasnAddAgent } = await import('./lib/hasn-api');
-            // 优先用 session.hasnNodeKey，其次用 identity 注册时返回的 node_key
-            const nodeKey = session.hasnNodeKey || identity.node_key;
-            if (nodeKey) {
-              await hasnConnect(nodeKey, identity.hasn_id, identity.star_id || '');
-              await hasnAddOwner(identity.hasn_id, session.accessToken);
+            const { hasnConnect, hasnAddAgent } = await import('./lib/hasn-api');
+            if (session.accessToken) {
+              // v2.1: 用 access_token 建连，后端自动完成 Node 注册 + Owner 绑定
+              await hasnConnect(session.accessToken, identity.hasn_id, identity.star_id || '');
+              // 不再需要 hasnAddOwner（建连时已自动绑定）
 
               // 重新拉取最新的 Agent 状态并批量上线 Presence
               const { listAgents } = await import('./lib/agent-api');
@@ -151,7 +150,7 @@ function AppContent() {
 
               console.log('[App] HASN 连接与 Owner/Agent 绑定已建立, hasn_id:', identity.hasn_id);
             } else {
-              console.warn('[App] 缺少 hasn_node_key，无法建立 HASN 连接');
+              console.warn('[App] 缺少 access_token，无法建立 HASN 连接');
             }
           } catch (wsErr) {
             console.warn('[App] HASN 连接失败（非致命）:', wsErr);
@@ -183,6 +182,11 @@ function AppContent() {
         .then(async ({ status, hasnRenewOwner }) => {
           if (status === 'connected') {
             await hasnRenewOwner(hasnId, session.accessToken);
+          } else {
+            console.log('[App] 自动续期发现连接断开，尝试重新建立 HASN 连接...');
+            const { hasnConnect } = await import('./lib/hasn-api');
+            const starId = localStorage.getItem('hasn:star_id') || '';
+            await hasnConnect(session.accessToken, hasnId, starId);
           }
         })
         .catch(() => {

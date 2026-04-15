@@ -13431,25 +13431,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "zeroclaw-desktop"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "objc2",
- "objc2-app-kit",
- "objc2-foundation",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-shell",
- "tauri-plugin-single-instance",
- "tauri-plugin-store",
- "tokio",
-]
-
-[[package]]
 name = "zeroclaw-macros"
 version = "0.1.0"
 dependencies = [
@@ -13592,7 +13573,7 @@ dependencies = [
  "which 8.0.2",
  "wiremock",
  "zeroclaw-macros",
- "zip",
+ "zip 8.4.0",
 ]
 
 [[package]]

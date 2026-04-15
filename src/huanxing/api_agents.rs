@@ -235,11 +235,21 @@ async fn list_agents(
                     .or_else(|| ws_cfg.identity.as_ref().and_then(|id| id.name.clone()));
                     // 不再回退到全局 config.display_name —— 那是进程级标识，不应作为 Agent 名称
 
+                let hasn_id = ws_cfg.hasn_id();
+
+                // 【自动修复】如果 config.toml 中包含 hasn_id，确保 users.db 中同步（防止卸载/清库后路由失效）
+                if let Some(ref hid) = hasn_id {
+                    let db_path = config.huanxing.resolve_db_path(config_dir);
+                    if let Ok(db) = crate::huanxing::db::TenantDb::open(&db_path) {
+                        let _ = db.update_agent_hasn_id(&name, hid).await;
+                    }
+                }
+
                 agents.push(AgentInfo {
                     config_dir: path.join("workspace").to_string_lossy().to_string(), // point to the inner workspace
                     model: ws_cfg.default_model.clone(),
                     display_name,
-                    hasn_id: ws_cfg.hasn_id(),
+                    hasn_id,
                     active: true,
                     is_default: false,
                     icon_url,
@@ -1034,6 +1044,7 @@ mod tests {
             api_key: Some("session-token".to_string()),
             base_url: None,
             is_desktop: Some(true),
+            avatar_url: None,
         };
 
         let config_dir = std::path::Path::new("/tmp/.huanxing");

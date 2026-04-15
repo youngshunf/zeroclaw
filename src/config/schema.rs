@@ -458,6 +458,7 @@ pub struct Config {
 
     /// Reserved upstream WASM runtime configuration (`[wasm]`).
     #[serde(default)]
+    #[nested]
     pub wasm: WasmConfig,
 
     /// Locale for tool descriptions (e.g. `"en"`, `"zh-CN"`).
@@ -474,6 +475,7 @@ pub struct Config {
     /// HuanXing multi-tenant routing configuration (`[huanxing]`).
     #[cfg(feature = "huanxing")]
     #[serde(default)]
+    #[nested]
     pub huanxing: crate::huanxing::HuanXingConfig,
 
     /// Verifiable Intent (VI) credential verification and issuance (`[verifiable_intent]`).
@@ -520,7 +522,8 @@ pub struct Config {
 /// Reserved WASM runtime configuration.
 ///
 /// This is currently parsed and preserved for upstream compatibility only.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default, Configurable)]
+#[prefix = "wasm"]
 #[serde(default)]
 pub struct WasmConfig {
     /// Feature toggle placeholder.
@@ -1230,6 +1233,7 @@ pub struct TtsConfig {
     /// Only available with the `huanxing` feature.
     #[cfg(feature = "huanxing")]
     #[serde(default)]
+    #[nested]
     pub dashscope: Option<crate::huanxing::tts_dashscope::DashScopeTtsConfig>,
     /// Piper TTS provider configuration (`[tts.piper]`).
     #[serde(default)]
@@ -1238,6 +1242,7 @@ pub struct TtsConfig {
     /// Generic OpenAI-compatible TTS provider (`[tts.generic_openai]`).
     /// Works with any endpoint implementing OpenAI `/v1/audio/speech`.
     #[serde(default)]
+    #[nested]
     pub generic_openai: Option<GenericOpenAiTtsConfig>,
 }
 
@@ -1347,7 +1352,8 @@ impl Default for PiperTtsConfig {
 ///
 /// Use this for any TTS endpoint that implements the OpenAI `/v1/audio/speech` API,
 /// such as SiliconFlow, MiniMax, or custom deployments.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Configurable, Default)]
+#[prefix = "tts.generic_openai"]
 pub struct GenericOpenAiTtsConfig {
     /// API endpoint URL (e.g. `"https://api.siliconflow.cn/v1/audio/speech"`).
     pub api_url: String,
@@ -6618,14 +6624,17 @@ pub struct ChannelsConfig {
     /// Napcat (QQ via OneBot) channel configuration.
     #[cfg(feature = "huanxing")]
     #[serde(default)]
+    #[nested]
     pub napcat: Option<crate::huanxing::config::NapcatConfig>,
     /// WeChatPadPro (WeChat iPad protocol) channel configuration.
     #[cfg(feature = "huanxing")]
     #[serde(default)]
+    #[nested]
     pub wechat_pad: Option<crate::huanxing::config::WechatPadConfig>,
     /// 微信（iLink AI）渠道配置（桌面端扫码接入）。
     #[cfg(feature = "huanxing")]
     #[serde(default)]
+    #[nested]
     pub weixin: Option<crate::huanxing::config::WeixinConfig>,
     /// X/Twitter channel configuration.
     #[nested]
@@ -7900,7 +7909,8 @@ pub struct SecurityRoleConfig {
 }
 
 /// Syscall anomaly detection configuration.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Configurable)]
+#[prefix = "security.syscall_anomaly"]
 pub struct SyscallAnomalyConfig {
     /// Enable syscall anomaly detection.
     #[serde(default = "default_true")]
@@ -8038,7 +8048,8 @@ impl Default for SyscallAnomalyConfig {
 }
 
 /// Lightweight perplexity-style filter configuration.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Configurable)]
+#[prefix = "security.perplexity_filter"]
 pub struct PerplexityFilterConfig {
     /// Enable probabilistic adversarial suffix filtering before provider calls.
     #[serde(default)]
@@ -8101,7 +8112,8 @@ pub enum OutboundLeakGuardAction {
 }
 
 /// Outbound credential leak guard configuration.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Configurable)]
+#[prefix = "security.outbound_leak_guard"]
 #[serde(deny_unknown_fields)]
 pub struct OutboundLeakGuardConfig {
     /// Enable outbound credential leak scanning for channel responses.
@@ -8132,7 +8144,8 @@ impl Default for OutboundLeakGuardConfig {
 }
 
 /// Shared URL validation configuration used by network tools.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Configurable)]
+#[prefix = "security.url_access"]
 #[serde(deny_unknown_fields)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct UrlAccessConfig {
@@ -8204,7 +8217,7 @@ fn default_semantic_guard_threshold() -> f64 {
 }
 
 /// Security configuration for sandboxing, resource limits, and audit logging
-#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema, Configurable)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Configurable)]
 #[prefix = "security"]
 pub struct SecurityConfig {
     /// Sandbox configuration
@@ -8243,14 +8256,17 @@ pub struct SecurityConfig {
 
     /// Syscall anomaly detection profile for daemon shell/process execution.
     #[serde(default)]
+    #[nested]
     pub syscall_anomaly: SyscallAnomalyConfig,
 
     /// Lightweight statistical filter for adversarial suffixes (opt-in).
     #[serde(default)]
+    #[nested]
     pub perplexity_filter: PerplexityFilterConfig,
 
     /// Outbound credential leak guard for channel replies.
     #[serde(default)]
+    #[nested]
     pub outbound_leak_guard: OutboundLeakGuardConfig,
 
     /// Enable per-turn canary tokens to detect system-context exfiltration.
@@ -8274,6 +8290,7 @@ pub struct SecurityConfig {
 
     /// Shared URL access policy for network-enabled tools.
     #[serde(default)]
+    #[nested]
     pub url_access: UrlAccessConfig,
 
     /// WebAuthn / FIDO2 hardware key authentication configuration.
@@ -11543,6 +11560,7 @@ impl_enum_prop_kind!(
     OtpMethod,
     SandboxBackend,
     AutonomyLevel,
+    OutboundLeakGuardAction,
 );
 
 #[cfg(test)]

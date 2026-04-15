@@ -84,28 +84,28 @@ function getEntityStyle(type: ReturnType<typeof inferEntityType>) {
   switch (type) {
     case 'human':
       return {
-        avatarBorder: 'ring-2 ring-hx-green ring-offset-1 ring-offset-hx-bg-panel',
-        emoji: '👥',
+        avatarBorder: '',
+        emoji: '',
         nameSuffix: '',
         gradient: 'from-hx-green/80 to-hx-green',
       };
     case 'my-agent':
       return {
-        avatarBorder: 'ring-2 ring-hx-blue ring-offset-1 ring-offset-hx-bg-panel',
-        emoji: '🤖',
+        avatarBorder: '',
+        emoji: '',
         nameSuffix: '',
         gradient: 'from-hx-blue to-hx-purple',
       };
     case 'friend-agent':
       return {
-        avatarBorder: 'ring-2 ring-purple-400 ring-offset-1 ring-offset-hx-bg-panel',
-        emoji: '🟡',
+        avatarBorder: '',
+        emoji: '',
         nameSuffix: ' (Agent)',
         gradient: 'from-purple-400 to-hx-blue',
       };
     case 'negotiation':
       return {
-        avatarBorder: 'ring-2 ring-amber-400 ring-offset-1 ring-offset-hx-bg-panel',
+        avatarBorder: '',
         emoji: '🤖↔🟡',
         nameSuffix: '',
         gradient: 'from-amber-400 to-purple-400',
@@ -126,7 +126,7 @@ export default function HasnChat() {
 
   // 会话列表
   const { conversations, totalUnread, loading: convsLoading, refresh: refreshConvs, setConversations } = useHasnConversations();
-  const [activeConvId, setActiveConvId] = useState<string | null>(null);
+  const [activeConvId, setActiveConvId] = useState<string | null>(() => sessionStorage.getItem('hasn:activeConvId'));
   const [searchQuery, setSearchQuery] = useState('');
 
   const activeConv = conversations.find((c) => c.id === activeConvId)
@@ -210,6 +210,7 @@ export default function HasnChat() {
   // 选中会话
   const handleSelectConversation = useCallback((id: string) => {
     setActiveConvId(id);
+    sessionStorage.setItem('hasn:activeConvId', id);
     // 清除未读
     setConversations((prev) =>
       prev.map((c) => (c.id === id ? { ...c, unread_count: 0 } : c))
@@ -222,7 +223,15 @@ export default function HasnChat() {
   const handleSendMessage = useCallback((content: string) => {
     if (!content || !activeConvId) return;
     send(content);
-  }, [activeConvId, send]);
+    // 乐观更新左侧列表的最新消息（解决发送消息后左侧列表不刷新的问题）
+    setConversations((prev) =>
+      prev.map((c) =>
+        c.id === activeConvId || c.peer_id === activeConvId
+          ? { ...c, last_message: content, last_message_at: new Date().toISOString() }
+          : c
+      )
+    );
+  }, [activeConvId, send, setConversations]);
 
   // ── 从通讯录「发消息」跳转过来时，自动打开/创建会话 ──────────
   const locationPeerIdHandled = useRef<string | null>(null);
@@ -338,9 +347,10 @@ export default function HasnChat() {
                     const entityType = inferEntityType(conv.peer_type, conv.peer_id, hasnContacts.myAgentIds);
                     const style = getEntityStyle(entityType);
                     
-                    // 查找 ContactFull 以获取 avatar_url
+                    // 查找 ContactFull 或 Agent 以获取 avatar_url
                     const cp = hasnContacts.rawContacts.find(c => c.peer.hasn_id === conv.peer_id);
-                    const avatarUrl = cp?.peer.avatar_url;
+                    const agent = hasnContacts.rawAgents.find(a => a.hasn_id === conv.peer_id);
+                    const avatarUrl = cp?.peer.avatar_url || agent?.avatar_url;
 
                     // 交涉类型的特殊渲染
                     if (entityType === 'negotiation') {
@@ -401,7 +411,7 @@ export default function HasnChat() {
                         <div className="hx-conv-info">
                           <div className="hx-conv-name-row">
                             <span className="hx-conv-name">
-                              {style.emoji !== '👥' && <span className="mr-0.5">{style.emoji}</span>}
+                              {style.emoji && <span className="mr-0.5">{style.emoji}</span>}
                               {conv.peer_name}
                               {style.nameSuffix && <span className="text-hx-text-tertiary font-normal ml-0.5 text-[11px]">{style.nameSuffix}</span>}
                             </span>
@@ -490,7 +500,7 @@ export default function HasnChat() {
                         {HeaderIcon}
                         <div className="hx-chat-header-info">
                           <h3 className="flex items-center gap-1.5">
-                            {entityType !== 'human' && <span>{style.emoji}</span>}
+                            {style.emoji && <span>{style.emoji}</span>}
                             {peerName}
                             {entityType === 'friend-agent' && (
                               <span className="text-[11px] text-hx-text-tertiary font-normal">
