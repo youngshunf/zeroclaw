@@ -28,6 +28,7 @@ fn cache_key(channel: &str, sender_id: &str) -> String {
 }
 
 /// Multi-tenant message router.
+#[allow(dead_code)] // workspace_dir 字段保留，路径解析走 config.huanxing.resolve_* 方法
 pub struct TenantRouter {
     db: TenantDb,
     config: HuanXingConfig,

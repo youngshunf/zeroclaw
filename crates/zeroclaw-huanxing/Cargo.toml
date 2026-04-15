@@ -100,5 +100,12 @@ zip = { version = "8.1", default-features = false, features = ["deflate-flate2"]
 tempfile = "3.26"
 tokio = { version = "1.50", features = ["rt-multi-thread", "macros"] }
 
+[features]
+default = []
+# Firecrawl web search provider —— 唤星 web_search 工具在 provider="firecrawl"
+# 时的 runtime dispatch（其它 provider 如 duckduckgo/tavily/perplexity/exa/jina
+# 无需 feature gate，只有 firecrawl 因为依赖外部 API + 潜在成本而 feature-gated）。
+firecrawl = []
+
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(zeroclaw_root_crate)'] }

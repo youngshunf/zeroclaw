@@ -32,6 +32,7 @@ fn normalize_token(raw: &str) -> Option<String> {
 
 /// Top-level webhook callback from WeChatPadPro.
 #[derive(Debug, serde::Deserialize)]
+#[allow(dead_code)] // event_type / to_user_name / to_user() 保留为 webhook schema 完整性字段
 struct WebhookPayload {
     /// Event type (e.g. "message")
     #[serde(default)]
@@ -60,6 +61,7 @@ struct WebhookPayload {
     img_buf: Option<Value>,
 }
 
+#[allow(dead_code)] // to_user() 保留作 webhook 载荷的对称访问器（from_user 有调用方）
 impl WebhookPayload {
     /// Normalize the payload so message fields are accessible uniformly.
     fn msg_type_val(&self) -> Option<i64> {

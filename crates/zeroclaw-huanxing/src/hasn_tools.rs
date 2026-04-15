@@ -49,6 +49,7 @@ fn resolve_workspace(fallback_workspace: &std::path::Path, _agent_id: &str) -> P
 
 // ── hasn_send ────────────────────────────────────────
 
+#[allow(dead_code)] // api 字段预留：当前 HasnSend 走 hasn_connector 直连，未来切换到 REST 时会读
 pub struct HasnSend {
     api: ApiClient,
     workspace_dir: PathBuf,

@@ -338,6 +338,7 @@ impl TenantHeartbeatManager {
 
 /// A scheduled heartbeat task with cron expression.
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // schedule 字段保留作日志/调试用，运行时只读 text
 struct ScheduledTask {
     pub text: String,
     pub schedule: String,

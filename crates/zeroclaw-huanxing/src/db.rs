@@ -942,6 +942,7 @@ impl TenantDb {
     }
 
     /// Same as row_to_record but only for the basic 12-column queries.
+    #[allow(dead_code)] // 被 row_to_record_full 取代，保留作为 schema v1 降级兼容
     fn row_to_record_basic(row: &rusqlite::Row<'_>) -> TenantRecord {
         TenantRecord {
             user_id: row.get(0).unwrap_or_default(),

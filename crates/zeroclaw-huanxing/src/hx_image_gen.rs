@@ -10,6 +10,7 @@ use std::sync::Arc;
 ///
 /// Supports an array of models for fallback. If a model fails to generate an image,
 /// it will attempt the next one in the priority list.
+#[allow(dead_code)] // workspace_dir 字段已由 task-local active_security.workspace_dir 替代
 pub struct HxImageGenTool {
     security: Arc<SecurityPolicy>,
     workspace_dir: PathBuf,

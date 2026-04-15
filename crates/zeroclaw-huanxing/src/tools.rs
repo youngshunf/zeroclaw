@@ -120,6 +120,7 @@ impl Tool for HxLookupSender {
 // ── hx_register_user ─────────────────────────────────
 
 /// Register a new user: consume verified credentials, create DB record + full workspace + channel binding + LLM config.
+#[allow(dead_code)] // common_skills_dir / llm_base_url 字段预留给 register 流程后续扩展
 pub struct HxRegisterUser {
     db: TenantDb,
     api: ApiClient,
@@ -1842,6 +1843,7 @@ impl Tool for HxTts {
 // ═══════════════════════════════════════════════════════
 
 /// File upload to OSS via backend agent API.
+#[allow(dead_code)] // db/workspace_dir 字段预留：当前 upload 直接走 api.ownerkey_post_multipart
 pub struct HxFileUpload {
     api: ApiClient,
     db: super::db::TenantDb,
@@ -1967,6 +1969,7 @@ impl Tool for HxFileUpload {
 // ═══════════════════════════════════════════════════════
 
 /// Deploy generated websites to the 117 Server via backend agent API.
+#[allow(dead_code)] // db/workspace_dir 字段预留：当前 deploy 直接走 api 调用
 pub struct HxDeployWebsite {
     api: ApiClient,
     workspace_dir: std::path::PathBuf,

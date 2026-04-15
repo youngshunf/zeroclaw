@@ -63,6 +63,7 @@ enum InboundFrame {
 }
 
 /// 单连接内一个 session 的状态
+#[allow(dead_code)] // ws_observer 字段保持 Arc 引用以延长 WsObserver 生命周期（agent 内部已持有 clone）
 struct AgentSession {
     agent: zeroclaw_runtime::agent::Agent,
     /// 持久化存储 key（格式：gw_{session_id}）

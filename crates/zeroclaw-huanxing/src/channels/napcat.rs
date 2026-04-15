@@ -231,6 +231,7 @@ fn extract_timestamp(event: &Value) -> u64 {
         .unwrap_or_else(current_unix_timestamp_secs)
 }
 
+#[allow(dead_code)] // media_dir 字段预留：当前语音路径由 task-local workspace 接管
 pub struct NapcatChannel {
     websocket_url: String,
     api_base_url: String,

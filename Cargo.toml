@@ -378,8 +378,8 @@ webauthn = ["zeroclaw-runtime/webauthn"]
 # skill-creation = Autonomous skill creation from successful multi-step tasks
 skill-creation = []
 
-# Firecrawl web search backend
-firecrawl = []
+# Firecrawl web search backend（转发到 zeroclaw-huanxing）
+firecrawl = ["zeroclaw-huanxing/firecrawl"]
 
 # 唤星多租户 SaaS 扩展 — HASN client + 本地多租户路由
 huanxing = ["dep:hasn-client-core", "dep:zeroclaw-huanxing"]
