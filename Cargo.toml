@@ -267,6 +267,9 @@ huanxing-agent-factory = { version = "0.1.0", path = "crates/huanxing-agent-fact
 # HASN client SDK (social network WebSocket + API + DB) — huanxing feature 启用
 hasn-client-core = { path = "crates/hasn-client-core", optional = true }
 
+# 唤星多租户扩展 crate（TenantRouter + HASN + 唤星专属工具/API） — huanxing feature 启用
+zeroclaw-huanxing = { workspace = true, optional = true }
+
 # probe-rs for STM32/Nucleo memory read (Phase B)
 probe-rs = { version = "0.31", optional = true }
 
@@ -379,7 +382,7 @@ skill-creation = []
 firecrawl = []
 
 # 唤星多租户 SaaS 扩展 — HASN client + 本地多租户路由
-huanxing = ["dep:hasn-client-core"]
+huanxing = ["dep:hasn-client-core", "dep:zeroclaw-huanxing"]
 
 # Backward-compatible aliases
 fantoccini = ["browser-native"]

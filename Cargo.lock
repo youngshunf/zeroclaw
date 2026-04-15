@@ -14020,6 +14020,7 @@ dependencies = [
  "zeroclaw-config",
  "zeroclaw-gateway",
  "zeroclaw-hardware",
+ "zeroclaw-huanxing",
  "zeroclaw-infra",
  "zeroclaw-macros",
  "zeroclaw-memory",

@@ -109,6 +109,11 @@ pub mod verifiable_intent;
 #[cfg(feature = "plugins-wasm")]
 pub mod plugins;
 
+/// 唤星多租户 SaaS 扩展层 re-export。业务代码在独立的 zeroclaw-huanxing crate
+/// （feature-gated），通过此路径暴露给 main.rs / daemon 初始化钩子。
+#[cfg(feature = "huanxing")]
+pub use zeroclaw_huanxing as huanxing;
+
 pub use config::Config;
 
 /// Gateway management subcommands

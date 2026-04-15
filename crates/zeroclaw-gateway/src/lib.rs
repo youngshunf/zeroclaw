@@ -24,6 +24,40 @@ pub mod static_files;
 pub mod tls;
 pub mod ws;
 
+// ─────────────────────────────────────────────────────────────
+// 唤星 Router 扩展钩子
+//
+// zeroclaw-gateway 本身不依赖 zeroclaw-huanxing（避免循环依赖），但允许外部
+// 在调用 `run_gateway` 之前通过 `register_router_extender` 注册一个
+// Router 变换函数。`run_gateway` 在构建完核心 inner router 后，会应用这个
+// 函数把唤星的扩展路由（HASN / Agent 管理 / SOP / WS 等）合并进去。
+//
+// 该设计遵循唤星开发规范：上游 crate 不引入 `#[cfg(feature = "huanxing")]`，
+// 也不向 huanxing 反向依赖；huanxing crate 在 main.rs 启动时完成注册。
+// ─────────────────────────────────────────────────────────────
+use std::sync::OnceLock;
+
+/// 由外部注册的 Router 变换函数。接收原始 inner router，返回扩展后的版本。
+pub type RouterExtender =
+    Box<dyn Fn(axum::Router<AppState>) -> axum::Router<AppState> + Send + Sync>;
+
+static ROUTER_EXTENDER: OnceLock<RouterExtender> = OnceLock::new();
+
+/// 在 `run_gateway` 之前注册一个 Router 扩展函数。只能注册一次，重复注册
+/// 会被忽略。
+pub fn register_router_extender(extender: RouterExtender) {
+    let _ = ROUTER_EXTENDER.set(extender);
+}
+
+/// 在 `run_gateway` 内部应用已注册的扩展。如果没有注册则原样返回。
+fn apply_router_extender(router: axum::Router<AppState>) -> axum::Router<AppState> {
+    if let Some(extender) = ROUTER_EXTENDER.get() {
+        extender(router)
+    } else {
+        router
+    }
+}
+
 use anyhow::{Context, Result};
 use axum::{
     Router,
@@ -1065,7 +1099,15 @@ pub async fn run_gateway(
         // ── Static assets (web dashboard) ──
         .route("/_app/{*path}", get(static_files::handle_static))
         // ── Config PUT with larger body limit ──
-        .merge(config_put_router)
+        .merge(config_put_router);
+
+    // ── 唤星扩展路由钩子 ───────────────────────────────────────────
+    // 如果启动时通过 `register_router_extender` 注册了唤星路由扩展函数
+    // （zeroclaw_huanxing::gateway_routes::huanxing_routes），在此合并进来。
+    // 没有注册则保持原样。
+    let inner = apply_router_extender(inner);
+
+    let inner = inner
         // ── SPA fallback: non-API GET requests serve index.html ──
         .fallback(get(static_files::handle_spa_fallback))
         .with_state(state)

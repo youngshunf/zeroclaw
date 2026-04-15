@@ -52,6 +52,7 @@ pub mod security {
 }
 pub mod db;
 pub mod device_fingerprint;
+pub mod gateway_routes;
 pub mod doc_tools;
 pub mod hasn_agent_bridge;
 pub mod hasn_api;

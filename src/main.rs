@@ -1386,6 +1386,36 @@ async fn main() -> Result<()> {
                 })
             }));
 
+            // ── 唤星多租户扩展初始化 ────────────────────────────────────
+            // 1. 把 zeroclaw-huanxing 的 axum Router（Agent/Session/SOP/Hub/HASN
+            //    所有 REST + WS 端点）注册到 gateway 的 router extender 钩子，
+            //    zeroclaw_gateway::run_gateway 在构建核心 inner router 后会
+            //    自动 `.merge()` 进来。
+            // 2. 调用 init_tenant_systems 初始化 TenantRouter、设备指纹、
+            //    common skills 同步等。返回的 MessageContextResolver 目前
+            //    在桌面端单租户流程下不被使用（HASN 消息走 huanxing 自己的
+            //    WebSocket client），保留 binding 供后续 5.4b 接入上游
+            //    orchestrator 时使用。
+            #[cfg(feature = "huanxing")]
+            {
+                zeroclaw_gateway::register_router_extender(Box::new(|router| {
+                    router.merge(zeroclaw_huanxing::gateway_routes::huanxing_routes())
+                }));
+
+                let huanxing_resolver =
+                    zeroclaw_huanxing::bootstrap::init_tenant_systems(&config).await;
+                if huanxing_resolver.is_some() {
+                    tracing::info!("HuanXing: tenant systems initialized, resolver registered");
+                } else {
+                    tracing::info!(
+                        "HuanXing: tenant systems disabled or unavailable, running single-tenant"
+                    );
+                }
+                // Resolver 目前仅保留实例以在后续 Phase 5.4b 接入 upstream
+                // orchestrator 时注册为全局；当前不消费它。
+                drop(huanxing_resolver);
+            }
+
             // Wire cron delivery to the channels orchestrator
             #[cfg(feature = "agent-runtime")]
             zeroclaw_runtime::cron::scheduler::register_delivery_fn(Box::new(
