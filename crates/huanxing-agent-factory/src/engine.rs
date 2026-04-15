@@ -91,6 +91,7 @@ mod tests {
             provider: Some("custom:https://llm.example.com/v1".to_string()),
             model: Some("qwen3-32b".to_string()),
             api_key: None,
+            avatar_url: None,
             hasn_id: None,
             fallback_provider: Some("custom:https://fallback.example.com/v1".to_string()),
             embedding_provider: Some("custom:https://embed.example.com/v1".to_string()),

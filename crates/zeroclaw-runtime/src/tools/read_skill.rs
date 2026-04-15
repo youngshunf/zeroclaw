@@ -206,7 +206,7 @@ mod tests {
     use tempfile::TempDir;
 
     fn make_tool(tmp: &TempDir) -> ReadSkillTool {
-        ReadSkillTool::new(tmp.path().join("workspace"), std::sync::Arc::new(crate::config::Config::default()))
+        ReadSkillTool::new(tmp.path().join("workspace"), std::sync::Arc::new(zeroclaw_config::schema::Config::default()))
     }
 
     #[tokio::test]
