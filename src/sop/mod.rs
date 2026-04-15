@@ -327,6 +327,7 @@ type = "manual"
     fn validate_sop_warnings() {
         let sop = Sop {
             name: String::new(),
+            display_name: None,
             description: String::new(),
             version: "1.0.0".into(),
             priority: SopPriority::Normal,
@@ -335,6 +336,7 @@ type = "manual"
             steps: Vec::new(),
             cooldown_secs: 0,
             max_concurrent: 1,
+            requirements: None,
             location: None,
             deterministic: false,
         };
@@ -350,6 +352,7 @@ type = "manual"
     fn validate_sop_clean() {
         let sop = Sop {
             name: "valid-sop".into(),
+            display_name: None,
             description: "A valid SOP".into(),
             version: "1.0.0".into(),
             priority: SopPriority::High,
@@ -366,6 +369,7 @@ type = "manual"
             }],
             cooldown_secs: 0,
             max_concurrent: 1,
+            requirements: None,
             location: None,
             deterministic: false,
         };

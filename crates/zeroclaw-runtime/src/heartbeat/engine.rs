@@ -95,13 +95,11 @@ impl HeartbeatTask {
                         let window = chrono::Duration::minutes(i64::from(window_minutes));
                         let window_start = now - window;
 
-                        for next in cron_schedule.after(&window_start).take(5) {
-                            if next > now {
-                                break;
-                            }
-                            return true;
-                        }
-                        false
+                        // 取第一个 window_start 之后的触发点，若落在 now 之前即命中
+                        cron_schedule
+                            .after(&window_start)
+                            .take(5)
+                            .any(|next| next <= now)
                     }
                     Err(e) => {
                         tracing::warn!("无效的 cron 调度 '{expr}': {e}");
