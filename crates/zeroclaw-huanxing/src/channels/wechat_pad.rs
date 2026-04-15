@@ -179,7 +179,6 @@ fn strip_at_mention(content: &str) -> String {
 
 // ── Webhook signature verification ──────────────────────────────
 
-#[cfg(feature = "huanxing")]
 fn verify_webhook_signature(body: &[u8], secret: &str, signature: &str) -> bool {
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
@@ -193,11 +192,6 @@ fn verify_webhook_signature(body: &[u8], secret: &str, signature: &str) -> bool 
 
     let expected = hex::encode(mac.finalize().into_bytes());
     expected == signature
-}
-
-#[cfg(not(feature = "huanxing"))]
-fn verify_webhook_signature(_body: &[u8], _secret: &str, _signature: &str) -> bool {
-    true
 }
 
 // ── Channel implementation ──────────────────────────────────────

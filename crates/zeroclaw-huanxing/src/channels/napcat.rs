@@ -110,7 +110,6 @@ async fn compose_onebot_content(content: &str, reply_message_id: Option<&str>) -
         }
 
         // 3. Try HuanXing voice support
-        #[cfg(feature = "huanxing")]
         if let Some(voice_path) = trimmed
             .strip_prefix("[VOICE:")
             .and_then(|v| v.strip_suffix(']'))
@@ -197,7 +196,6 @@ fn parse_message_segments(message: &Value) -> String {
                 }
             }
             // HuanXing voice support: parse "record" segments to [VOICE:url]
-            #[cfg(feature = "huanxing")]
             "record" => {
                 if let Some(voice_marker) = crate::voice::parse_napcat_voice_segment(data)
                 {
@@ -410,7 +408,6 @@ impl NapcatChannel {
         };
 
         // Voice ASR: transcribe [VOICE:url] markers to text using upstream TranscriptionManager
-        #[cfg(feature = "huanxing")]
         let content = if let Some(ref transcription_cfg) = self.transcription {
             crate::voice::transcribe_voice_markers(content, transcription_cfg).await
         } else {
