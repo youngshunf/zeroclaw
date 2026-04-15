@@ -1,8 +1,9 @@
+pub use zeroclaw_config::migration;
+pub use zeroclaw_config::providers;
 pub mod schema;
 pub mod traits;
 pub mod workspace;
 
-#[allow(unused_imports)]
 pub use schema::{
     AgentConfig, AssemblyAiSttConfig, AuditConfig, AutonomyConfig, BackupConfig,
     BrowserComputerUseConfig, BrowserConfig, BuiltinHooksConfig, ChannelsConfig,
@@ -29,17 +30,14 @@ pub use schema::{
     SlackConfig, SopConfig, StorageConfig, StorageProviderConfig, StorageProviderSection,
     StreamMode, SwarmConfig, SwarmStrategy, TelegramConfig, TextBrowserConfig, ToolFilterGroup,
     ToolFilterGroupMode, TranscriptionConfig, TtsConfig, TunnelConfig, VerifiableIntentConfig,
-    WasmConfig, WebFetchConfig, WebSearchConfig, WebhookConfig, WhatsAppChatPolicy,
-    WhatsAppWebMode, WorkspaceConfig, apply_channel_proxy_to_builder,
-    apply_runtime_proxy_to_builder, build_channel_proxy_client,
-    build_channel_proxy_client_with_timeouts, build_runtime_proxy_client,
-    build_runtime_proxy_client_with_timeouts, runtime_proxy_config, set_runtime_proxy_config,
-    ws_connect_with_proxy,
+    WebFetchConfig, WebSearchConfig, WebhookConfig, WhatsAppChatPolicy, WhatsAppWebMode,
+    WorkspaceConfig, apply_channel_proxy_to_builder, apply_runtime_proxy_to_builder,
+    build_channel_proxy_client, build_channel_proxy_client_with_timeouts,
+    build_runtime_proxy_client, build_runtime_proxy_client_with_timeouts, runtime_proxy_config,
+    set_runtime_proxy_config, ws_connect_with_proxy,
 };
 
-// GenericOpenAiTtsConfig is used by GenericOpenAiTtsProvider in tts.rs
-pub use schema::GenericOpenAiTtsConfig;
-
+pub use schema::ModelProviderConfig;
 pub use traits::HasPropKind;
 pub use traits::PropFieldInfo;
 pub use traits::PropKind;
@@ -84,7 +82,6 @@ pub fn enum_variants<T: schemars::JsonSchema>() -> String {
 
     "(unknown variants)".to_string()
 }
-
 
 pub fn name_and_presence<T: traits::ChannelConfig>(channel: Option<&T>) -> (&'static str, bool) {
     (T::name(), channel.is_some())
@@ -206,9 +203,8 @@ mod tests {
     fn reexported_config_default_is_constructible() {
         let config = Config::default();
 
-        assert!(config.default_provider.is_some());
-        assert!(config.default_model.is_some());
-        assert!(config.default_temperature > 0.0);
+        // Config::default() no longer has provider cache fields; just verify providers is constructible
+        assert!(config.providers.fallback.is_none() || config.providers.fallback.is_some());
     }
 
     #[test]

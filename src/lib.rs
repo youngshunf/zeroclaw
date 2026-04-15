@@ -31,60 +31,83 @@
     clippy::unnecessary_map_or,
     clippy::unused_self,
     clippy::cast_precision_loss,
-    clippy::unnecessary_wraps,
-    dead_code
+    clippy::unnecessary_wraps
 )]
 
 use clap::Subcommand;
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "agent-runtime")]
 pub mod agent;
+#[cfg(feature = "agent-runtime")]
 pub(crate) mod approval;
+#[cfg(feature = "agent-runtime")]
 pub(crate) mod auth;
+#[cfg(feature = "agent-runtime")]
 pub mod channels;
-pub(crate) mod cli_input;
 pub mod commands;
 pub mod config;
+#[cfg(feature = "agent-runtime")]
 pub(crate) mod cost;
+#[cfg(feature = "agent-runtime")]
 pub mod cron;
-pub mod daemon;
+#[cfg(feature = "agent-runtime")]
+pub(crate) mod daemon;
+#[cfg(feature = "agent-runtime")]
 pub(crate) mod doctor;
+#[cfg(feature = "gateway")]
 pub mod gateway;
+#[cfg(feature = "agent-runtime")]
 pub mod hands;
+#[cfg(feature = "agent-runtime")]
 pub(crate) mod hardware;
+#[cfg(feature = "agent-runtime")]
 pub(crate) mod health;
+#[cfg(feature = "agent-runtime")]
 pub(crate) mod heartbeat;
+#[cfg(feature = "agent-runtime")]
 pub mod hooks;
-pub mod i18n;
-pub(crate) mod identity;
+#[cfg(feature = "agent-runtime")]
 pub(crate) mod integrations;
 pub mod memory;
-pub(crate) mod migration;
+#[cfg(feature = "agent-runtime")]
 pub(crate) mod multimodal;
+#[cfg(feature = "agent-runtime")]
 pub mod nodes;
+#[cfg(feature = "agent-runtime")]
 pub mod observability;
+#[cfg(feature = "agent-runtime")]
 pub(crate) mod onboard;
+#[cfg(feature = "agent-runtime")]
 pub mod peripherals;
+#[cfg(feature = "agent-runtime")]
+pub mod platform;
 pub mod providers;
+#[cfg(feature = "agent-runtime")]
 pub mod rag;
+#[cfg(feature = "agent-runtime")]
 pub mod routines;
-pub mod runtime;
+#[cfg(feature = "agent-runtime")]
 pub(crate) mod security;
+#[cfg(feature = "agent-runtime")]
 pub(crate) mod service;
+#[cfg(feature = "agent-runtime")]
 pub(crate) mod skills;
+#[cfg(feature = "agent-runtime")]
 pub mod sop;
+#[cfg(feature = "agent-runtime")]
 pub mod tools;
+#[cfg(feature = "agent-runtime")]
 pub(crate) mod trust;
+#[cfg(feature = "tui-onboarding")]
 pub mod tui;
+#[cfg(feature = "agent-runtime")]
 pub(crate) mod tunnel;
-pub(crate) mod util;
+#[cfg(feature = "agent-runtime")]
 pub mod verifiable_intent;
 
 #[cfg(feature = "plugins-wasm")]
 pub mod plugins;
-
-#[cfg(feature = "huanxing")]
-pub mod huanxing;
 
 pub use config::Config;
 
@@ -296,13 +319,6 @@ pub enum MigrateCommands {
         /// Validate and preview migration without writing any data
         #[arg(long)]
         dry_run: bool,
-    },
-    #[cfg(feature = "huanxing")]
-    /// Repair legacy unified-instance desktop data under `~/.huanxing`
-    Huanxing {
-        /// Apply changes. Without this flag the command only prints a dry-run plan.
-        #[arg(long)]
-        apply: bool,
     },
 }
 
