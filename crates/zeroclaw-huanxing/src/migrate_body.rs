@@ -964,7 +964,7 @@ fn backup_target_memory(workspace_dir: &Path) -> Result<Option<PathBuf>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{Config, MemoryConfig};
+    use zeroclaw_config::schema::{Config, MemoryConfig};
     use zeroclaw_memory::SqliteMemory;
     use rusqlite::params;
     use tempfile::TempDir;

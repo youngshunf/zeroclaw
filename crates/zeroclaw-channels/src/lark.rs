@@ -1663,6 +1663,14 @@ impl LarkChannel {
                 Some(details) => (details.text, details.mentioned_open_ids),
                 None => return messages,
             },
+            // 【唤星钩子】audio 消息解析（可选）。若 huanxing crate 已注册
+            // `register_lark_audio_parser_fn`，使用其返回的 (text, mentions)；
+            // 否则 fall-through 到默认行为（返回 messages，由 transcription_manager
+            // 走单独的音频流转写路径）。
+            "audio" => match crate::parse_lark_audio_with_hook(content_str) {
+                Some(tm) => tm,
+                None => return messages,
+            },
             "image" => {
                 let image_key = serde_json::from_str::<serde_json::Value>(content_str)
                     .ok()

@@ -421,12 +421,24 @@ fn conversation_memory_key(msg: &zeroclaw_api::channel::ChannelMessage) -> Strin
 pub fn conversation_history_key(msg: &zeroclaw_api::channel::ChannelMessage) -> String {
     // Include reply_target for per-channel isolation (e.g. distinct Discord/Slack
     // channels) and thread_ts for per-topic isolation in forum groups.
+    //
+    // 【唤星例外】napcat/wechat_pad/qqbot/weixin 的群聊里 thread_ts 是单条消息
+    // 的 reply 目标而非主题话题，按原样使用会让每条消息分裂成独立对话历史，
+    // 破坏上下文。这里对这四个渠道忽略 thread_ts，让 history 以
+    // (channel, reply_target, sender) 为键聚合。
     match &msg.thread_ts {
-        Some(tid) => format!(
-            "{}_{}_{}_{}",
-            msg.channel, msg.reply_target, tid, msg.sender
-        ),
-        None => format!("{}_{}_{}", msg.channel, msg.reply_target, msg.sender),
+        Some(tid)
+            if msg.channel != "napcat"
+                && msg.channel != "wechat_pad"
+                && msg.channel != "qqbot"
+                && msg.channel != "weixin" =>
+        {
+            format!(
+                "{}_{}_{}_{}",
+                msg.channel, msg.reply_target, tid, msg.sender
+            )
+        }
+        _ => format!("{}_{}_{}", msg.channel, msg.reply_target, msg.sender),
     }
 }
 
@@ -603,6 +615,33 @@ fn channel_delivery_instructions(channel_name: &str) -> Option<&'static str> {
                [VIDEO:<path-or-url>], [VOICE:<path-or-url>]\n\
              - Voice supports .wav, .mp3, .silk formats only. Other audio formats use [DOCUMENT:]\n\
              - Keep normal text outside markers and never wrap markers in code fences.\n",
+        ),
+        // 【唤星】Napcat (QQ via OneBot) — 与 qq 官方 bot 共享 prompt 风格
+        "napcat" | "qqbot" => Some(
+            "When responding on QQ:\n\
+             - Use Markdown formatting\n\
+             - Be concise and direct\n\
+             - For media attachments use markers: [IMAGE:<path-or-url>], [DOCUMENT:<path-or-url>], \
+               [VIDEO:<path-or-url>], [VOICE:<path-or-url>]\n\
+             - Voice supports .wav, .mp3, .silk formats only. Other audio formats use [DOCUMENT:]\n\
+             - Keep normal text outside markers and never wrap markers in code fences.\n",
+        ),
+        // 【唤星】WeChatPadPro 微信 iPad 协议
+        "wechat_pad" => Some(
+            "When responding on WeChat:\n\
+             - Use plain text formatting (WeChat does not support Markdown rendering)\n\
+             - Be concise and direct\n\
+             - For image attachments use markers: [IMAGE:<path-or-url>]\n\
+             - Keep messages under 2000 characters to avoid truncation\n\
+             - Keep normal text outside markers and never wrap markers in code fences.\n",
+        ),
+        // 【唤星】iLink AI 微信扫码渠道
+        "weixin" => Some(
+            "When responding on WeChat:\n\
+             - Use plain text formatting (WeChat does not support Markdown rendering)\n\
+             - Do NOT use any Markdown syntax (no **, ##, ```, etc.)\n\
+             - Be concise and direct\n\
+             - Keep messages under 2000 characters to avoid truncation\n",
         ),
         _ => None,
     }

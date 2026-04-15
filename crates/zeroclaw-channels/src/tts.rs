@@ -590,6 +590,18 @@ impl TtsManager {
             providers.insert("piper".to_string(), Box::new(provider));
         }
 
+        // 【唤星】DashScope (阿里云百炼) TTS provider — 通过钩子注入，
+        // 具体实现在 zeroclaw-huanxing::tts_dashscope::DashScopeTtsProvider
+        if let Some((name, provider)) = crate::build_huanxing_tts_dashscope(config) {
+            providers.insert(name, provider);
+        }
+
+        // 【唤星】Generic OpenAI-compatible TTS provider（SiliconFlow / Azure /
+        // 自建服务），通过钩子注入。
+        if let Some((name, provider)) = crate::build_huanxing_tts_generic_openai(config) {
+            providers.insert(name, provider);
+        }
+
         let max_text_length = if config.max_text_length == 0 {
             DEFAULT_MAX_TEXT_LENGTH
         } else {

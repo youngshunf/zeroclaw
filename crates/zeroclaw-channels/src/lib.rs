@@ -155,3 +155,53 @@ pub(crate) fn notify_huanxing_channels_registered(
         f(channels_by_name);
     }
 }
+
+/// Lark audio 消息解析钩子。由 `huanxing` 注册唤星版 `parse_lark_audio_content`，
+/// 提取音频消息里的 `(text, mentioned_open_ids)`。未注册时 lark.rs 的 audio
+/// 分支返回 None，走默认 transcription_manager 流程。
+pub type LarkAudioParserFn = Box<
+    dyn Fn(&str) -> Option<(String, Vec<String>)> + Send + Sync,
+>;
+
+static LARK_AUDIO_PARSER_FN: OnceLock<LarkAudioParserFn> = OnceLock::new();
+
+pub fn register_lark_audio_parser_fn(f: LarkAudioParserFn) {
+    let _ = LARK_AUDIO_PARSER_FN.set(f);
+}
+
+pub(crate) fn parse_lark_audio_with_hook(content_str: &str) -> Option<(String, Vec<String>)> {
+    LARK_AUDIO_PARSER_FN.get().and_then(|f| f(content_str))
+}
+
+/// 【唤星】DashScope/Generic TTS provider 构造钩子。
+///
+/// 返回 `(provider_name, Box<dyn TtsProvider>)`。由 `huanxing` crate 实现，
+/// `TtsManager::new` 初始化时调用。
+pub type TtsProviderBuilderFn = Box<
+    dyn Fn(&zeroclaw_config::schema::TtsConfig) -> Option<(String, Box<dyn tts::TtsProvider>)>
+        + Send
+        + Sync,
+>;
+
+static TTS_DASHSCOPE_BUILDER: OnceLock<TtsProviderBuilderFn> = OnceLock::new();
+static TTS_GENERIC_OPENAI_BUILDER: OnceLock<TtsProviderBuilderFn> = OnceLock::new();
+
+pub fn register_tts_dashscope_builder(f: TtsProviderBuilderFn) {
+    let _ = TTS_DASHSCOPE_BUILDER.set(f);
+}
+
+pub fn register_tts_generic_openai_builder(f: TtsProviderBuilderFn) {
+    let _ = TTS_GENERIC_OPENAI_BUILDER.set(f);
+}
+
+pub(crate) fn build_huanxing_tts_dashscope(
+    config: &zeroclaw_config::schema::TtsConfig,
+) -> Option<(String, Box<dyn tts::TtsProvider>)> {
+    TTS_DASHSCOPE_BUILDER.get().and_then(|f| f(config))
+}
+
+pub(crate) fn build_huanxing_tts_generic_openai(
+    config: &zeroclaw_config::schema::TtsConfig,
+) -> Option<(String, Box<dyn tts::TtsProvider>)> {
+    TTS_GENERIC_OPENAI_BUILDER.get().and_then(|f| f(config))
+}

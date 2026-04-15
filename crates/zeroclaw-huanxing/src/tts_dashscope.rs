@@ -14,6 +14,10 @@
 
 use anyhow::{Context, Result, bail};
 
+// Schema definition moved to zeroclaw-config (for Config.tts.dashscope 字段
+// 类型引用需要), 这里 re-export 供既有 use path 兼容。
+pub use zeroclaw_config::schema::DashScopeTtsConfig;
+
 /// DashScope TTS provider using qwen3-tts models.
 pub struct DashScopeTtsProvider {
     api_key: String,
@@ -22,63 +26,6 @@ pub struct DashScopeTtsProvider {
     default_voice: String,
     instructions: Option<String>,
     client: reqwest::Client,
-}
-
-/// Configuration for DashScope TTS provider.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema, zeroclaw_macros::Configurable)]
-#[prefix = "tts.dashscope"]
-pub struct DashScopeTtsConfig {
-    /// API key for DashScope. Falls back to `DASHSCOPE_API_KEY` env var.
-    #[serde(default)]
-    pub api_key: Option<String>,
-
-    /// Model name. Default: `"qwen3-tts-instruct-flash"`.
-    ///
-    /// Options: `qwen3-tts-instruct-flash`, `qwen3-tts-flash`.
-    #[serde(default = "default_dashscope_tts_model")]
-    pub model: String,
-
-    /// Default voice. See DashScope docs for available system voices.
-    /// Common options: `Cherry`, `Ethan`, `Ryan`, `Serena`.
-    /// Default: `"Cherry"`.
-    #[serde(default = "default_dashscope_tts_voice")]
-    pub default_voice: String,
-
-    /// Base URL for DashScope API.
-    /// Default: `"https://dashscope.aliyuncs.com"`.
-    #[serde(default = "default_dashscope_tts_base_url")]
-    pub base_url: String,
-
-    /// Instruction for qwen3-tts-instruct models.
-    /// Controls timbre, emotion, speed, and style via natural language.
-    /// Example: `"用温柔甜美的声音朗读"`.
-    /// Only effective with `qwen3-tts-instruct-*` models.
-    #[serde(default)]
-    pub instructions: Option<String>,
-}
-
-impl Default for DashScopeTtsConfig {
-    fn default() -> Self {
-        Self {
-            api_key: None,
-            model: default_dashscope_tts_model(),
-            default_voice: default_dashscope_tts_voice(),
-            base_url: default_dashscope_tts_base_url(),
-            instructions: None,
-        }
-    }
-}
-
-fn default_dashscope_tts_model() -> String {
-    "qwen3-tts-instruct-flash".into()
-}
-
-fn default_dashscope_tts_voice() -> String {
-    "Cherry".into()
-}
-
-fn default_dashscope_tts_base_url() -> String {
-    "https://dashscope.aliyuncs.com".into()
 }
 
 impl DashScopeTtsProvider {

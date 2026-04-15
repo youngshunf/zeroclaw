@@ -789,7 +789,16 @@ pub fn all_tools_with_runtime(
         let sop_workspace = workspace_dir.to_path_buf();
         tool_arcs.push(Arc::new(SopListTool::new(Arc::clone(&sop_engine), sop_workspace.clone())));
         tool_arcs.push(Arc::new(SopExecuteTool::new(Arc::clone(&sop_engine), sop_workspace.clone())));
-        tool_arcs.push(Arc::new(SopAdvanceTool::new(Arc::clone(&sop_engine), sop_workspace.clone())));
+        // 【唤星】SOP advance 工具可选注入 huanxing 后端 API base（用于把
+        // SOP 状态同步到唤星云），读 config.huanxing.api_base_url。
+        let mut advance_tool =
+            SopAdvanceTool::new(Arc::clone(&sop_engine), sop_workspace.clone());
+        if let Some(ref api) = root_config.huanxing.api_base_url {
+            if !api.is_empty() {
+                advance_tool = advance_tool.with_huanxing_api_base(api.clone());
+            }
+        }
+        tool_arcs.push(Arc::new(advance_tool));
         tool_arcs.push(Arc::new(SopApproveTool::new(Arc::clone(&sop_engine), sop_workspace.clone())));
         tool_arcs.push(Arc::new(SopStatusTool::new(Arc::clone(&sop_engine), sop_workspace)));
     }

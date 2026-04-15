@@ -1652,6 +1652,32 @@ async fn main() -> Result<()> {
                     },
                 ));
 
+                // Lark audio 解析钩子：使用唤星版 parse_lark_audio_content
+                // 从 audio 消息里提取 (text, mentioned_open_ids)
+                zeroclaw_channels::register_lark_audio_parser_fn(Box::new(|content_str| {
+                    Some(zeroclaw_huanxing::voice::parse_lark_audio_content(
+                        content_str,
+                    ))
+                }));
+
+                // DashScope (阿里云百炼) TTS provider 构造钩子
+                zeroclaw_channels::register_tts_dashscope_builder(Box::new(|tts_config| {
+                    tts_config.dashscope.as_ref().and_then(|dashscope_cfg| {
+                        match zeroclaw_huanxing::tts_dashscope::DashScopeTtsProvider::new(
+                            dashscope_cfg,
+                        ) {
+                            Ok(p) => Some((
+                                "dashscope".to_string(),
+                                Box::new(p) as Box<dyn zeroclaw_channels::tts::TtsProvider>,
+                            )),
+                            Err(e) => {
+                                tracing::warn!("Skipping DashScope TTS provider: {e}");
+                                None
+                            }
+                        }
+                    })
+                }));
+
                 zeroclaw_gateway::register_router_extender(Box::new(|router| {
                     router.merge(zeroclaw_huanxing::gateway_routes::huanxing_routes())
                 }));

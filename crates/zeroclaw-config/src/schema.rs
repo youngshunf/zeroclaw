@@ -1201,6 +1201,50 @@ pub struct TtsConfig {
     #[serde(default)]
     #[nested]
     pub generic_openai: Option<GenericOpenAiTtsConfig>,
+    /// 【唤星扩展】阿里云百炼 DashScope TTS provider (`[tts.dashscope]`)。
+    /// 运行时实现在 `zeroclaw-huanxing::tts_dashscope`。
+    #[serde(default)]
+    #[nested]
+    pub dashscope: Option<DashScopeTtsConfig>,
+}
+
+/// 【唤星扩展】阿里云百炼 DashScope TTS provider configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, Configurable)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
+#[prefix = "tts.dashscope"]
+pub struct DashScopeTtsConfig {
+    #[serde(default)]
+    pub api_key: Option<String>,
+    #[serde(default = "default_dashscope_tts_model")]
+    pub model: String,
+    #[serde(default = "default_dashscope_tts_voice")]
+    pub default_voice: String,
+    #[serde(default = "default_dashscope_tts_base_url")]
+    pub base_url: String,
+    #[serde(default)]
+    pub instructions: Option<String>,
+}
+
+impl Default for DashScopeTtsConfig {
+    fn default() -> Self {
+        Self {
+            api_key: None,
+            model: default_dashscope_tts_model(),
+            default_voice: default_dashscope_tts_voice(),
+            base_url: default_dashscope_tts_base_url(),
+            instructions: None,
+        }
+    }
+}
+
+fn default_dashscope_tts_model() -> String {
+    "qwen3-tts-instruct-flash".into()
+}
+fn default_dashscope_tts_voice() -> String {
+    "Cherry".into()
+}
+fn default_dashscope_tts_base_url() -> String {
+    "https://dashscope.aliyuncs.com".into()
 }
 
 /// 【唤星扩展】Generic OpenAI-compatible TTS provider configuration.
@@ -1237,6 +1281,7 @@ impl Default for TtsConfig {
             edge: None,
             piper: None,
             generic_openai: None,
+            dashscope: None,
         }
     }
 }
