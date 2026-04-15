@@ -140,10 +140,44 @@ use crate::security::{SecurityPolicy, create_sandbox};
 use async_trait::async_trait;
 use parking_lot::RwLock;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use zeroclaw_api::tool::Tool as ApiTool;
 use zeroclaw_config::schema::{Config, DelegateAgentConfig};
 use zeroclaw_memory::Memory;
+
+// ─────────────────────────────────────────────────────────────
+// 唤星工具注册钩子（trait 注入，无 cfg 泄漏）
+//
+// 由根 crate 在 daemon 启动时调用 `register_huanxing_tools_fn` 注册
+// `zeroclaw_huanxing::register::huanxing_all_tools`，`all_tools_with_runtime`
+// 构建完默认工具集后会调用该函数追加唤星专属工具（hx_register_user /
+// hx_get_user / secret_tools / skill_market_tools / hasn_tools /
+// doc_tools 等）。
+// ─────────────────────────────────────────────────────────────
+pub type HuanxingToolsFn = Box<
+    dyn Fn(&Config, &Arc<SecurityPolicy>, &Path) -> Vec<Arc<dyn ApiTool>> + Send + Sync,
+>;
+
+static HUANXING_TOOLS_FN: std::sync::OnceLock<HuanxingToolsFn> = std::sync::OnceLock::new();
+
+/// 注册唤星工具构造函数。由 `main.rs` 在 daemon 启动前调用一次。
+pub fn register_huanxing_tools_fn(f: HuanxingToolsFn) {
+    let _ = HUANXING_TOOLS_FN.set(f);
+}
+
+/// 内部使用：构造唤星工具列表。如果没注册则返回空 Vec。
+fn build_huanxing_tools(
+    config: &Config,
+    security: &Arc<SecurityPolicy>,
+    workspace_dir: &Path,
+) -> Vec<Arc<dyn ApiTool>> {
+    if let Some(f) = HUANXING_TOOLS_FN.get() {
+        f(config, security, workspace_dir)
+    } else {
+        Vec::new()
+    }
+}
 
 // ── Per-request task-local overrides (唤星多租户支持) ─────────────
 //
@@ -989,6 +1023,18 @@ pub fn all_tools_with_runtime(
                 }
             }
         }
+    }
+
+    // ── 唤星扩展工具（通过注册钩子注入）─────────────────────────────
+    // 如果根 crate 已调用 register_huanxing_tools_fn（main.rs 在 daemon 启动前），
+    // 追加 huanxing_all_tools 返回的所有唤星专属工具到 tool_arcs。
+    let huanxing_tools = build_huanxing_tools(root_config, security, workspace_dir);
+    if !huanxing_tools.is_empty() {
+        tracing::info!(
+            "HuanXing: registered {} extension tools",
+            huanxing_tools.len()
+        );
+        tool_arcs.extend(huanxing_tools);
     }
 
     // Pipeline tool (execute_pipeline) — multi-step tool chaining.

@@ -68,6 +68,7 @@ pub mod hx_image_gen;
 pub mod hx_web_search;
 pub mod hx_ws;
 pub mod knowledge_cross;
+pub mod migrate;
 pub mod multi_tenant_resolver;
 pub mod permissions;
 pub mod register;

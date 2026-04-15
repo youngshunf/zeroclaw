@@ -5381,6 +5381,15 @@ pub async fn start_channels(config: Config) -> Result<()> {
     // Single message bus — all channels send messages here
     let (tx, rx) = tokio::sync::mpsc::channel::<zeroclaw_api::channel::ChannelMessage>(100);
 
+    // ── 唤星扩展渠道（通过 lib.rs 的 register_huanxing_channels_fn 注册）
+    // 在构建核心渠道后追加 napcat / wechat_pad / weixin。Hook 同时会用
+    // tx 注册 channel_registry 的 inbound queue。
+    let huanxing_extras = crate::build_huanxing_channels(&config, &tx);
+    for (display_name, channel) in huanxing_extras {
+        println!("  ✓ {} (huanxing)", display_name);
+        channels.push(channel);
+    }
+
     // Spawn a listener for each channel
     let mut handles = Vec::new();
     for ch in &channels {
@@ -5399,6 +5408,9 @@ pub async fn start_channels(config: Config) -> Result<()> {
             .map(|ch| (ch.name().to_string(), Arc::clone(ch)))
             .collect::<HashMap<_, _>>(),
     );
+
+    // ── 唤星通知：渠道全部构建完成，可以注册 live_channels 和 inbound_queue
+    crate::notify_huanxing_channels_registered(channels_by_name.as_ref());
 
     // Populate the reaction tool's channel map now that channels are initialized.
     if let Some(ref handle) = reaction_handle_ch {

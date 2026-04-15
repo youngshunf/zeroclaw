@@ -6663,6 +6663,18 @@ pub struct ChannelsConfig {
     /// QQ Official Bot channel configuration.
     #[nested]
     pub qq: Option<QQConfig>,
+    /// 【唤星】Napcat (QQ via OneBot) 渠道配置 `[channels.napcat]`。
+    #[serde(default)]
+    #[nested]
+    pub napcat: Option<crate::huanxing::NapcatConfig>,
+    /// 【唤星】WeChatPadPro (微信 iPad 协议) 渠道配置 `[channels.wechat_pad]`。
+    #[serde(default)]
+    #[nested]
+    pub wechat_pad: Option<crate::huanxing::WechatPadConfig>,
+    /// 【唤星】iLink AI 微信扫码渠道配置 `[channels.weixin]`。
+    #[serde(default)]
+    #[nested]
+    pub weixin: Option<crate::huanxing::WeixinConfig>,
     /// X/Twitter channel configuration.
     #[nested]
     pub twitter: Option<TwitterConfig>,
@@ -6906,6 +6918,9 @@ impl Default for ChannelsConfig {
             dingtalk: None,
             wecom: None,
             qq: None,
+            napcat: None,
+            wechat_pad: None,
+            weixin: None,
             twitter: None,
             mochat: None,
             #[cfg(feature = "channel-nostr")]
@@ -11845,6 +11860,12 @@ auto_save = true
                 dingtalk: None,
                 wecom: None,
                 qq: None,
+                napcat: None,
+                wechat_pad: None,
+                weixin: None,
+            napcat: None,
+            wechat_pad: None,
+            weixin: None,
                 twitter: None,
                 mochat: None,
                 #[cfg(feature = "channel-nostr")]
@@ -12997,6 +13018,9 @@ allowed_rooms = ["!ops:matrix.org"]
             dingtalk: None,
             wecom: None,
             qq: None,
+            napcat: None,
+            wechat_pad: None,
+            weixin: None,
             twitter: None,
             mochat: None,
             #[cfg(feature = "channel-nostr")]
@@ -13371,6 +13395,9 @@ bot_token = "xoxb-tok"
             dingtalk: None,
             wecom: None,
             qq: None,
+            napcat: None,
+            wechat_pad: None,
+            weixin: None,
             twitter: None,
             mochat: None,
             #[cfg(feature = "channel-nostr")]

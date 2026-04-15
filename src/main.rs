@@ -293,6 +293,45 @@ Examples:
         gateway_command: Option<zeroclaw::GatewayCommands>,
     },
 
+    /// 【唤星】从模板创建一个新租户 Agent（CLI 管理工具）
+    #[cfg(feature = "huanxing")]
+    #[command(name = "agent-create", about = "Create a new agent from a template")]
+    AgentCreate {
+        /// The phone number or tenant ID
+        phone: String,
+        /// The agent name to create (e.g. assistant)
+        agent_name: String,
+        /// The template ID to build from
+        template: String,
+        /// Whether to use desktop overwrite layer
+        #[arg(long)]
+        is_desktop: bool,
+        /// Display name for the agent
+        #[arg(long)]
+        display_name: Option<String>,
+        /// User nickname for the tenant
+        #[arg(long)]
+        user_nickname: Option<String>,
+        /// HASN public identity ID
+        #[arg(long)]
+        hasn_id: Option<String>,
+        /// Default LLM provider (e.g. "custom:http://127.0.0.1:3180/v1")
+        #[arg(long)]
+        provider: Option<String>,
+        /// Fallback LLM provider for reliability
+        #[arg(long)]
+        fallback_provider: Option<String>,
+        /// Embedding vector provider
+        #[arg(long)]
+        embedding_provider: Option<String>,
+        /// LLM gateway V1 URL for TTS/STT api_url
+        #[arg(long)]
+        llm_gateway: Option<String>,
+        /// LLM API key (from login llm_token) — written to user config.toml
+        #[arg(long)]
+        api_key: Option<String>,
+    },
+
     /// Start ACP (Agent Control Protocol) server over stdio
     #[command(long_about = "\
 Start the ACP server (JSON-RPC 2.0 over stdio).
@@ -1254,6 +1293,198 @@ async fn main() -> Result<()> {
             server.run().await
         }
 
+        #[cfg(feature = "huanxing")]
+        Commands::AgentCreate {
+            phone,
+            agent_name,
+            template,
+            is_desktop,
+            display_name,
+            user_nickname,
+            hasn_id,
+            provider,
+            fallback_provider,
+            embedding_provider,
+            llm_gateway,
+            api_key,
+        } => {
+            let config_dir = config
+                .config_path
+                .parent()
+                .unwrap_or(&config.workspace_dir)
+                .to_path_buf();
+            let mut expected_tenant_dir = format!("001-{}", phone);
+
+            // ── Step 1: Initialize SQLite DB (MUST succeed) ──────────
+            let db_path = config.huanxing.resolve_db_path(&config_dir);
+            let db = zeroclaw_huanxing::db::TenantDb::open(&db_path)
+                .context("Failed to open tenant database — cannot proceed with agent creation")?;
+
+            // Determine tenant_dir: reuse existing or allocate new sequence number
+            if let Ok((users, _)) = db
+                .list_users(&zeroclaw_huanxing::db::UserFilter::default())
+                .await
+            {
+                if let Some(user) = users
+                    .iter()
+                    .find(|u| u.phone.as_deref() == Some(phone.as_str()))
+                {
+                    if let Some(td) = &user.tenant_dir {
+                        expected_tenant_dir = td.clone();
+                    }
+                } else {
+                    expected_tenant_dir = format!("{:03}-{}", users.len() + 1, phone);
+                }
+            }
+
+            // ── Step 2: Write user + agent records (MUST succeed) ────
+            let d_name = display_name.clone().unwrap_or_else(|| agent_name.clone());
+            let n_name = user_nickname.clone().unwrap_or_default();
+            db.save_user_full(
+                &phone,
+                &phone,
+                &agent_name,
+                Some(n_name.as_str()),
+                &template,
+                Some(d_name.as_str()),
+                None,
+                Some(&expected_tenant_dir),
+                None, // hasn_id
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .context("Failed to write user/agent records to DB")?;
+
+            if let Err(e) = db.add_routing(&agent_name, "cli", &phone).await {
+                tracing::warn!("Failed to add default CLI routing (non-fatal): {e}");
+            }
+
+            tracing::info!(
+                tenant_dir = %expected_tenant_dir,
+                agent = %agent_name,
+                "DB records written successfully"
+            );
+
+            // ── Step 3: Migrate old flat directory structure ─────────
+            let old_flat_agent = config_dir.join("agents").join(&agent_name);
+            let new_agent_dir = config_dir
+                .join("users")
+                .join(&expected_tenant_dir)
+                .join("agents")
+                .join(&agent_name);
+
+            if old_flat_agent.exists() && !new_agent_dir.exists() {
+                let has_content = std::fs::read_dir(&old_flat_agent)
+                    .map(|mut i| i.next().is_some())
+                    .unwrap_or(false);
+
+                if has_content {
+                    tracing::info!(
+                        old = %old_flat_agent.display(),
+                        new = %new_agent_dir.display(),
+                        "Migrating old flat agent directory to unified architecture"
+                    );
+                    if let Some(parent) = new_agent_dir.parent() {
+                        std::fs::create_dir_all(parent)?;
+                    }
+                    match std::fs::rename(&old_flat_agent, &new_agent_dir) {
+                        Ok(()) => {
+                            tracing::info!("Migration successful");
+                            let _ = std::fs::write(
+                                old_flat_agent.parent().unwrap().join(".migrated"),
+                                format!(
+                                    "Migrated to users/{}/agents/ on {}\n",
+                                    expected_tenant_dir,
+                                    chrono::Utc::now().to_rfc3339()
+                                ),
+                            );
+                        }
+                        Err(e) => {
+                            tracing::warn!("Migration rename failed, will try copy: {e}");
+                            let status = std::process::Command::new("cp")
+                                .arg("-R")
+                                .arg(&old_flat_agent)
+                                .arg(new_agent_dir.parent().unwrap())
+                                .status();
+                            match status {
+                                Ok(s) if s.success() => {
+                                    tracing::info!("Migration via copy successful")
+                                }
+                                _ => tracing::warn!("Migration copy also failed: {:?}", status),
+                            }
+                        }
+                    }
+                } else {
+                    tracing::info!(
+                        path = %old_flat_agent.display(),
+                        "Found empty ghost legacy directory, removing it instead of migrating"
+                    );
+                    let _ = std::fs::remove_dir_all(&old_flat_agent);
+                }
+            }
+
+            // ── Step 4: Create agent workspace via factory ───────────
+            let template_base = config
+                .huanxing
+                .resolve_hub_dir()
+                .unwrap_or_else(|| config.workspace_dir.join("hub"))
+                .join("templates");
+            let factory = huanxing_agent_factory::AgentFactory::new(config_dir.clone(), None);
+            let extracted_phone = expected_tenant_dir
+                .split('-')
+                .skip(1)
+                .collect::<Vec<_>>()
+                .join("-");
+            let owner_ws = factory
+                .resolve_tenant_root(&expected_tenant_dir)
+                .join("workspace");
+            let params = huanxing_agent_factory::CreateAgentParams {
+                tenant_id: expected_tenant_dir.clone(),
+                template_id: template,
+                agent_name: agent_name.clone(),
+                display_name: display_name.unwrap_or_else(|| agent_name.clone()),
+                is_desktop,
+                user_nickname: user_nickname.unwrap_or_default(),
+                user_phone: extracted_phone,
+                owner_dir: owner_ws.to_string_lossy().to_string(),
+                provider,
+                model: None,
+                api_key,
+                hasn_id,
+                fallback_provider,
+                embedding_provider,
+                llm_gateway,
+                avatar_url: None,
+            };
+
+            struct CLIProgress;
+            impl huanxing_agent_factory::ProgressSink for CLIProgress {
+                fn on_progress(&self, step: &str, detail: &str) {
+                    tracing::info!("{}: {}", step, detail);
+                }
+                fn on_error(&self, step: &str, error: &str) {
+                    tracing::error!("Error [{}]: {}", step, error);
+                }
+            }
+
+            match factory
+                .create_local_agent(&template_base, &params, &CLIProgress)
+                .await
+            {
+                Ok(res) => {
+                    tracing::info!("Agent created/repaired at {}", res.workspace_dir.display());
+                    Ok(())
+                }
+                Err(e) => {
+                    tracing::error!("Failed to create agent: {}", e);
+                    Err(e)
+                }
+            }
+        }
+
         Commands::Gateway { gateway_command } => {
             match gateway_command {
                 Some(zeroclaw::GatewayCommands::Restart { port, host }) => {
@@ -1387,17 +1618,40 @@ async fn main() -> Result<()> {
             }));
 
             // ── 唤星多租户扩展初始化 ────────────────────────────────────
-            // 1. 把 zeroclaw-huanxing 的 axum Router（Agent/Session/SOP/Hub/HASN
-            //    所有 REST + WS 端点）注册到 gateway 的 router extender 钩子，
-            //    zeroclaw_gateway::run_gateway 在构建核心 inner router 后会
-            //    自动 `.merge()` 进来。
-            // 2. 调用 init_tenant_systems 初始化 TenantRouter、设备指纹、
-            //    common skills 同步等。返回的 MessageContextResolver 目前
-            //    在桌面端单租户流程下不被使用（HASN 消息走 huanxing 自己的
-            //    WebSocket client），保留 binding 供后续 5.4b 接入上游
-            //    orchestrator 时使用。
+            // 1. 注册唤星工具构造函数到 zeroclaw_runtime::tools 的全局钩子，
+            //    `all_tools_with_runtime` 构建默认工具集时会回调本函数追加
+            //    hx_register_user / hx_get_user / secret / skill_market /
+            //    hasn_tools / doc_tools 等唤星专属工具。
+            // 2. 把 zeroclaw-huanxing 的 axum Router（Agent/Session/SOP/Hub/HASN
+            //    所有 REST + WS 端点）注册到 gateway 的 router extender 钩子。
+            // 3. 调用 init_tenant_systems 初始化 TenantRouter、设备指纹、
+            //    common skills 同步等。
             #[cfg(feature = "huanxing")]
             {
+                zeroclaw_runtime::tools::register_huanxing_tools_fn(Box::new(
+                    |config, security, workspace_dir| {
+                        zeroclaw_huanxing::register::huanxing_all_tools(
+                            config,
+                            std::sync::Arc::clone(security),
+                            workspace_dir,
+                        )
+                    },
+                ));
+
+                // 渠道构造钩子：napcat / wechat_pad / weixin 三个唤星扩展渠道
+                zeroclaw_channels::register_huanxing_channels_fn(Box::new(
+                    |config, inbound_tx| {
+                        zeroclaw_huanxing::channels::build_huanxing_channels(config, inbound_tx)
+                    },
+                ));
+
+                // 渠道注册后回调：把 channels_by_name 注入唤星 live_channels_registry
+                zeroclaw_channels::register_huanxing_channels_registered_fn(Box::new(
+                    |channels_by_name| {
+                        zeroclaw_huanxing::channels::on_channels_registered(channels_by_name);
+                    },
+                ));
+
                 zeroclaw_gateway::register_router_extender(Box::new(|router| {
                     router.merge(zeroclaw_huanxing::gateway_routes::huanxing_routes())
                 }));
@@ -1414,6 +1668,110 @@ async fn main() -> Result<()> {
                 // Resolver 目前仅保留实例以在后续 Phase 5.4b 接入 upstream
                 // orchestrator 时注册为全局；当前不消费它。
                 drop(huanxing_resolver);
+
+                // ── 多租户心跳调度 ──────────────────────────────────
+                // 从 huanxing-clean daemon/mod.rs 迁移：scan 所有活跃租户的
+                // HEARTBEAT.md 并按 cron 调度执行。作为独立 tokio 任务 spawn，
+                // 失败时自动重启（由 huanxing crate 内部实现重试语义）。
+                if config.huanxing.enabled && config.huanxing.tenant_heartbeat.enabled {
+                    let th_config = config.clone();
+                    tokio::spawn(async move {
+                        match zeroclaw_huanxing::tenant_heartbeat::TenantHeartbeatManager::new(
+                            th_config,
+                        ) {
+                            Ok(manager) => {
+                                tracing::info!("[唤星] 多租户心跳 manager 已启动");
+                                if let Err(e) = manager.run().await {
+                                    tracing::error!(
+                                        "[唤星] 多租户心跳 manager 异常退出: {e}"
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                tracing::error!(
+                                    "[唤星] 多租户心跳 manager 初始化失败: {e}"
+                                );
+                            }
+                        }
+                    });
+                }
+
+                // ── HASN 节点自动连接 ───────────────────────────────
+                // 从 huanxing-clean gateway/mod.rs 迁移：daemon 启动时如果
+                // 启用了 huanxing.hasn.auto_connect 就自动连接 HASN 中央节点。
+                // 对云端部署友好（无需前端 POST /connect 触发）。
+                // 注：需要 gateway 启动后 AppState 就绪才能真正连接，这里只
+                // 保留配置检查 + spawn 占位，等 gateway 就绪后由该任务执行。
+                if config.huanxing.enabled
+                    && config.huanxing.hasn.enabled
+                    && config.huanxing.hasn.auto_connect
+                {
+                    let hasn_config = config.clone();
+                    tokio::spawn(async move {
+                        // 等待 gateway 启动（给 1 秒让 server 就绪）
+                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                        tracing::info!("[HASN] 触发自动连接...");
+
+                        let base_url =
+                            hasn_config.huanxing.hasn.central_url.clone().unwrap_or_else(|| {
+                                format!(
+                                    "{}/api/v1/hasn/ws/node",
+                                    hasn_config
+                                        .huanxing
+                                        .hasn_url()
+                                        .replace("https://", "wss://")
+                                        .replace("http://", "ws://")
+                                )
+                            });
+                        let access_token = hasn_config
+                            .huanxing
+                            .hasn
+                            .api_key
+                            .clone()
+                            .filter(|k| !k.trim().is_empty());
+                        let fp_node_id =
+                            zeroclaw_huanxing::device_fingerprint::get_global_fingerprint()
+                                .map(|fp| fp.node_id.clone())
+                                .unwrap_or_default();
+
+                        if let Some(token) = access_token {
+                            let url = format!("{}?protocol=hasn/2.0", base_url);
+                            let mut auth_headers = if token.starts_with("hasn_ok_") {
+                                vec![(
+                                    "Authorization".to_string(),
+                                    format!("OwnerKey {}", token),
+                                )]
+                            } else {
+                                vec![(
+                                    "Authorization".to_string(),
+                                    format!("Bearer {}", token),
+                                )]
+                            };
+                            if !fp_node_id.is_empty() {
+                                auth_headers
+                                    .push(("X-Node-Id".to_string(), fp_node_id));
+                            }
+                            let max_retries = hasn_config.huanxing.hasn.max_retries;
+
+                            // 注意：connect_with_retry 需要 AppState，而守护进程
+                            // 启动时尚未把 state 暴露给外部。这里记录要求，真正
+                            // 连接由前端 POST /api/v1/hasn/connect 或由集成测试
+                            // 驱动。云端如需 auto-connect，需改用不依赖
+                            // AppState 的 direct connect 路径（followup）。
+                            let _ = (url, auth_headers, max_retries);
+                            tracing::warn!(
+                                "[HASN] auto_connect 占位：当前版本需前端或集成测试驱动 \
+                                 POST /api/v1/hasn/connect 才能建立 WebSocket。\
+                                 若需云端 auto-connect，请在后续 followup 提供 \
+                                 无需 AppState 的 connector entrypoint。"
+                            );
+                        } else {
+                            tracing::warn!(
+                                "[HASN] 未配置 api_key/access_token，跳过自动连接"
+                            );
+                        }
+                    });
+                }
             }
 
             // Wire cron delivery to the channels orchestrator

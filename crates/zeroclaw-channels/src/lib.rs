@@ -80,3 +80,78 @@ pub mod whatsapp;
 pub mod whatsapp_storage;
 #[cfg(feature = "whatsapp-web")]
 pub mod whatsapp_web;
+
+// ─────────────────────────────────────────────────────────────
+// 唤星扩展钩子（channels 层）
+//
+// 唤星在 napcat / wechat_pad / weixin 三个渠道上做 fork 扩展，这些渠道
+// 构造和启动原本写在 src/channels/mod.rs 的 start_channels 里（带
+// `#[cfg(feature = "huanxing")]`）。RFC D1 workspace 拆分后 start_channels
+// 搬到 zeroclaw-channels::orchestrator，此处通过 OnceLock 钩子由根 crate
+// 在启动前注册 huanxing 工厂，orchestrator 构建完核心渠道后调用本钩子
+// 追加唤星渠道。
+//
+// 两个钩子：
+// - `HuanxingChannelsFn`：构造阶段返回 (display_name, Arc<dyn Channel>) 列表
+// - `HuanxingChannelsRegisteredFn`：所有渠道启动后回调，供 huanxing 的
+//   channel_registry::register_live_channels + register_inbound_queue 使用
+// ─────────────────────────────────────────────────────────────
+use std::collections::HashMap;
+use std::sync::{Arc, OnceLock};
+
+/// 唤星渠道构造钩子。由 main.rs 在 daemon 启动前注册。
+///
+/// 入参：
+/// - `config`: 全局 Config 引用，用于读取 `[channels.napcat/wechat_pad/weixin]`
+/// - `inbound_tx`: 渠道入站消息总线，huanxing 可通过它注册自己的 inbound queue
+///
+/// 返回：extra channels 列表，格式 `(display_name, channel)`。
+/// `display_name` 仅用于启动日志，`channel.name()` 是真正的路由键。
+pub type HuanxingChannelsFn = Box<
+    dyn Fn(
+            &zeroclaw_config::schema::Config,
+            &tokio::sync::mpsc::Sender<zeroclaw_api::channel::ChannelMessage>,
+        ) -> Vec<(&'static str, Arc<dyn zeroclaw_api::channel::Channel>)>
+        + Send
+        + Sync,
+>;
+
+static HUANXING_CHANNELS_FN: OnceLock<HuanxingChannelsFn> = OnceLock::new();
+
+/// 渠道构造完成后的注册回调。供 huanxing channel_registry 使用。
+pub type HuanxingChannelsRegisteredFn = Box<
+    dyn Fn(&HashMap<String, Arc<dyn zeroclaw_api::channel::Channel>>) + Send + Sync,
+>;
+
+static HUANXING_CHANNELS_REGISTERED_FN: OnceLock<HuanxingChannelsRegisteredFn> = OnceLock::new();
+
+/// 注册唤星渠道构造函数（main.rs 在 daemon 启动前调用一次）。
+pub fn register_huanxing_channels_fn(f: HuanxingChannelsFn) {
+    let _ = HUANXING_CHANNELS_FN.set(f);
+}
+
+/// 注册渠道构造完成后的回调（main.rs 在 daemon 启动前调用一次）。
+pub fn register_huanxing_channels_registered_fn(f: HuanxingChannelsRegisteredFn) {
+    let _ = HUANXING_CHANNELS_REGISTERED_FN.set(f);
+}
+
+/// 内部使用：收集唤星额外渠道。
+pub(crate) fn build_huanxing_channels(
+    config: &zeroclaw_config::schema::Config,
+    inbound_tx: &tokio::sync::mpsc::Sender<zeroclaw_api::channel::ChannelMessage>,
+) -> Vec<(&'static str, Arc<dyn zeroclaw_api::channel::Channel>)> {
+    if let Some(f) = HUANXING_CHANNELS_FN.get() {
+        f(config, inbound_tx)
+    } else {
+        Vec::new()
+    }
+}
+
+/// 内部使用：通知唤星侧所有渠道已上线。
+pub(crate) fn notify_huanxing_channels_registered(
+    channels_by_name: &HashMap<String, Arc<dyn zeroclaw_api::channel::Channel>>,
+) {
+    if let Some(f) = HUANXING_CHANNELS_REGISTERED_FN.get() {
+        f(channels_by_name);
+    }
+}
