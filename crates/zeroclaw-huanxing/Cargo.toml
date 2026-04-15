@@ -1,0 +1,95 @@
+[package]
+name = "zeroclaw-huanxing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "唤星多租户 SaaS 扩展：TenantRouter、HASN 协议集成、per-tenant 工具/渠道/API。feature-gated 独立 crate，遵循 RFC D1 workspace 拆分。"
+publish = false
+
+[dependencies]
+# ─────────────────────────────────────────────────────────────
+# 上游 workspace crates
+# ─────────────────────────────────────────────────────────────
+zeroclaw-api.workspace = true
+zeroclaw-infra.workspace = true
+zeroclaw-config = { workspace = true, default-features = true }
+zeroclaw-providers.workspace = true
+zeroclaw-memory.workspace = true
+zeroclaw-channels = { workspace = true, default-features = true }
+zeroclaw-tools.workspace = true
+zeroclaw-runtime.workspace = true
+zeroclaw-gateway.workspace = true
+
+# 唤星扩展 crates
+hasn-client-core = { path = "../hasn-client-core" }
+huanxing-agent-factory = { path = "../huanxing-agent-factory" }
+
+# ─────────────────────────────────────────────────────────────
+# 第三方依赖
+# ─────────────────────────────────────────────────────────────
+# HTTP server
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "query", "ws", "macros", "multipart"] }
+tower = { version = "0.5", default-features = false, features = ["util"] }
+tower-http = { version = "0.6", default-features = false, features = ["limit", "timeout", "cors"] }
+
+# Async runtime
+tokio = { version = "1.50", default-features = false, features = ["rt-multi-thread", "macros", "time", "net", "io-util", "sync", "process", "fs", "signal"] }
+tokio-util = { version = "0.7", default-features = false }
+tokio-stream = { version = "0.1.18", default-features = false, features = ["fs", "sync"] }
+tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink"] }
+async-trait = "0.1"
+
+# HTTP client
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking", "multipart", "stream"] }
+
+# Database
+rusqlite = { version = "0.37", features = ["bundled"] }
+
+# Serialization
+serde = { version = "1.0", default-features = false, features = ["derive"] }
+serde_json = { version = "1.0", default-features = false, features = ["std"] }
+serde_yaml = "0.9"
+toml = "1.0"
+
+# Crypto
+aes = "0.8.4"
+block-padding = "0.4.2"
+md-5 = "0.11.0"
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
+chacha20poly1305 = "0.10"
+base64 = "0.22"
+rand = "0.10"
+
+# Time
+chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
+chrono-tz = "0.10"
+
+# Utilities
+uuid = { version = "1.22", default-features = false, features = ["v4", "std"] }
+anyhow = "1.0"
+thiserror = "2.0"
+tracing = { version = "0.1", default-features = false }
+parking_lot = "0.12"
+directories = "6.0"
+shellexpand = "3.1"
+regex = "1.10"
+urlencoding = "2.1"
+once_cell = "1"
+
+# Image / 多模态
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+
+# 文档/模板
+tar = "0.4"
+flate2 = "1"
+zip = { version = "8.1", default-features = false, features = ["deflate-flate2"] }
+
+[dev-dependencies]
+tempfile = "3.26"
+tokio = { version = "1.50", features = ["rt-multi-thread", "macros"] }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(zeroclaw_root_crate)'] }

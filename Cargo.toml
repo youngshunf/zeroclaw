@@ -22,6 +22,7 @@ members = [
     # 唤星扩展
     "crates/hasn-client-core",
     "crates/huanxing-agent-factory",
+    "crates/zeroclaw-huanxing",
     "clients/desktop/src-tauri",
 ]
 resolver = "2"
@@ -48,6 +49,7 @@ zeroclaw-gateway = { path = "crates/zeroclaw-gateway", version = "0.6.9" }
 zeroclaw-hardware = { path = "crates/zeroclaw-hardware", version = "0.6.9" }
 zeroclaw-tool-call-parser = { path = "crates/zeroclaw-tool-call-parser", version = "0.6.9" }
 zeroclaw-macros = { path = "crates/zeroclaw-macros", version = "0.6.9" }
+zeroclaw-huanxing = { path = "crates/zeroclaw-huanxing", version = "0.6.9" }
 aardvark-sys = { path = "crates/aardvark-sys", version = "0.1.0" }
 
 [package]
