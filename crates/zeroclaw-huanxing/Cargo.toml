@@ -27,6 +27,11 @@ zeroclaw-macros.workspace = true
 hasn-client-core = { path = "../hasn-client-core" }
 huanxing-agent-factory = { path = "../huanxing-agent-factory" }
 
+# hasn-node — HASN 协议独立运行时（Phase 2 开始迁移使用，Phase 1 先建立依赖链接）
+# TODO: Phase 2 — 将 hasn_*.rs 调用方迁移为使用 hasn_node:: 和 hasn_core::
+hasn-node = { path = "../../../hasn-node/crates/hasn-node" }
+hasn-core = { path = "../../../hasn-node/crates/hasn-core" }
+
 # ─────────────────────────────────────────────────────────────
 # 第三方依赖
 # ─────────────────────────────────────────────────────────────
