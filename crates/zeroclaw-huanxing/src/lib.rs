@@ -61,6 +61,7 @@ pub mod hasn_chat_db;
 pub mod hasn_connector;
 pub mod hasn_invoke;
 pub mod hasn_router;
+pub mod hasn_spawner;
 pub mod hasn_sync;
 pub mod hasn_tools;
 pub mod hub_sync;
