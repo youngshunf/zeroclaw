@@ -7,7 +7,7 @@
 //! 路由清单（Phase 5 从 huanxing-clean 的 src/gateway/mod.rs 迁移而来）：
 //! - 【Agent 管理】    /api/agents/*           api_agents::agent_routes
 //! - 【用户级配置】    /api/user_config/*      api_user_config::user_config_routes
-//! - 【Session REST】  /api/sessions/*         api_sessions::session_routes
+//! - 【Session REST】  /api/huanxing/sessions/*  api_sessions::session_routes（Phase 05-04b 起从 /api/sessions 迁出，避免与上游 `handle_api_sessions_*` merge panic）
 //! - 【SOP 工作流】    /api/sop/*              sop_api::sop_routes
 //! - 【Hub 同步】      /api/hub_sync/*         hub_sync::hub_routes
 //! - 【HASN Agent 同步调用】 /api/v1/agent/hasn-invoke

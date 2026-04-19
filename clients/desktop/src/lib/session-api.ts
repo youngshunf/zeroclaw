@@ -26,7 +26,7 @@ export interface SessionDetail extends SessionInfo {
 /** List all sessions, optionally filtered by agent_id */
 export async function listSessions(agentId?: string): Promise<SessionInfo[]> {
   const params = agentId ? `?agent_id=${encodeURIComponent(agentId)}` : '';
-  const data = await apiFetch<{ sessions: SessionInfo[] }>(`/api/sessions${params}`);
+  const data = await apiFetch<{ sessions: SessionInfo[] }>(`/api/huanxing/sessions${params}`);
   return data.sessions;
 }
 
@@ -35,7 +35,7 @@ export async function createSession(
   title?: string,
   agentId?: string,
 ): Promise<{ session_id: string; title: string; agent_id: string }> {
-  return apiFetch<{ session_id: string; title: string; agent_id: string }>('/api/sessions', {
+  return apiFetch<{ session_id: string; title: string; agent_id: string }>('/api/huanxing/sessions', {
     method: 'POST',
     body: JSON.stringify({ title, agent_id: agentId }),
   });
@@ -43,7 +43,7 @@ export async function createSession(
 
 /** Get session detail with message history */
 export async function getSession(sessionId: string): Promise<SessionDetail> {
-  return apiFetch<SessionDetail>(`/api/sessions/${encodeURIComponent(sessionId)}`);
+  return apiFetch<SessionDetail>(`/api/huanxing/sessions/${encodeURIComponent(sessionId)}`);
 }
 
 /** Paginated message for history loading */
@@ -77,7 +77,7 @@ export async function getSessionMessages(
   if (options?.agentId) params.set('agent_id', options.agentId);
   const qs = params.toString();
   return apiFetch<PaginatedSessionDetail>(
-    `/api/sessions/${encodeURIComponent(sessionId)}${qs ? `?${qs}` : ''}`,
+    `/api/huanxing/sessions/${encodeURIComponent(sessionId)}${qs ? `?${qs}` : ''}`,
   );
 }
 
@@ -86,14 +86,14 @@ export async function generateSessionTitle(
   sessionId: string,
 ): Promise<{ title: string }> {
   return apiFetch<{ title: string }>(
-    `/api/sessions/${encodeURIComponent(sessionId)}/generate-title`,
+    `/api/huanxing/sessions/${encodeURIComponent(sessionId)}/generate-title`,
     { method: 'POST' },
   );
 }
 
 /** Rename a session */
 export async function renameSession(sessionId: string, title: string): Promise<void> {
-  await apiFetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+  await apiFetch(`/api/huanxing/sessions/${encodeURIComponent(sessionId)}`, {
     method: 'PUT',
     body: JSON.stringify({ title }),
   });
@@ -101,14 +101,14 @@ export async function renameSession(sessionId: string, title: string): Promise<v
 
 /** Delete a session */
 export async function deleteSession(sessionId: string): Promise<void> {
-  await apiFetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+  await apiFetch(`/api/huanxing/sessions/${encodeURIComponent(sessionId)}`, {
     method: 'DELETE',
   });
 }
 
 /** Clear all messages in a session */
 export async function clearSession(sessionId: string): Promise<void> {
-  await apiFetch(`/api/sessions/${encodeURIComponent(sessionId)}/messages`, {
+  await apiFetch(`/api/huanxing/sessions/${encodeURIComponent(sessionId)}/messages`, {
     method: 'DELETE',
   });
 }

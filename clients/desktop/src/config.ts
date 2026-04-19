@@ -172,7 +172,7 @@ export function resolveApiUrl(url: string | null | undefined): string {
   if (isDesktop) {
     // 区分本地 sidecar 接口与云端 backend 接口
     // Agent 内部文件、会话状态等来自 sidecar
-    const isLocalSidecarUrl = url.startsWith('/api/agents') || url.startsWith('/api/sessions') || url.startsWith('/api/hub/');
+    const isLocalSidecarUrl = url.startsWith('/api/agents') || url.startsWith('/api/huanxing/') || url.startsWith('/api/sessions') || url.startsWith('/api/hub/');
     const base = isLocalSidecarUrl ? HUANXING_CONFIG.sidecarBaseUrl : HUANXING_CONFIG.backendBaseUrl;
 
     const baseClean = base.replace(/\/$/, '');

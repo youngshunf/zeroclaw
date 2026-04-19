@@ -3,17 +3,21 @@
 //! 为桌面端前端提供完整的 Session CRUD，每个 Agent 的会话独立存储在
 //! `{config_dir}/users/{tenant}/agents/{agent_name}/workspace/sessions/sessions.db`。
 //!
-//! # 端点
+//! # 端点（Phase 05-04b 起统一迁到 `/api/huanxing/sessions*` 命名空间）
 //!
 //! ```text
-//! GET    /api/sessions                        → 列出所有会话（可按 agent_id 过滤）
-//! POST   /api/sessions                        → 创建新会话
-//! GET    /api/sessions/{id}                   → 获取会话详情（带分页消息）
-//! PUT    /api/sessions/{id}                   → 重命名会话
-//! DELETE /api/sessions/{id}                   → 删除会话
-//! DELETE /api/sessions/{id}/messages          → 清空会话消息
-//! POST   /api/sessions/{id}/generate-title    → LLM 自动生成标题
+//! GET    /api/huanxing/sessions                        → 列出所有会话（可按 agent_id 过滤）
+//! POST   /api/huanxing/sessions                        → 创建新会话
+//! GET    /api/huanxing/sessions/{id}                   → 获取会话详情（带分页消息）
+//! PUT    /api/huanxing/sessions/{id}                   → 重命名会话
+//! DELETE /api/huanxing/sessions/{id}                   → 删除会话
+//! DELETE /api/huanxing/sessions/{id}/messages          → 清空会话消息
+//! POST   /api/huanxing/sessions/{id}/generate-title    → LLM 自动生成标题
 //! ```
+//!
+//! 上游 `zeroclaw-gateway` 保留 `GET/PUT/DELETE /api/sessions*` 用于 gateway WS
+//! chat 历史（`gw_*` 前缀 session_backend），与本 crate 的桌面端多租户 session
+//! 命名空间严格不相交，axum `Router::merge` 不再 panic。
 //!
 //! # Phase 05-04 Gap Closure — Route Conflict Decision Table
 //!
@@ -73,14 +77,18 @@
 //!         (e.g. `/api/huanxing/sessions`) 并同步前端
 //!   - B4: 其它（待讨论）
 //!
-//! ## 当前状态
+//! ## Phase 05-04b 修复已落地
 //!
-//! 本次 commit 只落审计文档，不改代码。`session_routes()` 仍保留完整的 7 条 route，
-//! daemon 启动仍 panic —— 修复要由用户决策后的后续 plan 落地。
+//! 采纳方案 B3：把桌面端 7 条 session route 全部迁到 `/api/huanxing/sessions*`
+//! 命名空间（见下方 `session_routes()`）。上游 gateway 的 `/api/sessions*` 保留
+//! 不动，axum `Router::merge` 不再 panic。配套前端 `clients/desktop/src/lib/session-api.ts`
+//! 的 URL 同步改为 `/api/huanxing/sessions*`；冒烟测试 `tests/gateway_router_merge_smoke.rs`
+//! 固化 "合并不 panic" 这条不变式，未来任何重复注册会被 CI 立即捕获。
 //!
-//! 未来维护者读这段 doc 应能立刻理解：为什么本 file 的路由注册必须与
-//! `zeroclaw-gateway/src/lib.rs:960-1100` 的 `.route(` 清单保持严格不相交（同
-//! path 维度上 method 不得重合），以及上游与桌面端 session 契约的差异。
+//! 未来维护者读这段 doc 应能立刻理解：本 crate 的 `.route(` 清单与
+//! `zeroclaw-gateway/src/lib.rs` 的 `.route(` 清单必须保持 path 命名空间完全
+//! 不相交（桌面端 → `/api/huanxing/*`；上游 → `/api/*` 其它命名空间），以及
+//! 上游与桌面端 session 契约的根本差异。
 
 use axum::{
     Json, Router,
@@ -164,14 +172,25 @@ pub struct GetSessionQuery {
 // ── 路由注册 ──────────────────────────────────────────────
 
 pub fn session_routes() -> Router<AppState> {
+    // Phase 05-04b：全部迁到 /api/huanxing/sessions*，与上游 zeroclaw-gateway
+    // 的 /api/sessions* 命名空间严格不相交，axum Router::merge 不再 panic。
     Router::new()
-        .route("/api/sessions", get(list_sessions).post(create_session))
         .route(
-            "/api/sessions/{id}",
+            "/api/huanxing/sessions",
+            get(list_sessions).post(create_session),
+        )
+        .route(
+            "/api/huanxing/sessions/{id}",
             get(get_session).put(rename_session).delete(delete_session),
         )
-        .route("/api/sessions/{id}/messages", delete(clear_messages))
-        .route("/api/sessions/{id}/generate-title", post(generate_title))
+        .route(
+            "/api/huanxing/sessions/{id}/messages",
+            delete(clear_messages),
+        )
+        .route(
+            "/api/huanxing/sessions/{id}/generate-title",
+            post(generate_title),
+        )
 }
 
 // ── Session DB 工具函数 ──────────────────────────────────
