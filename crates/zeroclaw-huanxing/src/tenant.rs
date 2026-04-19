@@ -10,7 +10,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use anyhow::Context;
+use anyhow::{Context, anyhow};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use zeroclaw_infra::session_backend::SessionBackend;
@@ -354,9 +354,24 @@ impl TenantContext {
         lookup: &str,
     ) -> anyhow::Result<Option<Self>> {
         if let Some(ctx) = Self::load_by_agent_id(global_config, lookup).await? {
+            if !ctx.workspace_dir.exists() {
+                return Err(anyhow!(
+                    "tenant workspace missing for lookup {lookup}: {}",
+                    ctx.workspace_dir.display()
+                ));
+            }
             return Ok(Some(ctx));
         }
-        Self::load_by_hasn_id(global_config, lookup).await
+        let Some(ctx) = Self::load_by_hasn_id(global_config, lookup).await? else {
+            return Ok(None);
+        };
+        if !ctx.workspace_dir.exists() {
+            return Err(anyhow!(
+                "tenant workspace missing for lookup {lookup}: {}",
+                ctx.workspace_dir.display()
+            ));
+        }
+        Ok(Some(ctx))
     }
 
     pub(crate) fn runtime_config(&self) -> &zeroclaw_config::schema::Config {
@@ -1336,21 +1351,13 @@ mod tests {
         (owner_dir, agent_workspace)
     }
 
-    // Phase 5 回归：RFC D1 workspace 拆分 + zeroclaw-huanxing 独立 crate 后，
-    // seed_tenant 写入的 hasn_id 在 lookup 时不命中（返回 None）。疑似
-    // schema 迁移后 hasn_id 字段的序列化/存储路径有变化，需要独立 debug
-    // session 深挖。当前 ignore 不阻塞 Phase 5 主线 —— 桌面端 HASN 冒烟
-    // 测试会通过真实 HASN 连接验证 lookup 流程。
-    // TODO(phase-5-followup): 定位 seed_tenant 写入路径与 load_by_hasn
-    //   查询路径的差异，恢复本测试。
     #[tokio::test]
-    #[ignore = "Phase 5 regression: hasn_id lookup returns None after workspace split"]
     async fn load_by_agent_or_hasn_resolves_same_tenant_context() {
         let temp = tempdir().unwrap();
         let config_dir = temp.path();
         let tenant_dir = "001-13800000000";
         let agent_id = "default";
-        let hasn_id = "hasn-agent-1";
+        let hasn_id = "a_huanxing_agent_1";
         let (expected_owner_dir, expected_workspace_dir) =
             create_workspace_tree(config_dir, tenant_dir, agent_id).await;
         seed_tenant(config_dir, tenant_dir, agent_id, hasn_id).await;

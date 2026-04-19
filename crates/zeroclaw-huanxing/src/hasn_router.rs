@@ -147,9 +147,14 @@ impl MessageRouter {
                 target_id
             );
             if let (Some(ws), Some(sessions)) = (&self.ws, &self.sessions) {
-                let bridge = HasnAgentBridge::new(self.app_state.clone(), chat_db);
+                let bridge = HasnAgentBridge::new(
+                    self.app_state.config.lock().clone(),
+                    self.app_state.session_backend.clone(),
+                    chat_db,
+                    sessions.clone(),
+                );
                 bridge
-                    .inject_and_stream(&target_id, message, ws.clone(), sessions.clone())
+                    .inject_and_stream(&target_id, message, ws.clone())
                     .await;
             } else {
                 tracing::error!(

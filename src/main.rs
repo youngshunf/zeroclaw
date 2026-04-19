@@ -1695,6 +1695,48 @@ async fn main() -> Result<()> {
                 // orchestrator 时注册为全局；当前不消费它。
                 drop(huanxing_resolver);
 
+                zeroclaw_huanxing::hasn_spawner::configure_huanxing_native_runtime(
+                    config.clone(),
+                    None,
+                );
+                match zeroclaw_huanxing::hasn_spawner::initialize_embedded_huanxing_node(&config)
+                {
+                    Ok(node) => {
+                        match zeroclaw_huanxing::hasn_spawner::register_huanxing_native_spawner(
+                            node.clone(),
+                        )
+                        .await
+                        {
+                            Ok(()) => tracing::info!(
+                                "HuanXing: embedded huanxing_native spawner registered"
+                            ),
+                            Err(err) => tracing::warn!(
+                                error = %err,
+                                "HuanXing: failed to register embedded huanxing_native spawner"
+                            ),
+                        }
+                    }
+                    Err(err) => tracing::warn!(
+                        error = %err,
+                        "HuanXing: failed to initialize embedded hasn-node for huanxing_native"
+                    ),
+                }
+
+                match zeroclaw_huanxing::api_agents::reconcile_huanxing_native_local_agents(
+                    &config,
+                )
+                .await
+                {
+                    Ok(count) => tracing::info!(
+                        mirrored_agents = count,
+                        "HuanXing: reconciled huanxing_native local_agents mirror"
+                    ),
+                    Err(err) => tracing::warn!(
+                        error = %err,
+                        "HuanXing: failed to reconcile huanxing_native local_agents mirror"
+                    ),
+                }
+
                 // ── 多租户心跳调度 ──────────────────────────────────
                 // 从 huanxing-clean daemon/mod.rs 迁移：scan 所有活跃租户的
                 // HEARTBEAT.md 并按 cron 调度执行。作为独立 tokio 任务 spawn，

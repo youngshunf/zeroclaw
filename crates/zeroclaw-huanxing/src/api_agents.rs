@@ -22,6 +22,7 @@ use axum::{
     response::IntoResponse,
     routing::{delete, get, post},
 };
+use anyhow::{Context, anyhow};
 use serde::{Deserialize, Serialize};
 
 use zeroclaw_gateway::AppState;
@@ -39,10 +40,10 @@ pub async fn extract_tenant_dir(
     }
 
     let db_path = config.resolve_db_path(config_dir);
-    if let Ok(db) = crate::db::TenantDb::open(&db_path) {
-        if let Ok(Some(tenant)) = db.get_first_tenant_dir().await {
-            return Some(tenant);
-        }
+    if let Ok(db) = crate::db::TenantDb::open(&db_path)
+        && let Ok(Some(tenant)) = db.get_first_tenant_dir().await
+    {
+        return Some(tenant);
     }
     None
 }
@@ -152,8 +153,6 @@ struct UpdateAgentHasnIdRequest {
     hasn_id: String,
 }
 
-/// 工作区 config.toml 的部分字段（用于读取 display_name / model）
-
 // ── 路由 ──────────────────────────────────────────────────
 
 /// 返回唤星桌面端 Agent 管理路由集合。
@@ -242,6 +241,14 @@ async fn list_agents(
                     let db_path = config.huanxing.resolve_db_path(config_dir);
                     if let Ok(db) = crate::db::TenantDb::open(&db_path) {
                         let _ = db.update_agent_hasn_id(&name, hid).await;
+                    }
+                    if let Err(err) = upsert_huanxing_native_local_agent(&config, &name, hid).await {
+                        tracing::warn!(
+                            agent = %name,
+                            hasn_id = %hid,
+                            error = %err,
+                            "同步 huanxing_native local_agents mirror 失败"
+                        );
                     }
                 }
 
@@ -503,11 +510,18 @@ async fn update_agent_hasn_id(
     };
 
     match db.update_agent_hasn_id(&name, &req.hasn_id).await {
-        Ok(true) => (
-            StatusCode::OK,
-            Json(serde_json::json!({"status": "ok", "name": name, "hasn_id": req.hasn_id})),
-        )
-            .into_response(),
+        Ok(true) => match upsert_huanxing_native_local_agent(&config, &name, &req.hasn_id).await {
+            Ok(()) => (
+                StatusCode::OK,
+                Json(serde_json::json!({"status": "ok", "name": name, "hasn_id": req.hasn_id})),
+            )
+                .into_response(),
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": format!("更新 hasn-node mirror 失败: {e}")})),
+            )
+                .into_response(),
+        },
         Ok(false) => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": format!("agent '{}' 不存在于 users.db", name)})),
@@ -956,6 +970,186 @@ async fn load_workspace_config(workspace: &std::path::Path) -> WorkspaceConfig {
         return WorkspaceConfig::default();
     };
     toml::from_str(&content).unwrap_or_default()
+}
+
+fn resolve_config_dir(config: &zeroclaw_config::schema::Config) -> std::path::PathBuf {
+    config
+        .config_path
+        .parent()
+        .unwrap_or(&config.workspace_dir)
+        .to_path_buf()
+}
+
+fn fallback_local_agent_key(agent_name: &str) -> String {
+    format!("huanxing_native::{agent_name}")
+}
+
+fn open_hasn_node_db(
+    config: &zeroclaw_config::schema::Config,
+) -> anyhow::Result<hasn_node::db::NodeDb> {
+    let config_path = config.config_path.to_string_lossy().to_string();
+    let node_config = hasn_node::config::NodeConfig::load(&config_path)
+        .with_context(|| format!("load hasn-node config from {}", config.config_path.display()))?;
+    let db_path = node_config.data_dir()?.join("hasn_db.sqlite");
+    hasn_node::db::NodeDb::open(&db_path)
+}
+
+fn existing_local_agent_key(
+    node_db: &hasn_node::db::NodeDb,
+    agent_name: &str,
+) -> anyhow::Result<Option<String>> {
+    let conn = node_db.conn();
+    match conn.query_row(
+        "SELECT agent_id
+         FROM local_agents
+         WHERE agent_name = ?1
+         ORDER BY updated_at DESC, created_at DESC
+         LIMIT 1",
+        [agent_name],
+        |row| row.get(0),
+    ) {
+        Ok(agent_id) => Ok(Some(agent_id)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(err) => Err(err.into()),
+    }
+}
+
+async fn ensure_agent_hasn_id_dual_write(
+    db: &crate::db::TenantDb,
+    config: &zeroclaw_config::schema::Config,
+    tenant_dir: Option<&str>,
+    agent_name: &str,
+    hasn_id: &str,
+) -> anyhow::Result<()> {
+    let config_dir = resolve_config_dir(config);
+    let config_path = config
+        .huanxing
+        .resolve_agent_config_path(&config_dir, tenant_dir, agent_name);
+    let existing = match tokio::fs::read_to_string(&config_path).await {
+        Ok(content) => content,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => "[agent]\n".to_string(),
+        Err(err) => {
+            return Err(err)
+                .with_context(|| format!("read agent config {}", config_path.display()));
+        }
+    };
+    let updated = upsert_hasn_id_in_config(&existing, hasn_id);
+    tokio::fs::write(&config_path, updated)
+        .await
+        .with_context(|| format!("write agent config {}", config_path.display()))?;
+    db.update_agent_hasn_id(agent_name, hasn_id)
+        .await
+        .with_context(|| format!("update users.db hasn_id for agent '{agent_name}'"))?;
+    Ok(())
+}
+
+pub async fn upsert_huanxing_native_local_agent(
+    config: &zeroclaw_config::schema::Config,
+    agent_name: &str,
+    hasn_id: &str,
+) -> anyhow::Result<()> {
+    let config_dir = resolve_config_dir(config);
+    let tenant_db = crate::db::TenantDb::open(&config.huanxing.resolve_db_path(&config_dir))?;
+    let record = tenant_db
+        .find_by_agent_id(agent_name)
+        .await?
+        .ok_or_else(|| anyhow!("agent '{agent_name}' not found in users.db"))?;
+
+    let workspace = config
+        .huanxing
+        .resolve_agent_workspace(&config_dir, record.tenant_dir.as_deref(), agent_name);
+    let owner_dir = config
+        .huanxing
+        .resolve_owner_dir(&config_dir, record.tenant_dir.as_deref());
+    let workspace_config = load_workspace_config(&workspace).await;
+    let display_name = workspace_config
+        .display_name
+        .clone()
+        .or_else(|| workspace_config.name.clone())
+        .or_else(|| {
+            workspace_config
+                .identity
+                .as_ref()
+                .and_then(|identity| identity.name.clone())
+        })
+        .unwrap_or_else(|| agent_name.to_string());
+    let system_prompt_path = {
+        let path = workspace.join("SOUL.md");
+        path.exists().then(|| path.display().to_string())
+    };
+    let metadata_json = serde_json::to_string(&serde_json::json!({
+        "tenant_dir": record.tenant_dir,
+        "workspace_dir": workspace.display().to_string(),
+        "owner_dir": owner_dir.display().to_string(),
+        "avatar_url": workspace_config.avatar_url(),
+        "default_model": workspace_config.default_model,
+        "default_provider": workspace_config.default_provider,
+        "template": record.template,
+    }))?;
+
+    let node_db = open_hasn_node_db(config)?;
+    let local_key = existing_local_agent_key(&node_db, agent_name)?
+        .unwrap_or_else(|| fallback_local_agent_key(agent_name));
+    let owner_id = record
+        .hasn_id
+        .clone()
+        .unwrap_or_else(|| record.user_id.clone());
+    let workspace_path = workspace.display().to_string();
+
+    node_db.upsert_local_agent(
+        &local_key,
+        &owner_id,
+        Some(hasn_id),
+        agent_name,
+        &display_name,
+        "huanxing_native",
+        Some("assistant"),
+        Some(&workspace_path),
+        None,
+        system_prompt_path.as_deref(),
+        &metadata_json,
+    )?;
+
+    Ok(())
+}
+
+pub async fn reconcile_huanxing_native_local_agents(
+    config: &zeroclaw_config::schema::Config,
+) -> anyhow::Result<usize> {
+    let config_dir = resolve_config_dir(config);
+    let tenant_db = crate::db::TenantDb::open(&config.huanxing.resolve_db_path(&config_dir))?;
+    let (users, _) = tenant_db
+        .list_users(&crate::db::UserFilter::default())
+        .await
+        .context("list huanxing users for hasn mirror reconcile")?;
+
+    let mut seen_users = std::collections::HashSet::new();
+    let mut mirrored = 0usize;
+
+    for user in users {
+        if !seen_users.insert(user.user_id.clone()) {
+            continue;
+        }
+
+        for agent in tenant_db.get_user_agents(&user.user_id).await? {
+            let Some(hasn_id) = agent.hasn_id.clone() else {
+                continue;
+            };
+
+            ensure_agent_hasn_id_dual_write(
+                &tenant_db,
+                config,
+                user.tenant_dir.as_deref(),
+                &agent.agent_id,
+                &hasn_id,
+            )
+            .await?;
+            upsert_huanxing_native_local_agent(config, &agent.agent_id, &hasn_id).await?;
+            mirrored += 1;
+        }
+    }
+
+    Ok(mirrored)
 }
 
 fn upsert_hasn_id_in_config(content: &str, hasn_id: &str) -> String {

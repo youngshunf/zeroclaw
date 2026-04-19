@@ -5,16 +5,19 @@
 //! 2. 构建标注化的注入提示词，让 Agent 能区分消息来源
 //! 3. 通过 Agent 运行时执行 turn 并将回复发回 HASN 网络
 
-use zeroclaw_gateway::AppState;
 use crate::hasn_chat_db::HasnChatDb;
 use crate::hasn_connector::HasnAgentSession;
 use crate::agent_bridge::global_bridge;
+use anyhow::Context;
 use hasn_client_core::model::{WsMessagePayload, build_send};
 use hasn_client_core::ws::HasnWsClient;
+use hasn_node::spawner::{InboundContext, ReplyChunk};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, mpsc};
+use zeroclaw_config::schema::Config;
+use zeroclaw_infra::session_backend::SessionBackend;
 
 // ═══════════════════════════════════════════════════════════════════
 // 消息来源分类
@@ -51,13 +54,33 @@ pub struct AnnotatedMessage {
 // ═══════════════════════════════════════════════════════════════════
 
 pub struct HasnAgentBridge {
-    app_state: Arc<AppState>,
+    config: Config,
+    session_backend: Option<Arc<dyn SessionBackend>>,
     chat_db: HasnChatDb,
+    sessions: Arc<RwLock<HashMap<String, Arc<HasnAgentSession>>>>,
 }
 
 impl HasnAgentBridge {
-    pub fn new(app_state: Arc<AppState>, chat_db: HasnChatDb) -> Self {
-        Self { app_state, chat_db }
+    pub fn new(
+        config: Config,
+        session_backend: Option<Arc<dyn SessionBackend>>,
+        chat_db: HasnChatDb,
+        sessions: Arc<RwLock<HashMap<String, Arc<HasnAgentSession>>>>,
+    ) -> Self {
+        Self {
+            config,
+            session_backend,
+            chat_db,
+            sessions,
+        }
+    }
+
+    fn config_dir(&self) -> std::path::PathBuf {
+        self.config
+            .config_path
+            .parent()
+            .unwrap_or(&self.config.workspace_dir)
+            .to_path_buf()
     }
 
     /// 分类消息来源并生成标注
@@ -70,9 +93,8 @@ impl HasnAgentBridge {
         message: &WsMessagePayload,
     ) -> AnnotatedMessage {
         // 检查发送者是否是 Agent 的 Owner
-        let config = self.app_state.config.lock().clone();
-        let config_dir = config.config_path.parent().unwrap_or(&config.workspace_dir).to_path_buf();
-        let db_path = config.huanxing.resolve_db_path(&config_dir);
+        let config_dir = self.config_dir();
+        let db_path = self.config.huanxing.resolve_db_path(&config_dir);
 
         // find_by_hasn_id(a_xxx) returns the TenantRecord of the owner
         // TenantRecord.hasn_id is the owner's human hasn_id (h_xxx)
@@ -150,43 +172,51 @@ impl HasnAgentBridge {
         )
     }
 
-    /// 注入消息到 Agent 运行时并流式回复
-    pub async fn inject_and_stream(
+    async fn dispatch_message_to_reply_chunks(
         &self,
         target_agent_id: &str,
         message: WsMessagePayload,
-        ws: Arc<HasnWsClient>,
-        sessions: Arc<RwLock<HashMap<String, Arc<HasnAgentSession>>>>,
-    ) {
+    ) -> anyhow::Result<mpsc::Receiver<ReplyChunk>> {
         let annotated = self.classify_and_annotate(target_agent_id, &message).await;
+        let (tx, rx) = mpsc::channel(32);
 
-        // 系统层权限执行: 拉黑直接丢弃
         if let HandlingInstruction::SilentDrop = annotated.handling_instruction {
             tracing::debug!(
                 "[HasnAgentBridge] Silent drop from blocked user: {}",
                 message.from_id
             );
-            return;
+            drop(tx);
+            return Ok(rx);
         }
 
         let injection_prompt = Self::build_injection_prompt(&annotated, &message);
         let session_id = message.conversation_id.clone();
         let from_id = message.from_id.clone();
-        let to_target = from_id.clone();
         let from_target = target_agent_id.to_string();
-        let app_state = self.app_state.clone();
+        let config = self.config.clone();
+        let session_backend = self.session_backend.clone();
+        let sessions = self.sessions.clone();
+        let db_clone = self.chat_db.clone();
 
-        // 获取或创建 Agent Session
-        let session = {
-            let mut lock = sessions.write().await;
-            if let Some(s) = lock.get(&session_id) {
-                s.clone()
-            } else {
-                let bridge = global_bridge();
-                if let Some(tenant) = bridge
-                    .resolve_tenant_by_hasn_id(&app_state, target_agent_id)
-                    .await
-                {
+        tokio::spawn(async move {
+            let bridge = global_bridge();
+            let Some(tenant) = bridge
+                .resolve_tenant_by_hasn_id_with_config(&config, &from_target)
+                .await
+            else {
+                let _ = tx
+                    .send(ReplyChunk::Error(
+                        "huanxing dispatch failed: tenant lookup".to_string(),
+                    ))
+                    .await;
+                return;
+            };
+
+            let session = {
+                let mut lock = sessions.write().await;
+                if let Some(existing) = lock.get(&session_id) {
+                    existing.clone()
+                } else {
                     match tenant.create_agent().await {
                         Ok(mut agent) => {
                             agent.set_memory_session_id(Some(session_id.clone()));
@@ -194,7 +224,7 @@ impl HasnAgentBridge {
                             let per_user_backend = tenant
                                 .session_manager
                                 .clone()
-                                .or_else(|| app_state.session_backend.clone());
+                                .or_else(|| session_backend.clone());
                             if let Some(ref backend) = per_user_backend {
                                 let history = backend.load(&session_key);
                                 if !history.is_empty() {
@@ -209,73 +239,45 @@ impl HasnAgentBridge {
                             lock.insert(session_id.clone(), new_session.clone());
                             new_session
                         }
-                        Err(e) => {
-                            tracing::error!("[HASN] Agent 创建失败: {}", e);
+                        Err(err) => {
+                            let _ = tx.send(reply_chunk_for_error(&err)).await;
                             return;
                         }
                     }
-                } else {
-                    tracing::warn!(
-                        "[HASN] 未找到 Agent TenantContext: {}",
-                        target_agent_id
-                    );
-                    return;
                 }
+            };
+
+            if let Some(ref backend) = session.session_backend {
+                let user_msg = zeroclaw_providers::ChatMessage::user(&injection_prompt);
+                let _ = backend.append(&session.session_key, &user_msg);
             }
-        };
 
-        // 持久化用户消息到 Agent 的 session backend
-        if let Some(ref backend) = session.session_backend {
-            let user_msg = zeroclaw_providers::ChatMessage::user(&injection_prompt);
-            let _ = backend.append(&session.session_key, &user_msg);
-        }
-
-        let db_clone = self.chat_db.clone();
-        // 异步执行 Agent turn + 流式回复
-        tokio::spawn(async move {
             let mut agent_lock = session.agent.lock().await;
             let (event_tx_ch, mut event_rx) =
-                tokio::sync::mpsc::channel::<zeroclaw_runtime::agent::TurnEvent>(100);
-
-            let rep_ws = ws.clone();
-            let rep_from = from_target.clone();
-            let rep_to = to_target.clone();
-
-            // 转发 AgentEvent → HASN WS 帧
+                mpsc::channel::<zeroclaw_runtime::agent::TurnEvent>(100);
+            let chunk_tx = tx.clone();
             tokio::spawn(async move {
                 while let Some(event) = event_rx.recv().await {
                     match event {
                         zeroclaw_runtime::agent::TurnEvent::ToolCall { name, args } => {
-                            let frame = build_send(
-                                &rep_from,
-                                &rep_to,
-                                serde_json::json!({
-                                    "tool_name": name,
-                                    "status": "running",
-                                    "args": args
-                                }),
-                                Some(6),
-                                None,
-                                None,
-                                None,
-                            );
-                            let _ = rep_ws.send_frame(&frame).await;
+                            let _ = chunk_tx
+                                .send(ReplyChunk::ToolCall {
+                                    tool_id: name.clone(),
+                                    tool_name: name,
+                                    status: "running".to_string(),
+                                    result: Some(args.to_string()),
+                                })
+                                .await;
                         }
                         zeroclaw_runtime::agent::TurnEvent::ToolResult { name, output } => {
-                            let frame = build_send(
-                                &rep_from,
-                                &rep_to,
-                                serde_json::json!({
-                                    "tool_name": name,
-                                    "status": "success",
-                                    "result": output
-                                }),
-                                Some(6),
-                                None,
-                                None,
-                                None,
-                            );
-                            let _ = rep_ws.send_frame(&frame).await;
+                            let _ = chunk_tx
+                                .send(ReplyChunk::ToolCall {
+                                    tool_id: name.clone(),
+                                    tool_name: name,
+                                    status: "success".to_string(),
+                                    result: Some(output),
+                                })
+                                .await;
                         }
                         _ => {}
                     }
@@ -284,55 +286,148 @@ impl HasnAgentBridge {
 
             match agent_lock.turn_streamed(&injection_prompt, event_tx_ch).await {
                 Ok(full_reply) => {
-                    let frame = hasn_client_core::model::build_send(
-                        &from_target,
-                        &to_target,
-                        serde_json::json!({"text": full_reply}),
-                        Some(1),
-                        None,
-                        None,
-                        None,
-                    );
-                    let _ = ws.send_frame(&frame).await;
-
                     if let Some(ref backend) = session.session_backend {
                         let ast_msg = zeroclaw_providers::ChatMessage::assistant(&full_reply);
                         let _ = backend.append(&session.session_key, &ast_msg);
                     }
 
-                    // ====== 本地聊天数据库双写保存 ======
                     let msg_id_str = format!("msg_{}", uuid::Uuid::new_v4());
                     let record = crate::hasn_chat_db::ChatMessageRecord {
                         id: 0,
                         message_id: msg_id_str,
                         conversation_id: session_id.clone(),
                         sender_id: from_target.clone(),
-                        receiver_id: to_target.clone(),
+                        receiver_id: from_id.clone(),
                         content_type: "text".to_string(),
-                        content: serde_json::to_string(&serde_json::json!({"text": full_reply})).unwrap_or_default(),
+                        content: serde_json::to_string(&serde_json::json!({ "text": full_reply }))
+                            .unwrap_or_default(),
                         status: "delivered".to_string(),
-                        is_outgoing: true, // as it's from local agent
-                        created_at: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+                        is_outgoing: true,
+                        created_at: chrono::Local::now()
+                            .format("%Y-%m-%d %H:%M:%S")
+                            .to_string(),
                     };
-                    if let Err(e) = db_clone.insert_message(&record).await {
-                        tracing::error!("[HasnAgentBridge] Failed to insert agent reply to hasn_chat.db: {}", e);
+                    if let Err(err) = db_clone.insert_message(&record).await {
+                        tracing::error!(
+                            "[HasnAgentBridge] Failed to insert agent reply to hasn_chat.db: {}",
+                            err
+                        );
                     }
+                    let _ = tx.send(ReplyChunk::Text(full_reply)).await;
+                    let _ = tx.send(ReplyChunk::Done).await;
                 }
-                Err(e) => {
-                    tracing::error!("[HASN] Agent turn 失败: {}", e);
-                    let err_msg = format!("[系统提示] Agent 会话失败: {}", e);
-                    let frame = hasn_client_core::model::build_send(
-                        &from_target,
-                        &to_target,
-                        serde_json::json!({"text": err_msg}),
-                        Some(1),
-                        None,
-                        None,
-                        None,
-                    );
-                    let _ = ws.send_frame(&frame).await;
+                Err(err) => {
+                    let _ = tx.send(reply_chunk_for_error(&err)).await;
                 }
             }
         });
+
+        Ok(rx)
+    }
+
+    pub async fn dispatch_to_reply_chunks(
+        &self,
+        ctx: &InboundContext,
+    ) -> anyhow::Result<mpsc::Receiver<ReplyChunk>> {
+        let mut message: WsMessagePayload = serde_json::from_value(ctx.raw.clone())
+            .context("failed to rebuild inbound payload for huanxing dispatch")?;
+        message.conversation_id = ctx.conversation_id.clone();
+        message.from_id = ctx.from_hasn_id.clone();
+        message.to_id = Some(ctx.agent_hasn_id.clone());
+        message.content = serde_json::json!({ "text": ctx.user_message });
+        self.dispatch_message_to_reply_chunks(&ctx.agent_hasn_id, message)
+            .await
+    }
+
+    /// 注入消息到 Agent 运行时并流式回复
+    pub async fn inject_and_stream(
+        &self,
+        target_agent_id: &str,
+        message: WsMessagePayload,
+        ws: Arc<HasnWsClient>,
+    ) {
+        let Ok(mut receiver) = self
+            .dispatch_message_to_reply_chunks(target_agent_id, message.clone())
+            .await
+        else {
+            let frame = build_send(
+                target_agent_id,
+                &message.from_id,
+                serde_json::json!({"text": "huanxing dispatch failed: tenant lookup"}),
+                Some(1),
+                Some("error"),
+                None,
+                None,
+            );
+            let _ = ws.send_frame(&frame).await;
+            return;
+        };
+
+        let from_target = target_agent_id.to_string();
+        let to_target = message.from_id.clone();
+        tokio::spawn(async move {
+            while let Some(chunk) = receiver.recv().await {
+                match chunk {
+                    ReplyChunk::Text(text) => {
+                        let frame = build_send(
+                            &from_target,
+                            &to_target,
+                            serde_json::json!({ "text": text }),
+                            Some(1),
+                            None,
+                            None,
+                            None,
+                        );
+                        let _ = ws.send_frame(&frame).await;
+                    }
+                    ReplyChunk::ToolCall {
+                        tool_id: _tool_id,
+                        tool_name,
+                        status,
+                        result,
+                    } => {
+                        let frame = build_send(
+                            &from_target,
+                            &to_target,
+                            serde_json::json!({
+                                "tool_name": tool_name,
+                                "status": status,
+                                "result": result,
+                            }),
+                            Some(6),
+                            None,
+                            None,
+                            None,
+                        );
+                        let _ = ws.send_frame(&frame).await;
+                    }
+                    ReplyChunk::Error(err) => {
+                        let frame = build_send(
+                            &from_target,
+                            &to_target,
+                            serde_json::json!({ "text": err }),
+                            Some(1),
+                            Some("error"),
+                            None,
+                            None,
+                        );
+                        let _ = ws.send_frame(&frame).await;
+                    }
+                    ReplyChunk::Done => break,
+                }
+            }
+        });
+    }
+}
+
+fn reply_chunk_for_error(err: &anyhow::Error) -> ReplyChunk {
+    let lowered = err.to_string().to_lowercase();
+    if ["busy", "queue", "lock", "capacity", "resource", "semaphore", "limit"]
+        .iter()
+        .any(|needle| lowered.contains(needle))
+    {
+        ReplyChunk::Error("busy, retry later".to_string())
+    } else {
+        ReplyChunk::Error(format!("huanxing dispatch failed: {err}"))
     }
 }

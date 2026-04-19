@@ -1,35 +1,146 @@
-//! HuanxingNativeSpawner — 唤星原生 Agent 进程内桥接骨架
+//! HuanxingNativeSpawner — 唤星原生 Agent 进程内桥接层
 //!
-//! Phase 2: 只实现 trait 接口，dispatch 返回 todo!()
-//! Phase 5: 填充 AgentFactory 调用逻辑
-//!
-//! 设计要点（per COMP-03）:
-//! - 进程内直接调用，零 HTTP / IPC 开销
-//! - 通过 hasn_node::spawner::AgentSpawner trait 桥接
-//! - Phase 5 注入 AgentFactory 后实现完整 dispatch
+//! Phase 5 将 Phase 2 的 trait 骨架升级为真实的 embedded bridge：
+//! - 继续复用 zeroclaw-huanxing 既有 tenant/session/runtime 逻辑
+//! - 通过 hasn-node 的 generic `ReplyChunk` 合同把结果回交给路由层
+//! - 不在 spawner 内直接写 WS 帧，也不额外引入 HTTP / IPC 回环
+
+use std::collections::HashMap;
+use std::sync::Arc;
 
 use async_trait::async_trait;
+use hasn_node::node::Node;
 use hasn_node::spawner::{AgentSpawner, InboundContext, ReplyChunk};
-use tokio::sync::mpsc;
+use tokio::sync::{RwLock, mpsc};
+use zeroclaw_config::schema::Config;
+use zeroclaw_infra::session_backend::SessionBackend;
 
-/// 唤星原生 Spawner — 进程内直接调用 AgentFactory（零 IPC 开销）
-///
-/// Phase 2 骨架：trait 编译验证 + SpawnerRegistry 注册验证
-/// Phase 5 填充：注入 AgentFactory，dispatch 调用生成响应流
+use crate::hasn_agent_bridge::HasnAgentBridge;
+use crate::hasn_chat_db::HasnChatDb;
+use crate::hasn_connector::HasnAgentSession;
+
+#[derive(Clone)]
+struct HuanxingNativeRuntime {
+    config: Config,
+    session_backend: Option<Arc<dyn SessionBackend>>,
+}
+
+fn runtime_slot() -> &'static std::sync::Mutex<Option<HuanxingNativeRuntime>> {
+    static SLOT: std::sync::OnceLock<std::sync::Mutex<Option<HuanxingNativeRuntime>>> =
+        std::sync::OnceLock::new();
+    SLOT.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+fn embedded_node_slot() -> &'static std::sync::Mutex<Option<Arc<Node>>> {
+    static SLOT: std::sync::OnceLock<std::sync::Mutex<Option<Arc<Node>>>> =
+        std::sync::OnceLock::new();
+    SLOT.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+fn current_runtime() -> anyhow::Result<HuanxingNativeRuntime> {
+    runtime_slot()
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("huanxing native runtime not configured"))
+}
+
+pub fn configure_huanxing_native_runtime(
+    config: Config,
+    session_backend: Option<Arc<dyn SessionBackend>>,
+) {
+    *runtime_slot().lock().unwrap() = Some(HuanxingNativeRuntime {
+        config,
+        session_backend,
+    });
+}
+
+pub fn initialize_embedded_huanxing_node(config: &Config) -> anyhow::Result<Arc<Node>> {
+    if let Some(node) = embedded_node_slot().lock().unwrap().clone() {
+        return Ok(node);
+    }
+
+    let config_path = config.config_path.to_string_lossy().to_string();
+    let node_config = hasn_node::config::NodeConfig::load(&config_path)?;
+    let node = Arc::new(Node::new(node_config)?);
+    if let Err(err) = node.load_spawners_from_db() {
+        tracing::warn!(error = %err, "加载 hasn-node spawner 配置失败（非阻塞）");
+    }
+
+    *embedded_node_slot().lock().unwrap() = Some(node.clone());
+    Ok(node)
+}
+
+/// 唤星原生 Spawner —— 复用既有桥接逻辑的薄 trait 壳
 pub struct HuanxingNativeSpawner {
-    // Phase 5 添加: agent_factory: Arc<AgentFactory>
+    config: Config,
+    session_backend: Option<Arc<dyn SessionBackend>>,
+    sessions: Arc<RwLock<HashMap<String, Arc<HasnAgentSession>>>>,
 }
 
 impl HuanxingNativeSpawner {
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(config: Config, session_backend: Option<Arc<dyn SessionBackend>>) -> Self {
+        Self {
+            config,
+            session_backend,
+            sessions: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    fn config_dir(&self) -> std::path::PathBuf {
+        self.config
+            .config_path
+            .parent()
+            .unwrap_or(&self.config.workspace_dir)
+            .to_path_buf()
+    }
+
+    fn fallback_chat_db_path(&self) -> std::path::PathBuf {
+        self.config_dir().join("data").join("hasn_chat.db")
+    }
+
+    async fn chat_db_for_hasn_id(&self, hasn_id: &str) -> anyhow::Result<HasnChatDb> {
+        let config_dir = self.config_dir();
+        let db_path = self.config.huanxing.resolve_db_path(&config_dir);
+        let chat_db_path = match crate::db::TenantDb::open(&db_path) {
+            Ok(db) => match db.find_by_hasn_id(hasn_id).await {
+                Ok(Some(record)) => self
+                    .config
+                    .huanxing
+                    .resolve_tenant_root(&config_dir, record.tenant_dir.as_deref())
+                    .join("data")
+                    .join("hasn_chat.db"),
+                _ => self.fallback_chat_db_path(),
+            },
+            Err(_) => self.fallback_chat_db_path(),
+        };
+        HasnChatDb::open(&chat_db_path)
+    }
+
+    fn bridge(&self, chat_db: HasnChatDb) -> HasnAgentBridge {
+        HasnAgentBridge::new(
+            self.config.clone(),
+            self.session_backend.clone(),
+            chat_db,
+            self.sessions.clone(),
+        )
     }
 }
 
 impl Default for HuanxingNativeSpawner {
     fn default() -> Self {
-        Self::new()
+        let runtime = current_runtime().expect("huanxing native runtime must be configured");
+        Self::new(runtime.config, runtime.session_backend)
     }
+}
+
+pub async fn register_huanxing_native_spawner(node: Arc<Node>) -> anyhow::Result<()> {
+    let runtime = current_runtime()?;
+    let spawner = Arc::new(HuanxingNativeSpawner::new(
+        runtime.config,
+        runtime.session_backend,
+    ));
+    node.register_spawner(spawner).await
 }
 
 #[async_trait]
@@ -38,43 +149,618 @@ impl AgentSpawner for HuanxingNativeSpawner {
         "huanxing_native"
     }
 
-    async fn dispatch(
-        &self,
-        _ctx: InboundContext,
-    ) -> anyhow::Result<mpsc::Receiver<ReplyChunk>> {
-        todo!("Phase 5 实现：通过 AgentFactory 进程内调用唤星 Agent 生成响应")
+    async fn dispatch(&self, ctx: InboundContext) -> anyhow::Result<mpsc::Receiver<ReplyChunk>> {
+        let chat_db = self.chat_db_for_hasn_id(&ctx.agent_hasn_id).await?;
+        self.bridge(chat_db).dispatch_to_reply_chunks(&ctx).await
     }
 
     async fn probe(&self) -> bool {
-        // Phase 5 改为检查 AgentFactory 是否就绪
-        true
+        let config_dir = self.config_dir();
+        self.config.huanxing.enabled
+            && config_dir.exists()
+            && self
+                .config
+                .huanxing
+                .resolve_db_path(&config_dir)
+                .parent()
+                .map(std::path::Path::exists)
+                .unwrap_or(false)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use std::sync::Arc;
+    use std::time::Duration;
+
+    use axum::{
+        Router,
+        extract::{
+            State,
+            ws::{Message, WebSocketUpgrade},
+        },
+        response::IntoResponse,
+        routing::get,
+    };
+    use futures_util::{SinkExt, StreamExt};
+    use serde_json::json;
+    use tokio::sync::{Mutex, mpsc as unbounded_mpsc};
+
+    use hasn_node::config::NodeConfig;
+    use hasn_node::connector::HasnConnector;
     use hasn_node::spawner::SpawnerRegistry;
+    use zeroclaw_infra::session_backend::SessionBackend;
+    use zeroclaw_providers::ChatMessage;
+
+    #[derive(Default)]
+    struct MockHasnState {
+        outbound_frames: Arc<Mutex<Vec<serde_json::Value>>>,
+        inbound_tx: Arc<Mutex<Option<unbounded_mpsc::UnboundedSender<String>>>>,
+    }
+
+    fn test_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(())).lock().unwrap()
+    }
+
+    fn test_config(config_dir: &std::path::Path) -> Config {
+        let mut config = Config::default();
+        config.huanxing.enabled = true;
+        config.config_path = config_dir.join("config.toml");
+        config.workspace_dir = config_dir.join("workspace");
+        config.knowledge.enabled = false;
+        config
+    }
+
+    fn write_node_config(config: &Config, data_dir: &std::path::Path) {
+        std::fs::create_dir_all(data_dir).unwrap();
+        std::fs::write(
+            &config.config_path,
+            format!(
+                "[node]\ndata_dir = \"{}\"\n\n[connection]\nowner_api_key = \"hasn_ok_test_owner\"\n",
+                data_dir.display()
+            ),
+        )
+        .unwrap();
+    }
+
+    async fn create_workspace_tree(
+        config_dir: &std::path::Path,
+        tenant_dir: &str,
+        agent_id: &str,
+    ) -> (std::path::PathBuf, std::path::PathBuf) {
+        let owner_dir = config_dir.join("users").join(tenant_dir).join("workspace");
+        let agent_wrapper = config_dir
+            .join("users")
+            .join(tenant_dir)
+            .join("agents")
+            .join(agent_id);
+        let agent_workspace = agent_wrapper.join("workspace");
+        tokio::fs::create_dir_all(&owner_dir).await.unwrap();
+        tokio::fs::create_dir_all(&agent_workspace).await.unwrap();
+        tokio::fs::write(owner_dir.join("USER.md"), "# User\n")
+            .await
+            .unwrap();
+        tokio::fs::write(agent_workspace.join("SOUL.md"), "# Soul\n")
+            .await
+            .unwrap();
+        tokio::fs::write(
+            agent_wrapper.join("config.toml"),
+            format!(
+                "display_name = \"{}\"\n[agent]\nhasn_id = \"pending\"\n",
+                agent_id
+            ),
+        )
+        .await
+        .unwrap();
+        (owner_dir, agent_workspace)
+    }
+
+    async fn seed_tenant(
+        config_dir: &std::path::Path,
+        tenant_dir: &str,
+        agent_id: &str,
+        owner_hasn_id: &str,
+        agent_hasn_id: &str,
+    ) {
+        let db_path = config_dir.join("data").join("users.db");
+        let db = crate::db::TenantDb::open(&db_path).unwrap();
+        db.save_user_full(
+            "user-1",
+            "13800000000",
+            agent_id,
+            Some("Tester"),
+            "assistant",
+            Some("Star"),
+            None,
+            Some(tenant_dir),
+            Some(owner_hasn_id),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(db.update_agent_hasn_id(agent_id, agent_hasn_id).await.unwrap());
+    }
+
+    fn build_node_config(data_dir: &std::path::Path) -> NodeConfig {
+        let mut config = NodeConfig::default();
+        config.node.data_dir = Some(data_dir.display().to_string());
+        config.connection.owner_api_key = Some("hasn_ok_test_owner".to_string());
+        config
+    }
+
+    fn owner_setup(node: &Arc<Node>, owner_id: &str) {
+        node.db
+            .upsert_owner(owner_id, Some(owner_id), Some("Demo Owner"), Some("hasn_ok_test"))
+            .unwrap();
+    }
+
+    fn inbound_context(agent_hasn_id: &str, conversation_id: &str, from_id: &str) -> InboundContext {
+        InboundContext {
+            owner_id: "h_owner_demo".to_string(),
+            agent_hasn_id: agent_hasn_id.to_string(),
+            conversation_id: conversation_id.to_string(),
+            from_hasn_id: from_id.to_string(),
+            user_message: "hello from hasn".to_string(),
+            local_agent: hasn_core::model::local::DispatchLocalAgent {
+                local_key: format!("huanxing_native::{agent_hasn_id}"),
+                owner_id: "h_owner_demo".to_string(),
+                hasn_id: Some(agent_hasn_id.to_string()),
+                agent_name: "default".to_string(),
+                display_name: "Default Agent".to_string(),
+                source_type: "huanxing_native".to_string(),
+                role: Some("assistant".to_string()),
+                workspace_path: None,
+                native_project_path: None,
+                system_prompt_path: None,
+                metadata_json: serde_json::json!({"tenant_dir": "001-13800000000"}),
+            },
+            raw: serde_json::json!({
+                "id": 1,
+                "conversation_id": conversation_id,
+                "from_id": from_id,
+                "to_id": agent_hasn_id,
+                "content": { "text": "hello from hasn" },
+                "content_type": 1,
+                "created_time": "2026-04-19T00:00:00Z",
+                "self_sent": false
+            }),
+        }
+    }
+
+    async fn drain_chunks(mut rx: mpsc::Receiver<ReplyChunk>) -> Vec<ReplyChunk> {
+        let mut chunks = Vec::new();
+        while let Ok(Some(chunk)) = tokio::time::timeout(Duration::from_secs(2), rx.recv()).await {
+            let done = matches!(chunk, ReplyChunk::Done);
+            chunks.push(chunk);
+            if done {
+                break;
+            }
+        }
+        chunks
+    }
+
+    struct MemoryBackend {
+        inner: Arc<std::sync::Mutex<HashMap<String, Vec<ChatMessage>>>>,
+    }
+
+    impl Default for MemoryBackend {
+        fn default() -> Self {
+            Self {
+                inner: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            }
+        }
+    }
+
+    impl SessionBackend for MemoryBackend {
+        fn load(&self, session_key: &str) -> Vec<ChatMessage> {
+            self.inner
+                .lock()
+                .unwrap()
+                .get(session_key)
+                .cloned()
+                .unwrap_or_default()
+        }
+
+        fn append(&self, session_key: &str, message: &ChatMessage) -> std::io::Result<()> {
+            self.inner
+                .lock()
+                .unwrap()
+                .entry(session_key.to_string())
+                .or_default()
+                .push(message.clone());
+            Ok(())
+        }
+
+        fn remove_last(&self, session_key: &str) -> std::io::Result<bool> {
+            let removed = self
+                .inner
+                .lock()
+                .unwrap()
+                .get_mut(session_key)
+                .and_then(Vec::pop)
+                .is_some();
+            Ok(removed)
+        }
+
+        fn list_sessions(&self) -> Vec<String> {
+            self.inner.lock().unwrap().keys().cloned().collect()
+        }
+    }
+
+    async fn spawn_mock_hasn_server() -> (String, Arc<MockHasnState>) {
+        let state = Arc::new(MockHasnState::default());
+
+        async fn ws_handler(
+            State(state): State<Arc<MockHasnState>>,
+            ws: WebSocketUpgrade,
+        ) -> impl IntoResponse {
+            ws.on_upgrade(move |socket| async move {
+                let (mut sender, mut receiver) = socket.split();
+                let (server_tx, mut server_rx) = unbounded_mpsc::unbounded_channel::<String>();
+                *state.inbound_tx.lock().await = Some(server_tx);
+
+                let sender_task = tokio::spawn(async move {
+                    while let Some(text) = server_rx.recv().await {
+                        if sender.send(Message::Text(text.into())).await.is_err() {
+                            break;
+                        }
+                    }
+                });
+
+                let connected = json!({
+                    "hasn": "hasn/2.0",
+                    "method": "hasn.connected",
+                    "params": {
+                        "node_id": "n_test_runtime",
+                        "node_type": "desktop",
+                        "server_time": "2026-04-19T00:00:00Z",
+                        "owner_id": "h_owner_demo",
+                        "owner_count": 1,
+                        "agent_count": 0
+                    }
+                });
+                let _ = state_send_frame(&state, connected).await;
+
+                while let Some(Ok(Message::Text(text))) = receiver.next().await {
+                    let frame: serde_json::Value = serde_json::from_str(&text).unwrap();
+                    state.outbound_frames.lock().await.push(frame);
+                }
+
+                sender_task.abort();
+            })
+        }
+
+        let router = Router::new()
+            .route("/api/v1/hasn/ws/node", get(ws_handler))
+            .with_state(state.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+
+        (format!("ws://{addr}/api/v1/hasn/ws/node"), state)
+    }
+
+    async fn wait_for<F, Fut>(timeout: Duration, mut predicate: F)
+    where
+        F: FnMut() -> Fut,
+        Fut: std::future::Future<Output = bool>,
+    {
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            if predicate().await {
+                return;
+            }
+            assert!(tokio::time::Instant::now() < deadline, "condition timed out");
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    async fn state_send_frame(
+        state: &Arc<MockHasnState>,
+        frame: serde_json::Value,
+    ) -> anyhow::Result<()> {
+        wait_for(Duration::from_secs(3), || {
+            let state = state.clone();
+            async move { state.inbound_tx.lock().await.is_some() }
+        })
+        .await;
+
+        let sender = state
+            .inbound_tx
+            .lock()
+            .await
+            .clone()
+            .expect("inbound sender should exist");
+        sender.send(frame.to_string())?;
+        Ok(())
+    }
+
+    async fn push_inbound_message(
+        state: &Arc<MockHasnState>,
+        message_id: i64,
+        conversation_id: &str,
+        to_id: &str,
+        text: &str,
+        from_owner_id: Option<&str>,
+        to_owner_id: Option<&str>,
+    ) {
+        let frame = json!({
+            "hasn": "hasn/2.0",
+            "method": "hasn.message.received",
+            "params": {
+                "to_id": to_id,
+                "message": {
+                    "id": message_id,
+                    "conversation_id": conversation_id,
+                    "from_id": "u_sender",
+                    "from_type": 1,
+                    "to_id": to_id,
+                    "content": { "text": text },
+                    "content_type": 1,
+                    "created_time": "2026-04-19T00:00:00Z",
+                    "self_sent": false,
+                    "from_owner_id": from_owner_id,
+                    "to_owner_id": to_owner_id
+                }
+            }
+        });
+        state_send_frame(state, frame).await.unwrap();
+    }
+
+    async fn connect_test_connector(node: Arc<Node>, ws_url: &str) -> Arc<HasnConnector> {
+        let connector = Arc::new(HasnConnector::new(node.clone(), node.chat_db.clone()));
+        let params = node.build_v21_connect_params(Some(ws_url), None).unwrap();
+        connector
+            .connect(&params.url, params.auth_headers)
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        connector
+    }
+
+    async fn wait_for_add_agent(state: &Arc<MockHasnState>, hasn_id: &str) {
+        wait_for(Duration::from_secs(3), || {
+            let state = state.clone();
+            let hasn_id = hasn_id.to_string();
+            async move {
+                state.outbound_frames.lock().await.iter().any(|frame| {
+                    frame["method"] == "hasn.node.add_agent"
+                        && frame["params"]["agent_id"] == hasn_id
+                })
+            }
+        })
+        .await;
+    }
+
+    fn collect_sent_texts(frames: &[serde_json::Value], msg_type: &str) -> Vec<String> {
+        frames
+            .iter()
+            .filter(|frame| {
+                frame["method"] == "hasn.message.send" && frame["params"]["type"] == msg_type
+            })
+            .filter_map(|frame| {
+                frame["params"]["content"]["text"]
+                    .as_str()
+                    .map(ToOwned::to_owned)
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn test_register_huanxing_native_spawner() {
+        let _guard = test_lock();
+        let temp = tempfile::tempdir().unwrap();
+        let config = test_config(temp.path());
+        write_node_config(&config, &temp.path().join("hasn-node"));
+        configure_huanxing_native_runtime(config.clone(), None);
+
+        let node = Arc::new(Node::new(build_node_config(&temp.path().join("hasn-node"))).unwrap());
+        register_huanxing_native_spawner(node.clone()).await.unwrap();
+
+        assert!(node.spawner_registry.read().await.get("huanxing_native").is_some());
+    }
+
+    #[tokio::test]
+    async fn silent_drop_stays_policy_only() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = test_config(temp.path());
+        write_node_config(&config, &temp.path().join("hasn-node"));
+        let tenant_dir = "001-13800000000";
+        let agent_id = "default";
+        let agent_hasn_id = "a_huanxing_agent_1";
+        create_workspace_tree(temp.path(), tenant_dir, agent_id).await;
+        seed_tenant(temp.path(), tenant_dir, agent_id, "h_owner_demo", agent_hasn_id).await;
+
+        let chat_db = HasnChatDb::open(
+            &temp
+                .path()
+                .join("users")
+                .join(tenant_dir)
+                .join("data")
+                .join("hasn_chat.db"),
+        )
+        .unwrap();
+        chat_db
+            .upsert_contact(&crate::hasn_chat_db::ContactRecord {
+                hasn_id: "u_blocked".to_string(),
+                nickname: Some("Blocked".to_string()),
+                avatar_url: None,
+                contact_type: "human".to_string(),
+                relation_type: "social".to_string(),
+                trust_level: 0,
+                status: "blocked".to_string(),
+                created_at: "2026-04-19 00:00:00".to_string(),
+            })
+            .await
+            .unwrap();
+
+        let spawner = HuanxingNativeSpawner::new(config, None);
+        let rx = spawner
+            .dispatch(inbound_context(agent_hasn_id, "c_silent", "u_blocked"))
+            .await
+            .unwrap();
+        let chunks = drain_chunks(rx).await;
+
+        assert!(chunks.is_empty());
+        assert_eq!(spawner.sessions.read().await.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn tenant_lookup_failure_surfaces_error_chunk() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = test_config(temp.path());
+        write_node_config(&config, &temp.path().join("hasn-node"));
+
+        let spawner = HuanxingNativeSpawner::new(config, None);
+        let mut rx = spawner
+            .dispatch(inbound_context("a_missing_agent", "c_missing", "u_sender"))
+            .await
+            .unwrap();
+
+        let chunk = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .unwrap()
+            .expect("error chunk expected");
+        assert!(matches!(
+            chunk,
+            ReplyChunk::Error(ref err) if err == "huanxing dispatch failed: tenant lookup"
+        ));
+    }
+
+    #[tokio::test]
+    async fn dispatch_reuses_session_for_same_conversation() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = test_config(temp.path());
+        write_node_config(&config, &temp.path().join("hasn-node"));
+        let tenant_dir = "001-13800000000";
+        let agent_id = "default";
+        let agent_hasn_id = "a_huanxing_agent_1";
+        create_workspace_tree(temp.path(), tenant_dir, agent_id).await;
+        seed_tenant(temp.path(), tenant_dir, agent_id, "h_owner_demo", agent_hasn_id).await;
+
+        let backend: Arc<dyn SessionBackend> = Arc::new(MemoryBackend::default());
+        let spawner = HuanxingNativeSpawner::new(config, Some(backend));
+
+        let rx1 = spawner
+            .dispatch(inbound_context(agent_hasn_id, "c_reuse", "u_sender"))
+            .await
+            .unwrap();
+        wait_for(Duration::from_secs(3), || {
+            let sessions = spawner.sessions.clone();
+            async move { sessions.read().await.contains_key("c_reuse") }
+        })
+        .await;
+        let first_session = spawner
+            .sessions
+            .read()
+            .await
+            .get("c_reuse")
+            .cloned()
+            .expect("first session should exist");
+        let _ = drain_chunks(rx1).await;
+
+        let rx2 = spawner
+            .dispatch(inbound_context(agent_hasn_id, "c_reuse", "u_sender"))
+            .await
+            .unwrap();
+        wait_for(Duration::from_secs(3), || {
+            let sessions = spawner.sessions.clone();
+            async move { sessions.read().await.len() == 1 }
+        })
+        .await;
+        let second_session = spawner
+            .sessions
+            .read()
+            .await
+            .get("c_reuse")
+            .cloned()
+            .expect("second session should exist");
+        let _ = drain_chunks(rx2).await;
+
+        assert!(Arc::ptr_eq(&first_session, &second_session));
+        assert_eq!(spawner.sessions.read().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn onboarded_huanxing_row_dispatches_to_huanxing_native_spawner() {
+        let _guard = test_lock();
+        let temp = tempfile::tempdir().unwrap();
+        let (ws_url, state) = spawn_mock_hasn_server().await;
+        let config = test_config(temp.path());
+        let hasn_data_dir = temp.path().join("hasn-node");
+        write_node_config(&config, &hasn_data_dir);
+        let tenant_dir = "001-13800000000";
+        let agent_id = "default";
+        let agent_hasn_id = "a_huanxing_agent_1";
+        create_workspace_tree(temp.path(), tenant_dir, agent_id).await;
+        seed_tenant(temp.path(), tenant_dir, agent_id, "h_owner_demo", agent_hasn_id).await;
+        configure_huanxing_native_runtime(config.clone(), None);
+
+        let mut node_config = build_node_config(&hasn_data_dir);
+        node_config.connection.server_url = Some(ws_url.clone());
+        let node = Arc::new(Node::new(node_config).unwrap());
+        owner_setup(&node, "h_owner_demo");
+        crate::api_agents::upsert_huanxing_native_local_agent(&config, agent_id, agent_hasn_id)
+            .await
+            .unwrap();
+        register_huanxing_native_spawner(node.clone()).await.unwrap();
+
+        let local_agent = node
+            .db
+            .find_active_local_agent_by_hasn_id(agent_hasn_id)
+            .unwrap()
+            .expect("mirrored local agent row should exist");
+        assert_eq!(local_agent.source_type, "huanxing_native");
+
+        let _connector = connect_test_connector(node.clone(), &ws_url).await;
+        wait_for_add_agent(&state, agent_hasn_id).await;
+
+        push_inbound_message(
+            &state,
+            1,
+            "c_onboarded",
+            agent_hasn_id,
+            "hello huanxing",
+            Some("h_wrong_from"),
+            Some("h_wrong_to"),
+        )
+        .await;
+
+        wait_for(Duration::from_secs(3), || {
+            let state = state.clone();
+            async move {
+                collect_sent_texts(&state.outbound_frames.lock().await, "error")
+                    .iter()
+                    .any(|text| {
+                        text.starts_with("huanxing dispatch failed:")
+                            || text == "busy, retry later"
+                    })
+            }
+        })
+        .await;
+
+        let frames = state.outbound_frames.lock().await.clone();
+        let error_texts = collect_sent_texts(&frames, "error");
+        assert!(error_texts.iter().any(|text| {
+            text.starts_with("huanxing dispatch failed:") || text == "busy, retry later"
+        }));
+        assert!(!error_texts.iter().any(|text| {
+            text.contains("spawner 'huanxing_native' not registered")
+        }));
+    }
 
     #[test]
-    fn test_register_huanxing_native_spawner() {
+    fn spawner_name_is_stable() {
         let mut registry = SpawnerRegistry::new();
-        let spawner = Arc::new(HuanxingNativeSpawner::new());
+        let spawner = Arc::new(HuanxingNativeSpawner::new(Config::default(), None));
         registry.register(spawner);
         assert!(registry.get("huanxing_native").is_some());
         assert_eq!(registry.list_names(), vec!["huanxing_native"]);
-    }
-
-    #[test]
-    fn test_spawner_name() {
-        let spawner = HuanxingNativeSpawner::new();
-        assert_eq!(spawner.name(), "huanxing_native");
-    }
-
-    #[test]
-    fn test_default_impl() {
-        let spawner = HuanxingNativeSpawner::default();
-        assert_eq!(spawner.name(), "huanxing_native");
     }
 }

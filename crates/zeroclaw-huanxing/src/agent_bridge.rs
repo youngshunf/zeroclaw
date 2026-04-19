@@ -8,6 +8,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
+use zeroclaw_config::schema::Config;
 use zeroclaw_gateway::AppState;
 use crate::TenantContext;
 
@@ -15,6 +16,12 @@ use crate::TenantContext;
 pub struct AgentBridge {
     /// hasn_id → TenantContext 缓存
     hasn_id_cache: Mutex<HashMap<String, Arc<TenantContext>>>,
+}
+
+impl Default for AgentBridge {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AgentBridge {
@@ -33,19 +40,33 @@ impl AgentBridge {
         state: &AppState,
         hasn_id: &str,
     ) -> Option<Arc<TenantContext>> {
+        let config = state.config.lock().clone();
+        self.resolve_tenant_by_hasn_id_with_config(&config, hasn_id)
+            .await
+    }
+
+    pub async fn resolve_tenant_by_hasn_id_with_config(
+        &self,
+        config: &Config,
+        hasn_id: &str,
+    ) -> Option<Arc<TenantContext>> {
         // 1. 先查缓存
+        let mut stale_cache = false;
         {
             let cache = self.hasn_id_cache.lock().await;
             if let Some(ctx) = cache.get(hasn_id) {
                 if ctx.workspace_dir.exists() {
                     return Some(ctx.clone());
                 }
+                stale_cache = true;
             }
+        }
+        if stale_cache {
+            self.hasn_id_cache.lock().await.remove(hasn_id);
         }
 
         // 2. 统一通过 TenantContext 解析
-        let config = state.config.lock().clone();
-        match TenantContext::load_by_hasn_id(&config, hasn_id).await {
+        match TenantContext::load_by_hasn_id(config, hasn_id).await {
             Ok(Some(ctx)) if ctx.workspace_dir.exists() => {
                 debug!(
                     hasn_id,
@@ -175,22 +196,19 @@ impl AgentBridge {
         let tx_clone = tx.clone();
         tokio::spawn(async move {
             while let Some(event) = event_rx.recv().await {
-                match event {
-                    zeroclaw_runtime::agent::TurnEvent::Chunk { delta, .. } => {
-                        let _ = tx_clone.send(delta);
-                    }
-                    _ => {}
+                if let zeroclaw_runtime::agent::TurnEvent::Chunk { delta, .. } = event {
+                    let _ = tx_clone.send(delta);
                 }
             }
         });
 
         let full_reply = agent.turn_streamed(message, event_tx).await?;
 
-        if let Some(ref backend) = per_user_backend {
-            if !full_reply.is_empty() {
-                let assistant_msg = zeroclaw_providers::ChatMessage::assistant(&full_reply);
-                let _ = backend.append(&session_key, &assistant_msg);
-            }
+        if let Some(ref backend) = per_user_backend
+            && !full_reply.is_empty()
+        {
+            let assistant_msg = zeroclaw_providers::ChatMessage::assistant(&full_reply);
+            let _ = backend.append(&session_key, &assistant_msg);
         }
 
         Ok(())
