@@ -717,6 +717,25 @@ impl TenantDb {
         Ok(rows > 0)
     }
 
+    /// Update the HASN Human ID by tenant_dir.
+    ///
+    /// 桌面端在云端注册拿到 `hasn_id` 后调用 `PUT /api/huanxing/user/hasn_id`，
+    /// sidecar 通过 `x-tenant-dir` header（或 `get_first_tenant_dir` 回退）
+    /// 解析当前租户，再通过本方法把 hasn_id 落进 `users.db`，消除
+    /// `hasn_router::resolve_user_chat_db` 的 "Unknown human hasn_id" 400。
+    pub async fn update_user_hasn_id_by_tenant_dir(
+        &self,
+        tenant_dir: &str,
+        hasn_id: &str,
+    ) -> Result<bool> {
+        let conn = self.conn.lock().await;
+        let rows = conn.execute(
+            "UPDATE users SET hasn_id = ?1, updated_at = datetime('now') WHERE tenant_dir = ?2",
+            rusqlite::params![hasn_id, tenant_dir],
+        )?;
+        Ok(rows > 0)
+    }
+
     pub async fn update_user(
         &self,
         user_id: &str,

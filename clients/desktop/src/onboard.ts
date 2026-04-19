@@ -347,6 +347,13 @@ export async function registerHasnIdentity(session: HuanxingSession): Promise<Ha
 
   if (data.human?.hasn_id) {
     localStorage.setItem("hasn:hasn_id", data.human.hasn_id);
+    // 把 hasn_id 落进本地 sidecar 的 users.db，让 hasn_router::resolve_user_chat_db
+    // 能按 hasn_id 反查 tenant_dir；失败不打断云端注册结果（下次启动自动重试）。
+    try {
+      await writeUserHasnBinding(data.human.hasn_id);
+    } catch (e) {
+      console.warn('[onboard] 本地 users.db 回填 hasn_id 失败（非致命）:', e);
+    }
   }
 
   // 后端返回了 node_key → 更新 session（供后续使用）
@@ -515,6 +522,29 @@ export async function registerHasnAgent(
   clearPendingAgentHasnRetry(agentName);
 
   return result;
+}
+
+/**
+ * 将用户的 hasn_id 回填到本地 sidecar 的 users.db.users.hasn_id 列。
+ *
+ * Phase 05-04c gap-closure：云端 `/api/v1/hasn/app/auth/register` 返回 hasn_id
+ * 后，本函数把它落进 `~/.huanxing/data/users.db`，让 `hasn_router`
+ * 的 `resolve_user_chat_db` 能按 hasn_id 反查 tenant_dir，消除
+ * `/api/v1/hasn/chat/{sessions,contacts}` 的 400 "Unknown human hasn_id"。
+ *
+ * 幂等：相同 hasn_id 多次调用均返回 200。
+ */
+async function writeUserHasnBinding(hasnId: string): Promise<void> {
+  const sidecarBase = import.meta.env.DEV ? '' : HUANXING_CONFIG.sidecarBaseUrl;
+  const resp = await fetch(`${sidecarBase}/api/huanxing/user/hasn_id`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ hasn_id: hasnId }),
+  });
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => '');
+    throw new Error(`回写本地 User HASN 绑定失败 (${resp.status}): ${text}`);
+  }
 }
 
 /**

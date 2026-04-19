@@ -15,17 +15,127 @@ use axum::{
     extract::State,
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
-    routing::get,
+    routing::{get, put},
 };
+use serde::Deserialize;
 
 use zeroclaw_gateway::AppState;
 
 /// 返回用户级配置路由集合。
 pub fn user_config_routes() -> Router<AppState> {
-    Router::new().route(
-        "/api/user-config",
-        get(handle_user_config_get).put(handle_user_config_put),
+    Router::new()
+        .route(
+            "/api/user-config",
+            get(handle_user_config_get).put(handle_user_config_put),
+        )
+        .route(
+            "/api/huanxing/user/hasn_id",
+            put(handle_user_hasn_id_put),
+        )
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateUserHasnIdRequest {
+    hasn_id: String,
+}
+
+/// PUT /api/huanxing/user/hasn_id
+///
+/// 桌面端完成云端 HASN 注册后调用；把云端返回的 `hasn_id` 落进本地
+/// `users.db.users.hasn_id` 列。幂等：相同 hasn_id 多次写入均返回 200。
+///
+/// tenant_dir 解析顺序：`x-tenant-dir` header → `users.db` 第一条 tenant_dir
+/// （单用户桌面端场景的自然默认）。
+async fn handle_user_hasn_id_put(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<UpdateUserHasnIdRequest>,
+) -> impl IntoResponse {
+    if let Err(e) = zeroclaw_gateway::api::require_auth(&state, &headers) {
+        return e.into_response();
+    }
+
+    let hasn_id = req.hasn_id.trim();
+    if hasn_id.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "hasn_id 不能为空"})),
+        )
+            .into_response();
+    }
+
+    let config = state.config.lock().clone();
+    let config_dir = config
+        .config_path
+        .parent()
+        .unwrap_or(&config.workspace_dir)
+        .to_path_buf();
+
+    let tenant_dir = match crate::api_agents::extract_tenant_dir(
+        &headers,
+        &config_dir,
+        &config.huanxing,
     )
+    .await
+    .filter(|t| !t.trim().is_empty())
+    {
+        Some(t) => t,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": "未解析到 tenant_dir（缺 x-tenant-dir header 且 users.db 为空）"
+                })),
+            )
+                .into_response();
+        }
+    };
+
+    let db_path = config.huanxing.resolve_db_path(&config_dir);
+    let db = match crate::db::TenantDb::open(&db_path) {
+        Ok(db) => db,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": format!("打开 users.db 失败: {e}")})),
+            )
+                .into_response();
+        }
+    };
+
+    match db
+        .update_user_hasn_id_by_tenant_dir(&tenant_dir, hasn_id)
+        .await
+    {
+        Ok(true) => {
+            tracing::info!(
+                tenant_dir = %tenant_dir,
+                hasn_id,
+                "User hasn_id persisted to users.db"
+            );
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "status": "ok",
+                    "tenant_dir": tenant_dir,
+                    "hasn_id": hasn_id,
+                })),
+            )
+                .into_response()
+        }
+        Ok(false) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": format!("tenant_dir={tenant_dir} 在 users.db 中无匹配行")
+            })),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": format!("更新 users.db 失败: {e}")})),
+        )
+            .into_response(),
+    }
 }
 
 /// GET /api/user-config — 返回全局 + 用户级合并后的配置（TOML 格式）
