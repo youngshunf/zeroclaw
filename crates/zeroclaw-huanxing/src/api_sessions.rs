@@ -14,6 +14,73 @@
 //! DELETE /api/sessions/{id}/messages          → 清空会话消息
 //! POST   /api/sessions/{id}/generate-title    → LLM 自动生成标题
 //! ```
+//!
+//! # Phase 05-04 Gap Closure — Route Conflict Decision Table
+//!
+//! 上游 `zeroclaw_gateway::lib::apply_router_extender` 会在 daemon 启动时调用
+//! `router.merge(huanxing_routes())`（`huanxing-zeroclaw/src/main.rs:1682`）。
+//! axum `Router::merge` 对相同 `(method, path)` 组合重复注册会直接 panic
+//! （`Overlapping method route. Handler for 'DELETE /api/sessions/{id}' already exists`）。
+//!
+//! 扫描 `huanxing-zeroclaw/crates/zeroclaw-huanxing/src/` 的所有 `.route(` 与
+//! `huanxing-zeroclaw/crates/zeroclaw-gateway/src/lib.rs:960-1100` 的所有
+//! `.route(` 后，得到以下 **session** 命名空间的冲突对照表（其它命名空间已确认
+//! 无冲突）：
+//!
+//! | 路径 | 上游 gateway | huanxing extender | 冲突? |
+//! |------|-------------|-------------------|------|
+//! | GET `/api/sessions` | ✓ `handle_api_sessions_list` (lib.rs:1024) | ✓ `list_sessions` (本文件) | **是** |
+//! | POST `/api/sessions` | — | ✓ `create_session` (本文件) | 否 |
+//! | GET `/api/sessions/{id}` | — | ✓ `get_session` (本文件) | 否 |
+//! | PUT `/api/sessions/{id}` | ✓ `handle_api_session_rename` (lib.rs:1030) | ✓ `rename_session` (本文件) | **是** |
+//! | DELETE `/api/sessions/{id}` | ✓ `handle_api_session_delete` (lib.rs:1030) | ✓ `delete_session` (本文件) | **是**（panic 直接源头） |
+//! | DELETE `/api/sessions/{id}/messages` | — | ✓ `clear_messages` (本文件) | 否 |
+//! | POST `/api/sessions/{id}/generate-title` | — | ✓ `generate_title` (本文件) | 否 |
+//!
+//! 除上述 3 条 `/api/sessions` 冲突外，未发现其它 huanxing/upstream route 冲突。
+//! 其它 huanxing 命名空间(`/api/agents/*`, `/api/user_config/*`, `/api/sop/*`,
+//! `/api/hub_sync/*`, `/api/v1/agent/*`, `/api/v1/hasn/*`, `/ws/hasn-events`)
+//! 与上游 gateway 的 route 列表完全不相交。
+//!
+//! ## 为什么本 commit 只落审计文档：Plan A 被放弃，Plan B 待用户决策
+//!
+//! 原方案（A）：从 huanxing 侧删除冲突的 `GET`/`PUT`/`DELETE`，让这些请求走上游
+//! `handle_api_sessions_list` / `handle_api_session_rename` / `handle_api_session_delete`。
+//!
+//! Read_first 审计 `zeroclaw-gateway/src/api.rs:1296-1449` 发现上游 3 个 handler
+//! 与桌面端的 huanxing 契约 **语义不兼容**：
+//!
+//! 1. **数据源完全不同**：
+//!    - 上游操作 `AppState.session_backend`（单一全局 SessionBackend），只看
+//!      `gw_*` 前缀的 key（gateway WS chat 历史）。
+//!    - huanxing 操作 `{config_dir}/users/{tenant}/agents/{agent_name}/workspace/sessions/sessions.db`
+//!      里的 `desktop_sessions` 表（桌面端 per-agent 会话）。
+//! 2. **schema 不同**：
+//!    - 上游 GET 返回 `{session_id, created_at, last_activity, message_count, name}`。
+//!    - huanxing GET 返回 `{id, title, agent_id, created_at, updated_at, message_count}`。
+//!    - 桌面端 `clients/desktop/src/lib/session-api.ts:SessionInfo` 绑定 huanxing schema。
+//! 3. **PUT 请求体不同**：上游 rename 读 `body["name"]`，前端发送 `{title}`；
+//!    走上游会 400 `name is required`。
+//! 4. **完全不感知 tenant**：上游 handler 不读 `x-tenant-dir`，对所有 tenant
+//!    共享 `session_backend`；直接切到上游会违反多租户隔离。
+//!
+//! 因此 A 方案会破坏 UAT Test 1 的桌面端整个会话列表 + 重命名 + 删除流程。
+//! 按本 plan `<threat_model>` 第 1 行规定，stop task 2 并等用户决定：
+//!   - B1: 改上游 handler 接受 tenant header 并路由到 huanxing backend（侵入性大）
+//!   - B2: 把 `huanxing_routes()` 从 `.merge()` 改为 `.nest("/v2", …)` 让前端改用
+//!         `/v2/api/sessions`（前端 + 后端同步改动）
+//!   - B3: 在 huanxing 里重命名 3 条冲突 route 到 huanxing 特有路径
+//!         (e.g. `/api/huanxing/sessions`) 并同步前端
+//!   - B4: 其它（待讨论）
+//!
+//! ## 当前状态
+//!
+//! 本次 commit 只落审计文档，不改代码。`session_routes()` 仍保留完整的 7 条 route，
+//! daemon 启动仍 panic —— 修复要由用户决策后的后续 plan 落地。
+//!
+//! 未来维护者读这段 doc 应能立刻理解：为什么本 file 的路由注册必须与
+//! `zeroclaw-gateway/src/lib.rs:960-1100` 的 `.route(` 清单保持严格不相交（同
+//! path 维度上 method 不得重合），以及上游与桌面端 session 契约的差异。
 
 use axum::{
     Json, Router,
