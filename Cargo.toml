@@ -382,7 +382,12 @@ skill-creation = []
 firecrawl = ["zeroclaw-huanxing/firecrawl"]
 
 # 唤星多租户 SaaS 扩展 — HASN client + 本地多租户路由
-huanxing = ["dep:hasn-client-core", "dep:zeroclaw-huanxing"]
+# 链入 zeroclaw-gateway/huanxing 让上游编译期剔除单租户 /ws/chat（Phase 05-04d）。
+huanxing = [
+    "dep:hasn-client-core",
+    "dep:zeroclaw-huanxing",
+    "zeroclaw-gateway/huanxing",
+]
 
 # Backward-compatible aliases
 fantoccini = ["browser-native"]

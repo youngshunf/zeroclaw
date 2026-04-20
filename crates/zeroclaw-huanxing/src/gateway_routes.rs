@@ -94,10 +94,12 @@ pub fn huanxing_routes() -> Router<AppState> {
             delete(crate::hasn_api::hasn_remove_agent),
         )
         // ── WebSocket 端点 ──────────────────────────────────────────
-        // 注：`/ws/chat` 历史上在 huanxing feature 下替换为 hx_ws 的多会话
-        // 版本，但新的 router extension 模式无法 route 替换（axum merge 会
-        // panic），目前保留上游 ws::handle_ws_chat，hx_ws 仅供 HASN 内部
-        // invoke 使用。桌面端 HASN 消息流通过 /ws/hasn-events + REST API。
+        // Phase 05-04d 起，`huanxing` feature 通过
+        // `zeroclaw-gateway/external_chat_ws` 让上游编译期不注册默认 /ws/chat，
+        // 由下面这一行的 hx_ws 多租户版本接管同一路径 —— 桌面端 WS URL
+        // 不用改，tenant 自动从 WS query/headers 解析，api_key 从租户级
+        // config.toml 自动注入到 reliability.api_keys。
+        .route("/ws/chat", get(crate::hx_ws::handle_ws_chat))
         .route("/ws/hasn-events", get(crate::hasn_api::hasn_events_ws))
 }
 

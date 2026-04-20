@@ -305,7 +305,11 @@ fn failure_reason(rate_limited: bool, non_retryable: bool) -> &'static str {
 }
 
 fn compact_error_detail(err: &anyhow::Error) -> String {
-    super::sanitize_api_error(&err.to_string())
+    // `{:#}` expands anyhow's full cause chain inline so we don't lose the
+    // underlying hyper/reqwest/IO reason behind opaque Displays like
+    // "error decoding response body".
+    let full = format!("{err:#}");
+    super::sanitize_api_error(&full)
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")

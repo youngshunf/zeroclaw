@@ -22,6 +22,9 @@ pub mod session_queue;
 pub mod sse;
 pub mod static_files;
 pub mod tls;
+// 单租户 `/ws/chat` 实现；Phase 05-04d 起在 huanxing feature 下编译期剔除，
+// 由 zeroclaw-huanxing 的 hx_ws 多租户版本接管（见 huanxing_routes()）。
+#[cfg(not(feature = "huanxing"))]
 pub mod ws;
 
 // ─────────────────────────────────────────────────────────────
@@ -1089,9 +1092,13 @@ pub async fn run_gateway(
     let inner = inner
         // ── SSE event stream ──
         .route("/api/events", get(sse::handle_sse_events))
-        .route("/api/events/history", get(sse::handle_events_history))
-        // ── WebSocket agent chat ──
-        .route("/ws/chat", get(ws::handle_ws_chat))
+        .route("/api/events/history", get(sse::handle_events_history));
+    // ── WebSocket agent chat ──
+    // Phase 05-04d：huanxing feature 下由 hx_ws::handle_ws_chat 多租户版本接管
+    // （见 zeroclaw-huanxing::gateway_routes::huanxing_routes），此处编译期剔除。
+    #[cfg(not(feature = "huanxing"))]
+    let inner = inner.route("/ws/chat", get(ws::handle_ws_chat));
+    let inner = inner
         // ── WebSocket canvas updates ──
         .route("/ws/canvas/{id}", get(canvas::handle_ws_canvas))
         // ── WebSocket node discovery ──

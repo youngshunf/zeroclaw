@@ -42,7 +42,7 @@ use serde::{Deserialize, Serialize};
 use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
 use tracing::{info, warn};
-use tracing_subscriber::{EnvFilter, fmt};
+use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 fn parse_temperature(s: &str) -> std::result::Result<f64, String> {
     let t: f64 = s.parse().map_err(|e| format!("{e}"))?;
@@ -1001,17 +1001,68 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    // Initialize logging - respects RUST_LOG env var, defaults to INFO.
+    // Initialize logging — respects RUST_LOG env var, defaults to INFO.
     // matrix_sdk crates are suppressed to warn because they are extremely
     // noisy at info level. To restore SDK-level output for Matrix debugging:
     //   RUST_LOG=info,matrix_sdk=info,matrix_sdk_base=info,matrix_sdk_crypto=info
-    let subscriber = fmt::Subscriber::builder()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-            EnvFilter::new("info,matrix_sdk=warn,matrix_sdk_base=warn,matrix_sdk_crypto=warn")
-        }))
-        .finish();
+    //
+    // Phase 05-04d：Tauri 桌面端的 sidecar stdout 被 Tauri 父进程接管，
+    // 运维不易抓取；本段同时把所有 tracing 事件写到
+    // `{config_dir}/logs/huanxing.log.YYYY-MM-DD` 日滚动文件。
+    // 日志目录解析顺序：$ZEROCLAW_CONFIG_DIR → CLI `--config-dir[=]` → ~/.huanxing。
+    let log_dir = {
+        let mut resolved: Option<PathBuf> = std::env::var("ZEROCLAW_CONFIG_DIR")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| PathBuf::from(s).join("logs"));
+        if resolved.is_none() {
+            let args: Vec<String> = std::env::args().collect();
+            let mut i = 0;
+            while i < args.len() {
+                if args[i] == "--config-dir" && i + 1 < args.len() {
+                    resolved = Some(PathBuf::from(&args[i + 1]).join("logs"));
+                    break;
+                }
+                if let Some(val) = args[i].strip_prefix("--config-dir=") {
+                    resolved = Some(PathBuf::from(val).join("logs"));
+                    break;
+                }
+                i += 1;
+            }
+        }
+        resolved.unwrap_or_else(|| {
+            dirs::home_dir()
+                .map(|h| h.join(".huanxing").join("logs"))
+                .unwrap_or_else(|| PathBuf::from("./logs"))
+        })
+    };
+    std::fs::create_dir_all(&log_dir).ok();
+    let file_appender = tracing_appender::rolling::daily(&log_dir, "huanxing.log");
+    let (file_writer, file_guard) = tracing_appender::non_blocking(file_appender);
+    // Keep the non-blocking writer alive for the process lifetime.
+    Box::leak(Box::new(file_guard));
 
-    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        EnvFilter::new(
+            "info,matrix_sdk=warn,matrix_sdk_base=warn,matrix_sdk_crypto=warn,\
+             zeroclaw_huanxing=debug,hasn_node=debug,hasn_client_core=debug,\
+             zeroclaw_gateway=info",
+        )
+    });
+
+    let stdout_layer = fmt::layer().with_writer(std::io::stdout);
+    let file_layer = fmt::layer().with_writer(file_writer).with_ansi(false);
+
+    tracing_subscriber::registry()
+        .with(env_filter)
+        .with(stdout_layer)
+        .with(file_layer)
+        .init();
+
+    tracing::info!(
+        log_dir = %log_dir.display(),
+        "[huanxing] Tracing initialized with file + stdout layers"
+    );
 
     // Onboard auto-detects the environment: if stdin/stdout are a TTY and no
     // provider flags were given, it runs the full interactive wizard; otherwise

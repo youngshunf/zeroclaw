@@ -76,3 +76,6 @@ plugins-wasm = ["dep:zeroclaw-plugins"]
 webauthn = ["zeroclaw-runtime/webauthn"]
 observability-prometheus = ["zeroclaw-runtime/observability-prometheus"]
 channel-nostr = ["zeroclaw-channels/channel-nostr"]
+# 由根 crate 的同名 feature 链入；开启后 gateway 编译期剔除默认单租户
+# /ws/chat（见 src/lib.rs），交给 zeroclaw-huanxing 的 hx_ws 多租户版本接管。
+huanxing = []

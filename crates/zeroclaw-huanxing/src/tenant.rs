@@ -746,6 +746,34 @@ impl TenantContext {
         resolved_config.reliability = effective_reliability.clone();
         resolved_config.sop = effective_sop;
 
+        // Phase 05-04d：把租户 api_key 同步到 providers.fallback_provider().api_key。
+        // 上游 `Agent::from_config_with_overrides` 构造 LLM provider 时只读
+        // `config.providers.fallback_provider().api_key`，不会 fallback 到顶层
+        // `config.api_key`。全局 config.toml 的 migration 只迁移全局顶层 api_key，
+        // 不触及租户覆盖；若不在这里同步，租户 api_key 永远到不了 provider，
+        // 导致 LLM 调用报 401 "未提供令牌"。
+        if let Some(ref key) = effective_api_key
+            && !key.trim().is_empty()
+        {
+            let entry = resolved_config.ensure_fallback_provider();
+            if entry.api_key.as_deref().unwrap_or("").trim().is_empty() {
+                entry.api_key = Some(key.clone());
+            }
+            // 顺带把租户覆盖的 provider base_url / model 也塞进 fallback entry，
+            // 避免上游拿着全局配置的残留 provider/model 去请求。
+            if let Some(ref prov) = effective_provider
+                && entry.base_url.as_deref().unwrap_or("").trim().is_empty()
+                && let Some(url) = prov.strip_prefix("custom:")
+            {
+                entry.base_url = Some(url.to_string());
+            }
+            if let Some(ref m) = effective_model
+                && entry.model.as_deref().unwrap_or("").trim().is_empty()
+            {
+                entry.model = Some(m.clone());
+            }
+        }
+
         Ok(Self {
             agent_id: agent_id.to_string(),
             user_id: user_id.to_string(),

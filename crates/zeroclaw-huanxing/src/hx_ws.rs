@@ -452,13 +452,40 @@ async fn init_agent_session(
 
     let session_key = format!("{GW_SESSION_PREFIX}{session_id}");
 
-    // Restore history from persistent storage
+    // Restore history from persistent storage.
+    //
+    // Channel input (webhook/CLI/email) goes through `zeroclaw-runtime`'s
+    // `loop_.rs::run_tool_loop`, which calls
+    // `multimodal::prepare_messages_for_provider` so any `[IMAGE:/abs/path]`
+    // marker is inlined as `data:image/...;base64,...` before the provider
+    // sees it. The desktop WebSocket path uses `Agent::turn_streamed`, which
+    // does NOT run that prep. Until upstream unifies the two paths, we run
+    // the same conversion here on the history we seed into the agent —
+    // otherwise stale messages with raw local paths trigger provider errors
+    // like MiniMax `base_resp.status_code=2013 invalid image url format`.
     {
         let backend = per_user_backend.as_ref().or(state.session_backend.as_ref());
         if let Some(b) = backend {
-            let messages = b.load(&session_key);
-            if !messages.is_empty() {
-                agent.seed_history(&messages);
+            let raw_messages = b.load(&session_key);
+            if !raw_messages.is_empty() {
+                let multimodal_config = state.config.lock().multimodal.clone();
+                let seeded = match zeroclaw_providers::multimodal::prepare_messages_for_provider(
+                    &raw_messages,
+                    &multimodal_config,
+                )
+                .await
+                {
+                    Ok(prepared) => prepared.messages,
+                    Err(err) => {
+                        tracing::warn!(
+                            session_id = %session_id,
+                            error = %err,
+                            "[hx_ws] multimodal prep on seeded history failed; seeding raw messages"
+                        );
+                        raw_messages
+                    }
+                };
+                agent.seed_history(&seeded);
             }
         }
     }
@@ -530,8 +557,44 @@ async fn process_chat_message(
         event_tx
     };
 
+    // Pre-process the new user input the same way `run_tool_loop` does for
+    // channel messages: resolve any `[IMAGE:/abs/path]` marker to an inline
+    // `data:image/...;base64,...` URI so downstream providers (MiniMax, GPT-4o,
+    // Qwen-VL, etc.) actually accept the attachment instead of erroring with
+    // "invalid image url format". Empty markers or text-only input pass through
+    // unchanged.
+    let multimodal_config = state.config.lock().multimodal.clone();
+    let prepared_content: String = {
+        use zeroclaw_api::provider::ChatMessage;
+        let user_msg = vec![ChatMessage {
+            role: "user".to_string(),
+            content: content.to_string(),
+        }];
+        match zeroclaw_providers::multimodal::prepare_messages_for_provider(
+            &user_msg,
+            &multimodal_config,
+        )
+        .await
+        {
+            Ok(prepared) => prepared
+                .messages
+                .into_iter()
+                .next()
+                .map(|m| m.content)
+                .unwrap_or_else(|| content.to_string()),
+            Err(err) => {
+                tracing::warn!(
+                    session_id = %session_id,
+                    error = %err,
+                    "[hx_ws] multimodal prep on user input failed; forwarding raw content"
+                );
+                content.to_string()
+            }
+        }
+    };
+
     // 使用 pin! 来 pin future，这样可以在 select! 中重复 poll
-    let turn_future = session.agent.turn_streamed(content, turn_handle);
+    let turn_future = session.agent.turn_streamed(&prepared_content, turn_handle);
     tokio::pin!(turn_future);
 
     let mut tool_call_counter = 0u32;

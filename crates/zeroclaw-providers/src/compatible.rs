@@ -331,8 +331,9 @@ impl OpenAiCompatibleProvider {
         let timeout = self.timeout_secs;
         let has_user_agent = self.user_agent.is_some();
         let has_extra_headers = !self.extra_headers.is_empty();
+        let loopback = is_loopback_base_url(&self.base_url);
 
-        if has_user_agent || has_extra_headers {
+        if has_user_agent || has_extra_headers || loopback {
             let mut headers = HeaderMap::new();
             if let Some(ua) = self.user_agent.as_deref()
                 && let Ok(value) = HeaderValue::from_str(ua)
@@ -353,14 +354,25 @@ impl OpenAiCompatibleProvider {
                 }
             }
 
-            let builder = Client::builder()
+            let mut builder = Client::builder()
                 .timeout(std::time::Duration::from_secs(timeout))
                 .connect_timeout(std::time::Duration::from_secs(10))
                 .default_headers(headers);
-            let builder = zeroclaw_config::schema::apply_runtime_proxy_to_builder(
-                builder,
-                "provider.compatible",
-            );
+            if loopback {
+                // Loopback targets (e.g. new-api on 127.0.0.1:3180, Ollama, a local
+                // LLM gateway) must bypass any system/OS-level proxy. reqwest
+                // auto-detects macOS SystemConfiguration proxies (HTTPProxy/HTTPSProxy
+                // set by ClashX/ClashY/etc.) and its NoProxy parser does not
+                // recognize macOS bypass patterns like `127.*`, so localhost SSE
+                // requests get routed through the proxy and the streaming body
+                // dies mid-flight as "error decoding response body".
+                builder = builder.no_proxy();
+            } else {
+                builder = zeroclaw_config::schema::apply_runtime_proxy_to_builder(
+                    builder,
+                    "provider.compatible",
+                );
+            }
 
             return builder.build().unwrap_or_else(|error| {
                 tracing::warn!(
@@ -556,9 +568,24 @@ struct ImageUrlPart {
 
 #[derive(Debug, Deserialize)]
 struct ApiChatResponse {
+    // Some upstream gateways (e.g. new-api when MiniMax's `base_resp.status_code`
+    // is non-zero) emit `"choices": null` on 200 OK instead of `[]` or an error
+    // status. Treat null/missing as empty so the caller can surface the real
+    // error from `error`/`base_resp` rather than failing with the opaque
+    // serde message "invalid type: null, expected a sequence".
+    #[serde(default, deserialize_with = "null_to_default")]
     choices: Vec<Choice>,
     #[serde(default)]
     usage: Option<UsageInfo>,
+}
+
+fn null_to_default<'de, T, D>(deserializer: D) -> Result<T, D::Error>
+where
+    T: Default + Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    let opt = Option::<T>::deserialize(deserializer)?;
+    Ok(opt.unwrap_or_default())
 }
 
 #[derive(Debug, Deserialize)]
@@ -1116,6 +1143,23 @@ fn sse_bytes_to_chunks(
                     }
                 }
                 Err(e) => {
+                    let mut source_chain: Vec<String> = Vec::new();
+                    let mut src: Option<&(dyn std::error::Error + 'static)> =
+                        std::error::Error::source(&e);
+                    while let Some(cause) = src {
+                        source_chain.push(cause.to_string());
+                        src = cause.source();
+                    }
+                    tracing::warn!(
+                        error = %e,
+                        error_debug = ?e,
+                        source_chain = ?source_chain,
+                        is_timeout = e.is_timeout(),
+                        is_connect = e.is_connect(),
+                        is_body = e.is_body(),
+                        is_decode = e.is_decode(),
+                        "SSE chunks_stream errored"
+                    );
                     let _ = tx.send(Err(StreamError::Http(e.to_string()))).await;
                     return;
                 }
@@ -1260,6 +1304,26 @@ fn sse_bytes_to_events(
                     }
                 }
                 Err(e) => {
+                    // Diagnostic: reqwest's Display("error decoding response body")
+                    // hides WHY the body failed. Dump the error chain + typed flags
+                    // so we can tell apart: premature EOF, chunked framing, h2, etc.
+                    let mut source_chain: Vec<String> = Vec::new();
+                    let mut src: Option<&(dyn std::error::Error + 'static)> =
+                        std::error::Error::source(&e);
+                    while let Some(cause) = src {
+                        source_chain.push(cause.to_string());
+                        src = cause.source();
+                    }
+                    tracing::warn!(
+                        error = %e,
+                        error_debug = ?e,
+                        source_chain = ?source_chain,
+                        is_timeout = e.is_timeout(),
+                        is_connect = e.is_connect(),
+                        is_body = e.is_body(),
+                        is_decode = e.is_decode(),
+                        "SSE bytes_stream errored"
+                    );
                     let _ = tx.send(Err(StreamError::Http(e.to_string()))).await;
                     return;
                 }
@@ -1295,6 +1359,43 @@ fn first_nonempty(text: Option<&str>) -> Option<String> {
             Some(trimmed.to_string())
         }
     })
+}
+
+/// Return true when `base_url` targets a loopback host (127.0.0.0/8, ::1, or the
+/// literal `localhost`). Callers use this to opt a provider out of any
+/// system/runtime-configured HTTP proxy — otherwise SSE streams to a local
+/// gateway (new-api, Ollama, LM Studio, etc.) get routed through a desktop
+/// proxy like ClashX, which silently breaks chunked/streaming bodies because
+/// reqwest's NoProxy cannot parse macOS-style `127.*` exception patterns.
+fn is_loopback_base_url(base_url: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(base_url.trim()) else {
+        return false;
+    };
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        return ip.is_loopback();
+    }
+    false
+}
+
+/// Return true when `image_ref` is something a provider's `image_url` field
+/// can actually consume: an `http(s)://` URL or a `data:image/...;base64,...`
+/// inline URI. Raw filesystem paths and other non-URL refs MUST be rejected
+/// here — sending them produces MiniMax error 2013 "invalid image url format"
+/// (or equivalent errors on other providers).
+fn is_sendable_image_url(image_ref: &str) -> bool {
+    let trimmed = image_ref.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    trimmed.starts_with("data:image/")
+        || trimmed.starts_with("http://")
+        || trimmed.starts_with("https://")
 }
 
 fn build_responses_prompt(messages: &[ChatMessage]) -> (Option<String>, Vec<ResponsesInput>) {
@@ -1369,6 +1470,57 @@ fn parse_chat_response_body(provider_name: &str, body: &str) -> anyhow::Result<A
             "{provider_name} API returned an unexpected chat-completions payload: {error}; body={snippet}"
         )
     })
+}
+
+/// Surface a clear error when the gateway returned 200 OK but no choices (e.g.
+/// `"choices": null`). Tries common upstream error shapes (`error.*`,
+/// `base_resp.status_{code,msg}` from MiniMax) before falling back to a body
+/// snippet.
+fn diagnose_empty_choices(provider_name: &str, body: &str) -> anyhow::Error {
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(body) {
+        if let Some(err) = value.get("error") {
+            let message = err
+                .get("message")
+                .and_then(|v| v.as_str())
+                .unwrap_or_else(|| err.as_str().unwrap_or(""));
+            let code = err.get("code").and_then(|v| v.as_str()).unwrap_or("");
+            return anyhow::anyhow!(
+                "{provider_name} API error (no choices){}: {}",
+                if code.is_empty() {
+                    String::new()
+                } else {
+                    format!(" [{code}]")
+                },
+                if message.is_empty() {
+                    compact_sanitized_body_snippet(body)
+                } else {
+                    message.to_string()
+                }
+            );
+        }
+        if let Some(base) = value.get("base_resp") {
+            let status_code = base
+                .get("status_code")
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or(-1);
+            let status_msg = base
+                .get("status_msg")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if status_code != 0 || !status_msg.is_empty() {
+                return anyhow::anyhow!(
+                    "{provider_name} upstream error (base_resp status_code={status_code}): {}",
+                    if status_msg.is_empty() {
+                        "(empty status_msg)"
+                    } else {
+                        status_msg
+                    }
+                );
+            }
+        }
+    }
+    let snippet = compact_sanitized_body_snippet(body);
+    anyhow::anyhow!("{provider_name} returned no choices; body={snippet}")
 }
 
 fn parse_responses_response_body(
@@ -1477,12 +1629,45 @@ impl OpenAiCompatibleProvider {
             });
         }
 
+        let mut skipped_refs: Vec<String> = Vec::new();
         for image_ref in image_refs {
-            parts.push(MessagePart::ImageUrl {
-                image_url: ImageUrlPart { url: image_ref },
-            });
+            if is_sendable_image_url(&image_ref) {
+                parts.push(MessagePart::ImageUrl {
+                    image_url: ImageUrlPart { url: image_ref },
+                });
+            } else {
+                // Raw local paths or other non-URL refs would make the provider
+                // reject the whole request with errors like MiniMax's
+                // `base_resp.status_code=2013 invalid image url format`. These
+                // arise from stale session history (old `[IMAGE:/abs/path]`
+                // markers saved before the upstream multimodal-prep step was
+                // wired into this call path). Skip the image part — text is
+                // preserved below — and log once so the gap is visible.
+                skipped_refs.push(image_ref);
+            }
         }
 
+        if !skipped_refs.is_empty() {
+            tracing::warn!(
+                skipped = ?skipped_refs,
+                "dropping non-URL image refs to avoid provider rejection (expected: data:/http(s):// only)"
+            );
+            // If the image parts were the only content, make sure the text
+            // side is non-empty; otherwise an empty parts array would produce
+            // an empty user message which some providers reject.
+            if parts.is_empty() {
+                return MessageContent::Text(content.to_string());
+            }
+        }
+
+        if parts.is_empty() {
+            return MessageContent::Text(content.to_string());
+        }
+        if parts.len() == 1 {
+            if let MessagePart::Text { text } = &parts[0] {
+                return MessageContent::Text(text.clone());
+            }
+        }
         MessageContent::Parts(parts)
     }
 
@@ -2106,7 +2291,14 @@ impl Provider for OpenAiCompatibleProvider {
             anyhow::bail!("{} API error ({status}): {sanitized}", self.name);
         }
 
-        let native_response: ApiChatResponse = response.json().await?;
+        // Read body as text first so we can log the actual snippet when parse
+        // fails and surface upstream error shapes (base_resp / error fields)
+        // when the gateway returns 200 OK with `choices: null`.
+        let body = response.text().await?;
+        let native_response = parse_chat_response_body(&self.name, &body)?;
+        if native_response.choices.is_empty() {
+            return Err(diagnose_empty_choices(&self.name, &body));
+        }
         let usage = native_response.usage.map(|u| TokenUsage {
             input_tokens: u.prompt_tokens,
             output_tokens: u.completion_tokens,
