@@ -8,6 +8,17 @@
 //! - 事件广播到订阅者（供前端 /ws/hasn-events 消费）
 //!
 //! 帧格式: { "hasn": "hasn/2.0", "method": "hasn.xxx.yyy", "params": {...} }
+//!
+//! # Phase 05-05 — Deprecated shim
+//!
+//! 除 `global_connector()` symbol 供 `hasn_sync.rs` 等非 WS 热路径使用外，
+//! 所有 WS 帧入站/出站/连接控制在 05-05 cutover 后由 hasn-node 独占。
+//! 入口函数（`HasnConnector::connect` / `handle_ws_frame`）都加了
+//! `debug_assert!(false, …)` 以便 debug build 里立即暴露误入 legacy 路径
+//! 的调用；release build 则继续执行原逻辑以保持过渡期兼容。
+//!
+//! 模块 `test_harness` (仅 `#[cfg(any(debug_assertions, test))]`) 暴露一组
+//! 计数器 + getter，供集成测试断言 legacy 入口未被触发。
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -155,6 +166,13 @@ impl HasnConnector {
         auth_headers: Vec<(String, String)>,
         state: Arc<AppState>,
     ) -> anyhow::Result<()> {
+        // Phase 05-05 Task 5 — legacy WS 入口 deprecated
+        debug_assert!(
+            false,
+            "Phase 05-05: legacy path deprecated, use hasn-node connector"
+        );
+        test_harness::note_connect_called();
+
         info!(
             "[HASN] 连接中央节点: {}",
             &central_url[..central_url.find('?').unwrap_or(central_url.len())]
@@ -373,6 +391,13 @@ async fn handle_ws_frame(
     state: Arc<AppState>,
     ws: Arc<HasnWsClient>,
 ) {
+    // Phase 05-05 Task 5 — legacy WS 帧入站处理 deprecated
+    debug_assert!(
+        false,
+        "Phase 05-05: legacy path deprecated, use hasn-node connector"
+    );
+    test_harness::note_handle_ws_frame_called();
+
     let method = frame.method.as_str();
     // 调试：记录所有入站帧方法
     info!("[HASN] 收到帧: method={}", method);
@@ -750,4 +775,64 @@ static CONNECTOR: std::sync::OnceLock<HasnConnector> = std::sync::OnceLock::new(
 /// 获取全局 HasnConnector 实例
 pub fn global_connector() -> &'static HasnConnector {
     CONNECTOR.get_or_init(HasnConnector::new)
+}
+
+// ════════════════════════════════════════════════════════════════════
+// Phase 05-05 Task 5 — test_harness
+// ════════════════════════════════════════════════════════════════════
+//
+// debug build 下统计 legacy 入口被调用次数。release build 下编译为空壳
+// 以避免对热路径造成任何观测开销。集成测试（cfg=test）可通过
+// `was_connect_called()` / `was_handle_ws_frame_called()` / reset() 断言
+// 本 cutover 后 legacy 入口不再被生产路径触发。
+
+#[cfg(any(debug_assertions, test))]
+pub mod test_harness {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static CONNECT_CALLS: AtomicUsize = AtomicUsize::new(0);
+    static HANDLE_WS_FRAME_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+    #[inline]
+    pub(super) fn note_connect_called() {
+        CONNECT_CALLS.fetch_add(1, Ordering::SeqCst);
+    }
+
+    #[inline]
+    pub(super) fn note_handle_ws_frame_called() {
+        HANDLE_WS_FRAME_CALLS.fetch_add(1, Ordering::SeqCst);
+    }
+
+    /// 计数器归零（测试 setup 用）
+    pub fn reset() {
+        CONNECT_CALLS.store(0, Ordering::SeqCst);
+        HANDLE_WS_FRAME_CALLS.store(0, Ordering::SeqCst);
+    }
+
+    /// Legacy `HasnConnector::connect` 被调用过？
+    pub fn was_connect_called() -> bool {
+        CONNECT_CALLS.load(Ordering::SeqCst) > 0
+    }
+
+    /// Legacy `handle_ws_frame` 被调用过？
+    pub fn was_handle_ws_frame_called() -> bool {
+        HANDLE_WS_FRAME_CALLS.load(Ordering::SeqCst) > 0
+    }
+
+    pub fn connect_call_count() -> usize {
+        CONNECT_CALLS.load(Ordering::SeqCst)
+    }
+
+    pub fn handle_ws_frame_call_count() -> usize {
+        HANDLE_WS_FRAME_CALLS.load(Ordering::SeqCst)
+    }
+}
+
+// release build 下提供同名 no-op shim，保持 inline 调用点 API 一致
+#[cfg(not(any(debug_assertions, test)))]
+pub mod test_harness {
+    #[inline(always)]
+    pub(super) fn note_connect_called() {}
+    #[inline(always)]
+    pub(super) fn note_handle_ws_frame_called() {}
 }

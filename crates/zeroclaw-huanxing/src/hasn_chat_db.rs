@@ -397,6 +397,48 @@ impl HasnChatDb {
         )?;
         Ok(())
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Phase 05-05 Task 5b — peer_id 历史数据修正
+    // ═══════════════════════════════════════════════════════════════
+
+    /// 幂等迁移：修正同 owner Agent 会话 `sessions.peer_id` 从 `h_*` 变为
+    /// 对端 Agent 的 `a_*`。
+    ///
+    /// 触发条件：当前 `sessions.peer_id` 是 `h_*`（写错的 Owner 自己）且
+    /// 相同 `conversation_id` 的 `messages` 表里存在 `receiver_id LIKE 'a_%'`
+    /// （说明对话一方是 Agent，peer 应当是这个 Agent）。
+    ///
+    /// 幂等性由 `sync_state(key="phase_05_05_peer_id_migration")` 保证：
+    /// 成功一次后标记 "done"，后续调用早退返 0。
+    pub async fn run_migration_phase_05_05_peer_id(&self) -> Result<u64> {
+        const KEY: &str = "phase_05_05_peer_id_migration";
+        if self.get_sync_state(KEY).await?.is_some() {
+            return Ok(0);
+        }
+
+        let updated: u64 = {
+            let conn = self.conn.lock().await;
+            conn.execute(
+                "UPDATE sessions SET peer_id = (
+                    SELECT receiver_id FROM messages
+                    WHERE messages.conversation_id = sessions.conversation_id
+                      AND receiver_id LIKE 'a_%'
+                    LIMIT 1
+                 )
+                 WHERE peer_id LIKE 'h_%'
+                   AND EXISTS (
+                       SELECT 1 FROM messages
+                       WHERE messages.conversation_id = sessions.conversation_id
+                         AND receiver_id LIKE 'a_%'
+                   )",
+                [],
+            )? as u64
+        };
+
+        self.set_sync_state(KEY, "done").await?;
+        Ok(updated)
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════

@@ -2,9 +2,11 @@ use std::sync::Arc;
 use tracing::{error, info, warn};
 
 use crate::context_resolver::MessageContextResolver;
-use zeroclaw_config::schema::Config;
+use crate::db::{TenantDb, UserFilter};
+use crate::hasn_chat_db::HasnChatDb;
 use crate::MultiTenantResolver;
 use crate::TenantRouter;
+use zeroclaw_config::schema::Config;
 
 /// Initialize all HuanXing multi-tenant systems, skills sync, and context resolver.
 /// Returns an overriding ContextResolver if successful, otherwise None (fallback to default resolver).
@@ -75,6 +77,13 @@ pub async fn init_tenant_systems(config: &Config) -> Option<Arc<dyn MessageConte
         }
     }
 
+    // ── Phase 05-05 Task 5b — per-tenant peer_id 历史数据修正 ──
+    // 对所有活跃 tenant 尝试调用 run_migration_phase_05_05_peer_id。
+    // 迁移幂等，打标 sync_state(key=phase_05_05_peer_id_migration)；失败不阻塞启动。
+    if let Err(e) = run_phase_05_05_migrations(config).await {
+        warn!("[Phase 05-05] peer_id 迁移扫描失败（非致命）: {e}");
+    }
+
     // Initialize Global Tenant Router
     match TenantRouter::new(
         config.huanxing.clone(),
@@ -99,4 +108,80 @@ pub async fn init_tenant_systems(config: &Config) -> Option<Arc<dyn MessageConte
             None
         }
     }
+}
+
+/// Phase 05-05 Task 5b — 扫描所有活跃 tenant 的 hasn_chat.db，
+/// 幂等修正 sessions.peer_id 从 Owner 的 h_* 变为对端 Agent 的 a_*。
+///
+/// 错误处理策略：
+/// - 单个 tenant 打开失败或 migration 失败 → warn!，继续扫描下一个
+/// - 全局 TenantDb 打开失败 → 向上返错，由调用方降级为 warn（非阻塞）
+async fn run_phase_05_05_migrations(config: &Config) -> anyhow::Result<()> {
+    let config_dir = config
+        .config_path
+        .parent()
+        .unwrap_or(&config.workspace_dir)
+        .to_path_buf();
+    let users_db_path = config.huanxing.resolve_db_path(&config_dir);
+
+    // 租户总库不存在就没有迁移目标（全新部署）
+    if !users_db_path.exists() {
+        info!("[Phase 05-05] users DB 不存在，跳过 peer_id 迁移");
+        return Ok(());
+    }
+
+    let tenant_db = TenantDb::open(&users_db_path)?;
+    let filter = UserFilter {
+        limit: Some(500),
+        ..Default::default()
+    };
+    let (tenants, total) = tenant_db.list_users(&filter).await?;
+    info!(
+        "[Phase 05-05] 开始扫描 peer_id 迁移：tenants={} total={}",
+        tenants.len(),
+        total
+    );
+
+    let mut migrated = 0u64;
+    let mut scanned = 0u64;
+    for tenant in tenants {
+        let Some(ref tenant_dir) = tenant.tenant_dir else {
+            continue;
+        };
+        let tenant_root = config
+            .huanxing
+            .resolve_tenant_root(&config_dir, Some(tenant_dir.as_str()));
+        let chat_db_path = tenant_root.join("data").join("hasn_chat.db");
+        if !chat_db_path.exists() {
+            continue;
+        }
+        match HasnChatDb::open(&chat_db_path) {
+            Ok(db) => match db.run_migration_phase_05_05_peer_id().await {
+                Ok(n) => {
+                    scanned += 1;
+                    migrated += n;
+                    if n > 0 {
+                        info!(
+                            "[Phase 05-05] tenant={} peer_id 修正 {} 行",
+                            tenant_dir, n
+                        );
+                    }
+                }
+                Err(e) => warn!(
+                    "[Phase 05-05] tenant={} 迁移失败（非致命）: {e}",
+                    tenant_dir
+                ),
+            },
+            Err(e) => warn!(
+                "[Phase 05-05] tenant={} 打开 hasn_chat.db 失败（非致命）: {e}",
+                tenant_dir
+            ),
+        }
+    }
+
+    info!(
+        "[Phase 05-05] peer_id 迁移完成：扫描 {} 个 tenant，合计修正 {} 行",
+        scanned, migrated
+    );
+    Ok(())
 }

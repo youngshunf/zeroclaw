@@ -85,6 +85,12 @@ impl MessageRouter {
 
     /// Dispatch an incoming HASN message (WsMessagePayload from hasn_connector)
     pub async fn dispatch(&self, message: WsMessagePayload) -> Result<()> {
+        // Phase 05-05 Task 5 — legacy router deprecated
+        debug_assert!(
+            false,
+            "Phase 05-05: legacy path deprecated, use hasn-node connector"
+        );
+
         let target_id = message.to_id.clone().unwrap_or_default();
         if target_id.is_empty() {
             return Err(anyhow::anyhow!("Message has no to_id"));

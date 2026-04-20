@@ -340,12 +340,23 @@ impl HasnAgentBridge {
     }
 
     /// 注入消息到 Agent 运行时并流式回复
+    ///
+    /// Phase 05-05 — 本入口已 deprecated：hasn-node router 取而代之。
+    /// `dispatch_to_reply_chunks` 仍保留（HuanxingNativeSpawner 通过它调本
+    /// bridge 的 tenant lookup + agent runtime 能力），这里只对 WS 出站那层
+    /// 加 debug_assert 防止生产调用 fall through。
     pub async fn inject_and_stream(
         &self,
         target_agent_id: &str,
         message: WsMessagePayload,
         ws: Arc<HasnWsClient>,
     ) {
+        // Phase 05-05 Task 5 — legacy WS 出站 deprecated
+        debug_assert!(
+            false,
+            "Phase 05-05: legacy path deprecated, use hasn-node connector"
+        );
+
         let Ok(mut receiver) = self
             .dispatch_message_to_reply_chunks(target_agent_id, message.clone())
             .await
