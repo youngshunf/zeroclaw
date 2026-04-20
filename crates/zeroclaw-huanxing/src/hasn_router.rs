@@ -131,13 +131,24 @@ impl MessageRouter {
         chat_db.insert_message(&record).await?;
 
         // 5. Ensure session exists
+        //
+        // Phase 05-05 Task 3 — peer_id 修正：
+        // - Agent target（a_xxx）→ peer = target_id（对端 Agent 的 hasn_id）
+        // - Human target → peer = from_id（发送方），保持原语义
+        // 原实现 hardcode 用 `&message.from_id`，在 Owner → 自家 Agent 场景下
+        // 会把 peer 写成 Owner 自己，造成前端会话列表出现「自言自语」。
         let session_type = if message.conversation_id.starts_with("g_") {
             "group"
         } else {
             "p2p"
         };
+        let peer_id: &str = if target_id.starts_with("a_") {
+            &target_id
+        } else {
+            &message.from_id
+        };
         chat_db
-            .upsert_session(&message.conversation_id, session_type, &message.from_id)
+            .upsert_session(&message.conversation_id, session_type, peer_id)
             .await?;
 
         // 6. Route according to agent/human rules
