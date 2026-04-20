@@ -1816,18 +1816,20 @@ async fn main() -> Result<()> {
                 }
 
                 // ── HASN 节点自动连接 ───────────────────────────────
-                // 从 huanxing-clean gateway/mod.rs 迁移：daemon 启动时如果
-                // 启用了 huanxing.hasn.auto_connect 就自动连接 HASN 中央节点。
-                // 对云端部署友好（无需前端 POST /connect 触发）。
-                // 注：需要 gateway 启动后 AppState 就绪才能真正连接，这里只
-                // 保留配置检查 + spawn 占位，等 gateway 就绪后由该任务执行。
+                // Phase 05-05 Task 2 — 启动段改走 hasn-node 全局 connector。
+                // `initialize_embedded_huanxing_node` 已在上方调用过
+                // `hasn_node::connector::init_global_connector`，这里直接通过
+                // `global_connector_opt()` 拿到全局 connector，无需 AppState。
+                // legacy `zeroclaw_huanxing::hasn_connector::connect(..., AppState)`
+                // 在启动段不再被触发（Phase 2 硬约束：桌面端合同不变，服务端
+                // 合同由 hasn-node 独占）。
                 if config.huanxing.enabled
                     && config.huanxing.hasn.enabled
                     && config.huanxing.hasn.auto_connect
                 {
                     let hasn_config = config.clone();
                     tokio::spawn(async move {
-                        // 等待 gateway 启动（给 1 秒让 server 就绪）
+                        // 等待 gateway 启动（给 2 秒让 server 就绪）
                         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                         tracing::info!("[HASN] 触发自动连接...");
 
@@ -1853,41 +1855,52 @@ async fn main() -> Result<()> {
                                 .map(|fp| fp.node_id.clone())
                                 .unwrap_or_default();
 
-                        if let Some(token) = access_token {
-                            let url = format!("{}?protocol=hasn/2.0", base_url);
-                            let mut auth_headers = if token.starts_with("hasn_ok_") {
-                                vec![(
-                                    "Authorization".to_string(),
-                                    format!("OwnerKey {}", token),
-                                )]
-                            } else {
-                                vec![(
-                                    "Authorization".to_string(),
-                                    format!("Bearer {}", token),
-                                )]
-                            };
-                            if !fp_node_id.is_empty() {
-                                auth_headers
-                                    .push(("X-Node-Id".to_string(), fp_node_id));
-                            }
-                            let max_retries = hasn_config.huanxing.hasn.max_retries;
-
-                            // 注意：connect_with_retry 需要 AppState，而守护进程
-                            // 启动时尚未把 state 暴露给外部。这里记录要求，真正
-                            // 连接由前端 POST /api/v1/hasn/connect 或由集成测试
-                            // 驱动。云端如需 auto-connect，需改用不依赖
-                            // AppState 的 direct connect 路径（followup）。
-                            let _ = (url, auth_headers, max_retries);
-                            tracing::warn!(
-                                "[HASN] auto_connect 占位：当前版本需前端或集成测试驱动 \
-                                 POST /api/v1/hasn/connect 才能建立 WebSocket。\
-                                 若需云端 auto-connect，请在后续 followup 提供 \
-                                 无需 AppState 的 connector entrypoint。"
-                            );
-                        } else {
+                        let Some(token) = access_token else {
                             tracing::warn!(
                                 "[HASN] 未配置 api_key/access_token，跳过自动连接"
                             );
+                            return;
+                        };
+
+                        let url = format!("{}?protocol=hasn/2.0", base_url);
+                        let mut auth_headers = if token.starts_with("hasn_ok_") {
+                            vec![(
+                                "Authorization".to_string(),
+                                format!("OwnerKey {}", token),
+                            )]
+                        } else {
+                            vec![(
+                                "Authorization".to_string(),
+                                format!("Bearer {}", token),
+                            )]
+                        };
+                        if !fp_node_id.is_empty() {
+                            auth_headers
+                                .push(("X-Node-Id".to_string(), fp_node_id));
+                        }
+                        let max_retries = hasn_config.huanxing.hasn.max_retries;
+
+                        let Some(connector) =
+                            zeroclaw_huanxing::hasn_node::connector::global_connector_opt()
+                        else {
+                            tracing::error!(
+                                "[HASN] hasn-node 全局 connector 未初始化 — \
+                                 initialize_embedded_huanxing_node 未被调用？\
+                                 跳过 auto_connect"
+                            );
+                            return;
+                        };
+
+                        match connector
+                            .connect_with_retry(&url, auth_headers, max_retries)
+                            .await
+                        {
+                            Ok(()) => tracing::info!(
+                                "[HASN] auto_connect 成功（via hasn-node）"
+                            ),
+                            Err(e) => tracing::error!(
+                                "[HASN] auto_connect 失败: {e}"
+                            ),
                         }
                     });
                 }

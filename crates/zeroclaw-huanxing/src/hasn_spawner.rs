@@ -96,6 +96,17 @@ pub fn initialize_embedded_huanxing_node(config: &Config) -> anyhow::Result<Arc<
         tracing::warn!(error = %err, "加载 hasn-node spawner 配置失败（非阻塞）");
     }
 
+    // Phase 05-05 Task 2 — 初始化 hasn-node 全局 connector。后续 WS 建连、
+    // send_message、add_owner、add_agent、入站 dispatch 全部走 hasn-node，
+    // 不再走 legacy `zeroclaw_huanxing::hasn_connector::global_connector()`。
+    // `init_global_connector` 幂等：二次调用返回 false，不影响已有 connector。
+    let did_init = hasn_node::connector::init_global_connector(node.clone(), node.chat_db.clone());
+    if did_init {
+        tracing::info!("[HASN] hasn-node 全局 connector 初始化成功");
+    } else {
+        tracing::debug!("[HASN] hasn-node 全局 connector 已初始化过，跳过（幂等）");
+    }
+
     *embedded_node_slot().lock().unwrap() = Some(node.clone());
     Ok(node)
 }

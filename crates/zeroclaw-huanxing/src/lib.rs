@@ -33,6 +33,12 @@
     clippy::redundant_closure_for_method_calls
 )]
 
+// Phase 05-05 — re-export hasn-node 让顶层 `zeroclawlabs` bin 可以通过
+// `zeroclaw_huanxing::hasn_node::connector::global_connector_opt()` 访问 hasn-node
+// 全局 connector，不需要把 `hasn-node` 加到顶层 bin 的 [dependencies]（它已经是
+// 本 crate 的依赖）。
+pub use hasn_node;
+
 pub mod agent_bridge;
 pub mod api_agents;
 pub mod api_client;

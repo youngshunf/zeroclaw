@@ -13,8 +13,6 @@
 //! - DELETE /api/v1/hasn/node/agents/{agent_id} 下线 Agent
 //! - WS     /ws/hasn-events          HASN 事件实时推送
 
-use std::sync::Arc;
-
 use axum::{
     Json,
     extract::{
@@ -28,6 +26,11 @@ use serde::Deserialize;
 use tracing::{error, info};
 
 use zeroclaw_gateway::AppState;
+
+// Phase 05-05 — legacy `hasn_connector` 仅保留给 `hasn_sync.rs` 等非 WS 热路径；
+// 本文件的所有控制平面端点（connect/disconnect/status/send/ws/…）逐步迁到
+// `hasn_node::connector::global_connector_opt()`（Task 2 切换 `hasn_connect`，
+// 剩余端点由 Task 4 完成；届时下面的 `hasn_connector` 依赖将被移除）。
 use crate::hasn_connector;
 
 // ─── Request/Response 类型 ───
@@ -79,6 +82,11 @@ pub struct AddAgentRequest {
 // ─── 端点实现 ───
 
 /// POST /api/v1/hasn/connect
+///
+/// Phase 05-05 Task 2 — 薄转发到 hasn-node 全局 connector。
+/// 桌面端合同保持 Phase 05-02 基线：响应 JSON 字段不带 `data` 外壳；
+/// 200 `{status:"connected"}` / 503 `{status:"failed", error}` / 504 `{status:"timeout", error}` /
+/// 400 `{error}`。
 pub async fn hasn_connect(
     State(state): State<AppState>,
     Json(req): Json<ConnectRequest>,
@@ -168,7 +176,17 @@ pub async fn hasn_connect(
 
     let url = format!("{}?protocol=hasn/2.0", base_url);
 
-    let connector = hasn_connector::global_connector();
+    let Some(connector) = hasn_node::connector::global_connector_opt() else {
+        error!("[HASN API] hasn-node 全局 connector 未初始化");
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({
+                "status": "failed",
+                "error": "hasn-node 全局 connector 未初始化",
+            })),
+        )
+            .into_response();
+    };
 
     // ⚠️ 不能在 HTTP 处理器里跑 connect_with_retry：
     //   默认 max_retries=10 + 指数退避 (1s→30s)，最坏阻塞 ~3 分钟，
@@ -176,12 +194,7 @@ pub async fn hasn_connect(
     //   这里只做一次握手，带 15s 硬超时，重试交给前端 5 分钟心跳兜底。
     const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 
-    match tokio::time::timeout(
-        CONNECT_TIMEOUT,
-        connector.connect(&url, auth_headers, Arc::new(state)),
-    )
-    .await
-    {
+    match tokio::time::timeout(CONNECT_TIMEOUT, connector.connect(&url, auth_headers)).await {
         Ok(Ok(())) => {
             info!("[HASN API] 连接成功");
             (
