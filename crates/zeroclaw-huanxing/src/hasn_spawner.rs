@@ -4,6 +4,35 @@
 //! - 继续复用 zeroclaw-huanxing 既有 tenant/session/runtime 逻辑
 //! - 通过 hasn-node 的 generic `ReplyChunk` 合同把结果回交给路由层
 //! - 不在 spawner 内直接写 WS 帧，也不额外引入 HTTP / IPC 回环
+//!
+//! # Phase 05-05 — HASN Cutover Decision Table
+//!
+//! Phase 05-01/02 在 hasn-node 侧建好了 router + SpawnerRegistry + HuanxingNativeSpawner，
+//! 但「入口（WS connect）+ 出口（/send）+ 入站 dispatch」仍留在 legacy
+//! `zeroclaw_huanxing::hasn_connector/hasn_router`。本 Plan（05-05）把这三块迁到 hasn-node。
+//!
+//! | 能力                        | Before (legacy 独占)                                        | After (hasn-node 独占)                                                 | 备注 |
+//! |-----------------------------|-------------------------------------------------------------|-------------------------------------------------------------------------|------|
+//! | HASN WS 长连接              | `zeroclaw_huanxing::hasn_connector::global_connector().connect` | `hasn_node::connector::global_connector_opt().connect_with_retry`   | main.rs 启动段 cutover |
+//! | 出站 send_message           | legacy `HasnConnector::send_message`                        | hasn-node `HasnConnector::send_message`                                 | `hasn_api::hasn_send` 薄转发 |
+//! | 入站 `hasn.message.received`| legacy `MessageRouter::dispatch` → `HasnAgentBridge::inject_and_stream` | hasn-node `router::dispatch` → `SpawnerRegistry` → `HuanxingNativeSpawner` | 05-01 已实装，本 Plan 只做「通电」 |
+//! | Owner ↔ 自家 Agent          | 走 `ws.send_frame` → 服务端 2006 拦截                       | hasn-node router 本地闭环 → 回复经 Spawner 写 chat_db + broadcast `HasnEvent::Message` | 05-05 Task 3 新增 |
+//! | `/ws/hasn-events` broadcast | legacy `hasn_connector.subscribe()`                         | hasn-node `connector.subscribe()`                                       | 字段形状保持一致 |
+//! | chat_db 落盘路径            | `~/.huanxing/users/{tenant_dir}/data/hasn_chat.db`          | `~/.huanxing/users/{tenant_dir}/data/hasn_chat.db`                      | **不变** — 继续写 legacy 路径；hasn-node 的 `~/.hasn/hasn_db.sqlite` 在本 Plan 中不涉及 |
+//! | local_entities (Owner + Agent 驻留) | legacy HashSet (in-memory)                          | hasn-node `local_agents` 表 (SQLite)                                    | 驻留注册在 hasn-node 的 `add_owner_ack` / `add_agent_ack` 里写表 |
+//! | Agent 注册映射 (a_xxx → workspace) | legacy `TenantDb::find_by_hasn_id`                   | `HuanxingNativeSpawner::chat_db_for_hasn_id` 内复用 legacy `TenantDb`  | **不变** — huanxing-native 是桥接层，仍依赖 zeroclaw-huanxing 的 TenantDb |
+//! | PROVISION_AGENT             | legacy `handle_ws_frame` 真实创建 agent + workspace         | hasn-node 目前仅 log（未实装 `AgentProvisioner`）                       | **本 Plan 不迁移** — 保留 legacy 这条非热路径（将来 Phase 6+） |
+//! | hasn_sync.rs（联系人 Pull） | legacy `global_connector()`                                 | legacy 保留                                                             | **不变** — 非 WS 热路径，独立 HTTP 拉取 |
+//!
+//! ## 硬约束
+//! - 桌面端 `clients/desktop/src/lib/hasn-api.ts` 零改动（Phase 2 Success Criteria 2）
+//! - legacy `hasn_connector::global_connector` symbol 保留给 `hasn_sync.rs` 等非热路径使用（Pull 云端联系人列表），但 WS frame 入站处理走 hasn-node
+//! - legacy `handle_ws_frame` / `MessageRouter::dispatch` / `HasnAgentBridge::inject_and_stream` 进入 deprecated 状态：保留符号 + `debug_assert!(false, "Phase 05-05: legacy path deprecated")`，确保 dual-WS 不共存
+//!
+//! ## peer_id 修正
+//! - legacy `hasn_router::MessageRouter::dispatch`（`hasn_router.rs:140`）upsert_session 的 peer 参数误用 `&message.from_id`（= Owner 自己），应为 `target_id`（= 对端 Agent 的 `a_xxx`）
+//! - Task 3 在 `HasnAgentBridge::dispatch_to_reply_chunks`（以及共享的 session upsert helper）把 peer 显式写为 `ctx.agent_hasn_id`
+//! - Task 5 附幂等迁移 `HasnChatDb::run_migration_phase_05_05_peer_id` 修正历史污染
 
 use std::collections::HashMap;
 use std::sync::Arc;
