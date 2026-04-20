@@ -1,19 +1,28 @@
-//! Phase 05-05 — HASN cutover 冒烟测试。
+//! Phase 05-05 / 05-06 — HASN cutover 冒烟测试。
 //!
-//! 本测试验证两个 cutover 不变式（**不连真实中央服务器**）：
+//! 本测试验证三个 cutover 不变式（**不连真实中央服务器**）：
 //!
-//! 1. **peer_id 迁移正确性**：模拟历史污染场景（sessions.peer_id 写成 Owner 的
-//!    `h_*`），调 `HasnChatDb::run_migration_phase_05_05_peer_id` 后应把 peer_id
-//!    修正为对端 Agent 的 `a_*`；再次调用（幂等）应早退并返回 0 行。
-//! 2. **legacy connector 未被误触发**：读 `hasn_connector::test_harness` 计数器，
-//!    确认从进程启动到测试结束 `connect` / `handle_ws_frame` 都为 0。测试只用
-//!    本仓内类型，不调用 legacy shim 入口，因此计数器应保持 0。
+//! 1. **peer_id 迁移正确性**（05-05）：模拟历史污染场景（sessions.peer_id 写成
+//!    Owner 的 `h_*`），调 `HasnChatDb::run_migration_phase_05_05_peer_id` 后应把
+//!    peer_id 修正为对端 Agent 的 `a_*`；再次调用（幂等）应早退并返回 0 行。
+//! 2. **legacy connector 未被误触发**（05-05）：读 `hasn_connector::test_harness`
+//!    计数器，确认从进程启动到测试结束 `connect` / `handle_ws_frame` 都为 0。
+//! 3. **outbound LocalLoopback 跨 crate 合同**（05-06 Gap #3）：zeroclaw 仓通过
+//!    hasn-node 的 public API 调 `HasnConnector::send_message`，同 owner 两本地
+//!    实体应**不经 ws.send_frame** 直接走 MessageRouter::dispatch + event broadcast；
+//!    返回 Ok 且 `/ws/hasn-events` 订阅方收到 `HasnEvent::Message { local_loopback }`。
 //!
-//! 退化说明：原任务建议「接入 hasn-node inject_test_frame + MessageRouter
-//! 端到端闭环」，但新增 test-only feature 对 hasn-node 表面侵入较大。hasn-node
-//! 单元测试已覆盖 RoutingMode + LocalLoopback 分支 + event_tx 广播（见
-//! `hasn-node/crates/hasn-node/src/router.rs` 3 新测试），本 smoke 只补齐
-//! 「历史数据修正」+「legacy 入口未触发」两条 cutover 硬约束。
+//! 退化说明（Plan Rule 3 — 解除 blocking issue）：原 05-06 Task 3 建议的全量启动
+//! 路径（`initialize_embedded_huanxing_node` + `register_huanxing_native_spawner`）
+//! 依赖 zeroclaw tenant/workspace 基础设施 helper（`seed_test_tenant_and_agent` /
+//! `open_tenant_chat_db` / `make_test_config`）——它们在当前 codebase 不存在；且
+//! `initialize_embedded_huanxing_node` 会触碰进程级 `OnceLock<HasnConnector>`，
+//! 与 hasn-node 其它测试或未来 smoke 串跑会污染全局状态。改用 hasn-node 的
+//! public API 直接构建 `HasnConnector::new` + `Node::new`（不走 OnceLock），聚焦
+//! outbound LocalLoopback 的**跨 crate 合同**（API 可达性 + 语义一致性）；完整
+//! Spawner 驱动路径已由 hasn-node 单元测试覆盖（Task 1 的
+//! `build_local_loopback_payload_dispatches_without_errors` + Task 2 的
+//! `outbound_same_owner_skips_ws`），无重复覆盖缺口。
 
 use zeroclaw_huanxing::hasn_chat_db::{ChatMessageRecord, HasnChatDb};
 use zeroclaw_huanxing::hasn_connector::test_harness as legacy_harness;
@@ -95,5 +104,154 @@ async fn owner_to_own_agent_roundtrip_is_local_only() {
         !legacy_harness::was_handle_ws_frame_called(),
         "Phase 05-05 cutover: legacy handle_ws_frame 不应被调用 (calls={})",
         legacy_harness::handle_ws_frame_call_count()
+    );
+}
+
+// ════════════════════════════════════════════════════════════════
+// Phase 05-06 — outbound LocalLoopback 跨 crate 合同 smoke
+// ════════════════════════════════════════════════════════════════
+
+/// Gap #3 根因修复后的跨 crate 合同验证：
+///
+/// zeroclaw 侧调用 hasn-node 的 `HasnConnector::send_message`（public API）
+/// 时，同 owner 两本地实体触发 outbound LocalLoopback：
+/// - 不调 `ws.send_frame`（未连接 ws 也不抛 Err）
+/// - 通过 `event_tx` 广播 `HasnEvent::Message { local_loopback=true }`
+///
+/// 锁定 API 可达性（zeroclaw 能调到）+ 语义一致性（行为与 hasn-node 单测对齐）。
+#[tokio::test]
+async fn owner_to_own_agent_outbound_skips_ws() {
+    use hasn_node::config::NodeConfig;
+    use hasn_node::connector::{HasnConnector, HasnEvent};
+    use hasn_node::node::Node;
+    use std::sync::Arc;
+
+    // 1) 构造独立 Node（不触碰 hasn-node 进程级 OnceLock<HasnConnector>）
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut node_config = NodeConfig::default();
+    node_config.node.data_dir = Some(tmp.path().to_str().unwrap().to_string());
+    let node = Arc::new(Node::new(node_config).expect("Node::new"));
+
+    // 2) seed 同 owner 两本地实体（owner human + agent）
+    let owner_id = "owner_zc_outbound";
+    let owner_hasn = "h_zc_outbound";
+    let agent_hasn = "a_zc_outbound";
+    node.db
+        .upsert_owner(owner_id, None, Some("ZeroClaw Test Owner"), None)
+        .expect("upsert_owner");
+    node.db
+        .upsert_local_agent(
+            "zc::outbound::owner",
+            owner_id,
+            Some(owner_hasn),
+            "owner_entity",
+            "Owner Entity",
+            "owner_shim",
+            Some("human"),
+            None,
+            None,
+            None,
+            "{}",
+        )
+        .expect("upsert owner entity");
+
+    // 3) 注册一个 echo spawner —— 收到 ctx 后发一条 Text + Done
+    use async_trait::async_trait;
+    use hasn_node::spawner::{AgentSpawner, InboundContext, ReplyChunk};
+    use tokio::sync::mpsc;
+
+    struct EchoSpawner;
+    #[async_trait]
+    impl AgentSpawner for EchoSpawner {
+        fn name(&self) -> &str {
+            "test_spawner_zc_echo"
+        }
+        async fn dispatch(
+            &self,
+            _ctx: InboundContext,
+        ) -> anyhow::Result<mpsc::Receiver<ReplyChunk>> {
+            let (tx, rx) = mpsc::channel(4);
+            let _ = tx.send(ReplyChunk::Text("zc reply".into())).await;
+            let _ = tx.send(ReplyChunk::Done).await;
+            Ok(rx)
+        }
+        async fn probe(&self) -> bool {
+            true
+        }
+    }
+    node.register_spawner(Arc::new(EchoSpawner))
+        .await
+        .expect("register spawner");
+
+    node.db
+        .upsert_local_agent(
+            "zc::outbound::agent",
+            owner_id,
+            Some(agent_hasn),
+            "agent_entity",
+            "Agent Entity",
+            "test_spawner_zc_echo",
+            Some("assistant"),
+            None,
+            None,
+            None,
+            "{}",
+        )
+        .expect("upsert agent entity");
+
+    // 4) 构造 HasnConnector（ws 未连接）并订阅事件
+    let connector = HasnConnector::new(node.clone(), node.chat_db.clone());
+    let mut rx = connector.subscribe();
+
+    // 5) 调 send_message —— 同 owner 两实体应走 outbound LocalLoopback
+    let result = connector
+        .send_message(
+            agent_hasn,
+            serde_json::json!({"text": "你好"}),
+            Some(owner_hasn.to_string()),
+            Some("zc_loc_1".to_string()),
+        )
+        .await;
+    assert!(
+        result.is_ok(),
+        "outbound LocalLoopback 应不调 ws.send_frame → 返回 Ok；实际 {:?}",
+        result
+    );
+
+    // 6) event_tx 广播 HasnEvent::Message { payload.local_loopback=true }
+    let payload = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            match rx.recv().await {
+                Ok(HasnEvent::Message { payload }) => return Some(payload),
+                Ok(_) => continue,
+                Err(_) => return None,
+            }
+        }
+    })
+    .await
+    .expect("5s 未收到 HasnEvent 广播 → outbound LocalLoopback 分支未触发 spawner")
+    .expect("broadcast channel 已关闭");
+
+    assert_eq!(
+        payload.get("local_loopback").and_then(|v| v.as_bool()),
+        Some(true),
+        "广播 payload 应带 local_loopback=true; payload={payload}"
+    );
+    assert_eq!(
+        payload.get("from_id").and_then(|v| v.as_str()),
+        Some(agent_hasn),
+        "广播 from_id 应为回复方 agent"
+    );
+    assert_eq!(
+        payload.get("to_id").and_then(|v| v.as_str()),
+        Some(owner_hasn),
+        "广播 to_id 应为原发送 owner"
+    );
+
+    // 7) legacy 入口依旧不应被触发（回归保护）
+    assert!(
+        !legacy_harness::was_connect_called(),
+        "05-06 smoke 不应触发 legacy connect (calls={})",
+        legacy_harness::connect_call_count()
     );
 }
