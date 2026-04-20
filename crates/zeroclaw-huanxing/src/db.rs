@@ -842,7 +842,7 @@ impl TenantDb {
              LEFT JOIN agents a ON u.user_id = a.user_id",
         );
         data_sql.push_str(&format!(
-            " ORDER BY created_at DESC LIMIT {limit} OFFSET {offset}"
+            " ORDER BY u.created_at DESC LIMIT {limit} OFFSET {offset}"
         ));
 
         // Rebuild params for data query
