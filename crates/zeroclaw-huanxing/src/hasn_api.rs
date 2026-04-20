@@ -27,11 +27,9 @@ use tracing::{error, info};
 
 use zeroclaw_gateway::AppState;
 
-// Phase 05-05 — legacy `hasn_connector` 仅保留给 `hasn_sync.rs` 等非 WS 热路径；
-// 本文件的所有控制平面端点（connect/disconnect/status/send/ws/…）逐步迁到
-// `hasn_node::connector::global_connector_opt()`（Task 2 切换 `hasn_connect`，
-// 剩余端点由 Task 4 完成；届时下面的 `hasn_connector` 依赖将被移除）。
-use crate::hasn_connector;
+// Phase 05-05 Task 4 — 11 个控制平面端点全部薄转发到 hasn-node 全局 connector。
+// legacy `hasn_connector` 现仅供 `hasn_sync.rs` 等非 WS 热路径（Pull 联系人）使用，
+// 本文件不再依赖其任何 symbol。
 
 // ─── Request/Response 类型 ───
 
@@ -231,23 +229,49 @@ pub async fn hasn_connect(
     }
 }
 
+// ─── Phase 05-05 Task 4 — 11 端点薄转发 helpers ───
+//
+// 所有端点共用一个结构：
+//   1. 用 `hasn_node::connector::global_connector_opt()` 拿全局 connector
+//   2. None 时 → 503 `{"error": "HASN 未初始化"}`
+//   3. Ok → 保持 Phase 05-02 桌面端合同（响应 JSON 不带 `data` 外壳）
+//   4. Err → 500 `{"error": "..."}`
+
+fn service_unavailable_json() -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(serde_json::json!({"error": "HASN 未初始化"})),
+    )
+}
+
 /// POST /api/v1/hasn/disconnect
 pub async fn hasn_disconnect() -> impl IntoResponse {
-    let connector = hasn_connector::global_connector();
+    let Some(connector) = hasn_node::connector::global_connector_opt() else {
+        return service_unavailable_json().into_response();
+    };
     connector.disconnect().await;
     (
         StatusCode::OK,
         Json(serde_json::json!({"status": "disconnected"})),
     )
+        .into_response()
 }
 
 /// GET /api/v1/hasn/status
+///
+/// 响应 JSON 形状严格保持 Phase 05-02 基线（桌面端合同）：
+/// `{connected, node_id, device_fingerprint, node_name, device_platform}`。
+/// 内部从 hasn-node 的 `ConnectionSnapshot` 取 `connected` / `node_id`；
+/// device_* 三字段继续从 legacy device_fingerprint 全局获取。
 pub async fn hasn_status() -> impl IntoResponse {
-    let connector = hasn_connector::global_connector();
-    let connected = connector.is_connected().await;
-    let node_id = connector.get_node_id().await;
+    let (connected, node_id) = match hasn_node::connector::global_connector_opt() {
+        Some(connector) => {
+            let snap = connector.status_snapshot().await;
+            (snap.connected, snap.node_id)
+        }
+        None => (false, None),
+    };
 
-    // 附加设备指纹信息（由 bootstrap 初始化）
     let fp = crate::device_fingerprint::get_global_fingerprint();
 
     Json(serde_json::json!({
@@ -257,11 +281,16 @@ pub async fn hasn_status() -> impl IntoResponse {
         "node_name": fp.map(|f| f.node_name.as_str()),
         "device_platform": fp.map(|f| f.device_platform.as_str()),
     }))
+    .into_response()
 }
 
 /// POST /api/v1/hasn/send
+///
+/// 桌面端合同：成功响应 **必须** 是 `{"status":"sent"}`（不带 `data` 外壳）。
 pub async fn hasn_send(Json(req): Json<SendRequest>) -> impl IntoResponse {
-    let connector = hasn_connector::global_connector();
+    let Some(connector) = hasn_node::connector::global_connector_opt() else {
+        return service_unavailable_json().into_response();
+    };
 
     match connector
         .send_message(&req.to, req.content, req.from_id, req.local_id)
@@ -277,12 +306,22 @@ pub async fn hasn_send(Json(req): Json<SendRequest>) -> impl IntoResponse {
 }
 
 pub async fn hasn_add_owner(Json(req): Json<AddOwnerRequest>) -> impl IntoResponse {
-    let connector = hasn_connector::global_connector();
+    let Some(connector) = hasn_node::connector::global_connector_opt() else {
+        return service_unavailable_json().into_response();
+    };
     match connector
-        .add_owner(&req.owner_id, &req.owner_proof.proof_type, &req.owner_proof.credential)
+        .add_owner(
+            &req.owner_id,
+            &req.owner_proof.proof_type,
+            &req.owner_proof.credential,
+        )
         .await
     {
-        Ok(()) => (StatusCode::OK, Json(serde_json::json!({"status": "owner_binding_requested"}))).into_response(),
+        Ok(()) => (
+            StatusCode::OK,
+            Json(serde_json::json!({"status": "owner_binding_requested"})),
+        )
+            .into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": format!("{e}")})),
@@ -292,9 +331,18 @@ pub async fn hasn_add_owner(Json(req): Json<AddOwnerRequest>) -> impl IntoRespon
 }
 
 pub async fn hasn_add_agent(Json(req): Json<AddAgentRequest>) -> impl IntoResponse {
-    let connector = hasn_connector::global_connector();
-    match connector.add_agent_presence(&req.agent_id, &req.owner_id).await {
-        Ok(()) => (StatusCode::OK, Json(serde_json::json!({"status": "agent_add_requested"}))).into_response(),
+    let Some(connector) = hasn_node::connector::global_connector_opt() else {
+        return service_unavailable_json().into_response();
+    };
+    match connector
+        .add_agent_presence(&req.agent_id, &req.owner_id)
+        .await
+    {
+        Ok(()) => (
+            StatusCode::OK,
+            Json(serde_json::json!({"status": "agent_add_requested"})),
+        )
+            .into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": format!("{e}")})),
@@ -306,9 +354,15 @@ pub async fn hasn_add_agent(Json(req): Json<AddAgentRequest>) -> impl IntoRespon
 pub async fn hasn_remove_agent(
     axum::extract::Path(agent_id): axum::extract::Path<String>,
 ) -> impl IntoResponse {
-    let connector = hasn_connector::global_connector();
+    let Some(connector) = hasn_node::connector::global_connector_opt() else {
+        return service_unavailable_json().into_response();
+    };
     match connector.remove_agent_presence(&agent_id).await {
-        Ok(()) => (StatusCode::OK, Json(serde_json::json!({"status": "agent_remove_requested"}))).into_response(),
+        Ok(()) => (
+            StatusCode::OK,
+            Json(serde_json::json!({"status": "agent_remove_requested"})),
+        )
+            .into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": format!("{e}")})),
@@ -321,12 +375,18 @@ pub async fn hasn_renew_owner(
     axum::extract::Path(owner_id): axum::extract::Path<String>,
     Json(req): Json<OwnerProofItem>,
 ) -> impl IntoResponse {
-    let connector = hasn_connector::global_connector();
+    let Some(connector) = hasn_node::connector::global_connector_opt() else {
+        return service_unavailable_json().into_response();
+    };
     match connector
         .renew_owner(&owner_id, &req.proof_type, &req.credential)
         .await
     {
-        Ok(()) => (StatusCode::OK, Json(serde_json::json!({"status": "owner_renew_requested"}))).into_response(),
+        Ok(()) => (
+            StatusCode::OK,
+            Json(serde_json::json!({"status": "owner_renew_requested"})),
+        )
+            .into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": format!("{e}")})),
@@ -338,9 +398,15 @@ pub async fn hasn_renew_owner(
 pub async fn hasn_remove_owner(
     axum::extract::Path(owner_id): axum::extract::Path<String>,
 ) -> impl IntoResponse {
-    let connector = hasn_connector::global_connector();
+    let Some(connector) = hasn_node::connector::global_connector_opt() else {
+        return service_unavailable_json().into_response();
+    };
     match connector.remove_owner(&owner_id).await {
-        Ok(()) => (StatusCode::OK, Json(serde_json::json!({"status": "owner_remove_requested"}))).into_response(),
+        Ok(()) => (
+            StatusCode::OK,
+            Json(serde_json::json!({"status": "owner_remove_requested"})),
+        )
+            .into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": format!("{e}")})),
@@ -350,9 +416,15 @@ pub async fn hasn_remove_owner(
 }
 
 pub async fn hasn_list_owners() -> impl IntoResponse {
-    let connector = hasn_connector::global_connector();
+    let Some(connector) = hasn_node::connector::global_connector_opt() else {
+        return service_unavailable_json().into_response();
+    };
     match connector.list_owners().await {
-        Ok(()) => (StatusCode::OK, Json(serde_json::json!({"status": "owners_list_requested"}))).into_response(),
+        Ok(()) => (
+            StatusCode::OK,
+            Json(serde_json::json!({"status": "owners_list_requested"})),
+        )
+            .into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": format!("{e}")})),
@@ -367,14 +439,24 @@ pub async fn hasn_events_ws(ws: WebSocketUpgrade) -> impl IntoResponse {
 }
 
 async fn handle_hasn_events_ws(mut socket: WebSocket) {
-    let connector = hasn_connector::global_connector();
+    // Phase 05-05 Task 4 — 事件源改走 hasn-node connector。
+    // 未初始化时向客户端发一条 text 错误后关闭；桌面端侧逻辑保持兼容。
+    let Some(connector) = hasn_node::connector::global_connector_opt() else {
+        let err = serde_json::json!({
+            "type": "error",
+            "error": "HASN 未初始化",
+        });
+        let _ = socket
+            .send(Message::Text(err.to_string().into()))
+            .await;
+        return;
+    };
     let mut rx = connector.subscribe();
 
-    info!("[HASN Events WS] 新订阅者已连接");
+    info!("[HASN Events WS] 新订阅者已连接 (via hasn-node)");
 
     loop {
         tokio::select! {
-            // 从 HASN 事件广播接收
             event = rx.recv() => {
                 match event {
                     Ok(hasn_event) => {
@@ -391,11 +473,10 @@ async fn handle_hasn_events_ws(mut socket: WebSocket) {
                 }
             }
 
-            // 客户端发来的消息（暂时只处理 Close）
             msg = socket.recv() => {
                 match msg {
                     Some(Ok(Message::Close(_))) | None => break,
-                    _ => {} // 忽略其他消息
+                    _ => {}
                 }
             }
         }
