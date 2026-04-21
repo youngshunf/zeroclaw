@@ -240,9 +240,9 @@ import { hasnWs } from './hasn-ws';
 
 const isDesktop = typeof window !== 'undefined' && (!!(window as any).__TAURI_INTERNALS__ || !!(window as any).__TAURI__);
 const CLOUD_API_BASE = `${import.meta.env.DEV ? '' : (isDesktop ? HUANXING_CONFIG.backendBaseUrl : '')}/api/v1/hasn/app`;
-const SIDECAR_API_BASE = import.meta.env.DEV
-  ? `/api/v1/hasn`
-  : `${HUANXING_CONFIG.sidecarBaseUrl}/api/v1/hasn`;
+const HASN_NODE_BASE = import.meta.env.DEV
+  ? `http://127.0.0.1:42618/api/v1/hasn`
+  : `${HUANXING_CONFIG.hasnNodeBaseUrl}/api/v1/hasn`;
 
 // ── 通用请求工具 ────────────────────────────────
 
@@ -310,7 +310,7 @@ async function cloudDelete<T>(path: string): Promise<T> {
 }
 
 async function sidecarGet<T>(path: string): Promise<T> {
-  const url = `${SIDECAR_API_BASE}${path}`;
+  const url = `${HASN_NODE_BASE}${path}`;
   try {
     const resp = await fetch(url);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
@@ -334,7 +334,7 @@ async function sidecarGet<T>(path: string): Promise<T> {
 }
 
 async function sidecarPost<T>(path: string, body: Record<string, unknown>): Promise<T> {
-  const url = `${SIDECAR_API_BASE}${path}`;
+  const url = `${HASN_NODE_BASE}${path}`;
   try {
     const resp = await fetch(url, {
       method: 'POST',
@@ -397,8 +397,9 @@ export async function hasnRenewOwner(ownerId: string, bearerToken: string): Prom
   });
 }
 
-export async function hasnRemoveOwner(ownerId: string): Promise<any> {
-  const resp = await fetch(`${SIDECAR_API_BASE}/node/owners/${encodeURIComponent(ownerId)}`, {
+export async function hasnRemoveOwner(ownerId: string, opts?: { purge?: boolean }): Promise<any> {
+  const query = opts?.purge ? `?purge=${opts.purge}` : '';
+  const resp = await fetch(`${HASN_NODE_BASE}/node/owners/${encodeURIComponent(ownerId)}${query}`, {
     method: 'DELETE',
   });
   if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
@@ -411,7 +412,7 @@ export async function hasnAddAgent(agentId: string, ownerId: string): Promise<an
 }
 
 export async function hasnRemoveAgent(agentId: string): Promise<any> {
-  const resp = await fetch(`${SIDECAR_API_BASE}/node/agents/${encodeURIComponent(agentId)}`, {
+  const resp = await fetch(`${HASN_NODE_BASE}/node/agents/${encodeURIComponent(agentId)}`, {
     method: 'DELETE',
   });
   if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
@@ -464,15 +465,18 @@ function mapLegacyMessageToEnvelope(msg: any): HasnEnvelope {
 export async function getMessages(
   conversationId: string,
   limit = 50,
-  beforeId?: number | string,
+  offset?: number,
 ): Promise<HasnEnvelope[]> {
   const hasnId = (localStorage.getItem('hasn:hasn_id') || '').trim();
-  const params = new URLSearchParams({ 
+  const params = new URLSearchParams({
     hasn_id: hasnId,
     conversation_id: conversationId,
-    limit: String(limit) 
+    limit: String(limit)
   });
-  
+  if (typeof offset === 'number' && offset > 0) {
+    params.set('offset', String(offset));
+  }
+
   try {
     const raw = await sidecarGet<{ messages: any[] }>(`/chat/messages?${params}`);
     return raw.messages.map((msg: any) => {

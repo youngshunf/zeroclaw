@@ -147,12 +147,12 @@ export function useHasnMessages(conversationId: string | null, peerId?: string |
   convIdRef.current = conversationId;
   peerIdRef.current = peerId;
 
-  const loadMessages = useCallback(async (beforeId?: number | string) => {
+  const loadMessages = useCallback(async (offset?: number) => {
     if (!conversationId) return;
     setLoading(true);
     try {
-      const data = await hasnApi.getMessages(conversationId, 50, beforeId);
-      if (beforeId) {
+      const data = await hasnApi.getMessages(conversationId, 50, offset);
+      if (typeof offset === 'number' && offset > 0) {
         setMessages((prev) => [...data, ...prev]);
       } else {
         setMessages(data);
@@ -257,7 +257,7 @@ export function useHasnMessages(conversationId: string | null, peerId?: string |
 
   const loadMore = useCallback(() => {
     if (messages.length > 0) {
-      loadMessages(messages[0].id);
+      loadMessages(messages.length);
     }
   }, [messages, loadMessages]);
 

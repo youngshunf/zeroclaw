@@ -1751,14 +1751,56 @@ async fn main() -> Result<()> {
                 // orchestrator 时注册为全局；当前不消费它。
                 drop(huanxing_resolver);
 
-                zeroclaw_huanxing::hasn_spawner::configure_huanxing_native_runtime(
+                // M4 —— legacy hasn_chat.db 清库开关
+                //
+                // 触发：环境变量 `HUANXING_HASN_RESET_V2=1`
+                // 动作：删除每个 tenant 的 `{config_dir}/users/*/data/hasn_chat.db`
+                // 理由：M1/M2 后前端从 hasn-node `~/.hasn/hasn_db.sqlite` 读消息，
+                //      legacy 库残留无意义；用户可 env 一次性清理。
+                //      `users.db`（agents 映射）保留不动。
+                if std::env::var("HUANXING_HASN_RESET_V2")
+                    .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                    .unwrap_or(false)
+                {
+                    let config_dir = config
+                        .config_path
+                        .parent()
+                        .unwrap_or(&config.workspace_dir)
+                        .to_path_buf();
+                    let users_root = config_dir.join("users");
+                    if users_root.exists() {
+                        if let Ok(entries) = std::fs::read_dir(&users_root) {
+                            let mut cleaned = 0usize;
+                            for entry in entries.flatten() {
+                                let legacy = entry.path().join("data").join("hasn_chat.db");
+                                if legacy.exists() {
+                                    if let Err(err) = std::fs::remove_file(&legacy) {
+                                        tracing::warn!(
+                                            path = %legacy.display(),
+                                            error = %err,
+                                            "HASN_RESET_V2: 删除 legacy hasn_chat.db 失败"
+                                        );
+                                    } else {
+                                        cleaned += 1;
+                                    }
+                                }
+                            }
+                            tracing::info!(
+                                "HASN_RESET_V2: 已清理 {} 个 legacy hasn_chat.db",
+                                cleaned
+                            );
+                        }
+                    }
+                }
+
+                zeroclaw_huanxing::hasn_bridge::configure_huanxing_native_runtime(
                     config.clone(),
                     None,
                 );
-                match zeroclaw_huanxing::hasn_spawner::initialize_embedded_huanxing_node(&config)
+                match zeroclaw_huanxing::hasn_bridge::initialize_embedded_huanxing_node(&config)
                 {
                     Ok(node) => {
-                        match zeroclaw_huanxing::hasn_spawner::register_huanxing_native_spawner(
+                        match zeroclaw_huanxing::hasn_bridge::register_huanxing_native_spawner(
                             node.clone(),
                         )
                         .await

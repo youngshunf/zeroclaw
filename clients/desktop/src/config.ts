@@ -36,6 +36,9 @@ export const HUANXING_CONFIG = {
   /** ZeroClaw sidecar 本地地址（唤星专属端口） */
   sidecarBaseUrl: 'http://localhost:42620',
 
+  /** hasn-node 独立进程本地地址（Embedded 或 Standalone 模式均指向此） */
+  hasnNodeBaseUrl: 'http://127.0.0.1:42618',
+
   /** 产品名称 */
   productName: '唤星',
 

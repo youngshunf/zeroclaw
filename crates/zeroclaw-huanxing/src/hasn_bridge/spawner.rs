@@ -44,7 +44,7 @@ use tokio::sync::{RwLock, mpsc};
 use zeroclaw_config::schema::Config;
 use zeroclaw_infra::session_backend::SessionBackend;
 
-use crate::hasn_agent_bridge::HasnAgentBridge;
+use crate::hasn_bridge::agent_bridge::HasnAgentBridge;
 use crate::hasn_chat_db::HasnChatDb;
 use crate::hasn_connector::HasnAgentSession;
 
@@ -115,14 +115,21 @@ pub fn initialize_embedded_huanxing_node(config: &Config) -> anyhow::Result<Arc<
 pub struct HuanxingNativeSpawner {
     config: Config,
     session_backend: Option<Arc<dyn SessionBackend>>,
+    /// hasn-node 全局 ChatStorage（M2.5 双写目标，M3 后单写）
+    hasn_chat: Option<Arc<hasn_node::chat_db::ChatStorage>>,
     sessions: Arc<RwLock<HashMap<String, Arc<HasnAgentSession>>>>,
 }
 
 impl HuanxingNativeSpawner {
-    pub fn new(config: Config, session_backend: Option<Arc<dyn SessionBackend>>) -> Self {
+    pub fn new(
+        config: Config,
+        session_backend: Option<Arc<dyn SessionBackend>>,
+        hasn_chat: Option<Arc<hasn_node::chat_db::ChatStorage>>,
+    ) -> Self {
         Self {
             config,
             session_backend,
+            hasn_chat,
             sessions: Arc::new(RwLock::new(HashMap::new())),
         }
     }
@@ -162,6 +169,7 @@ impl HuanxingNativeSpawner {
             self.config.clone(),
             self.session_backend.clone(),
             chat_db,
+            self.hasn_chat.clone(),
             self.sessions.clone(),
         )
     }
@@ -170,7 +178,7 @@ impl HuanxingNativeSpawner {
 impl Default for HuanxingNativeSpawner {
     fn default() -> Self {
         let runtime = current_runtime().expect("huanxing native runtime must be configured");
-        Self::new(runtime.config, runtime.session_backend)
+        Self::new(runtime.config, runtime.session_backend, None)
     }
 }
 
@@ -179,6 +187,7 @@ pub async fn register_huanxing_native_spawner(node: Arc<Node>) -> anyhow::Result
     let spawner = Arc::new(HuanxingNativeSpawner::new(
         runtime.config,
         runtime.session_backend,
+        Some(node.chat_db.clone()),
     ));
     node.register_spawner(spawner).await
 }
@@ -640,7 +649,7 @@ mod tests {
             .await
             .unwrap();
 
-        let spawner = HuanxingNativeSpawner::new(config, None);
+        let spawner = HuanxingNativeSpawner::new(config, None, None);
         let rx = spawner
             .dispatch(inbound_context(agent_hasn_id, "c_silent", "u_blocked"))
             .await
@@ -657,7 +666,7 @@ mod tests {
         let config = test_config(temp.path());
         write_node_config(&config, &temp.path().join("hasn-node"));
 
-        let spawner = HuanxingNativeSpawner::new(config, None);
+        let spawner = HuanxingNativeSpawner::new(config, None, None);
         let mut rx = spawner
             .dispatch(inbound_context("a_missing_agent", "c_missing", "u_sender"))
             .await
@@ -685,7 +694,7 @@ mod tests {
         seed_tenant(temp.path(), tenant_dir, agent_id, "h_owner_demo", agent_hasn_id).await;
 
         let backend: Arc<dyn SessionBackend> = Arc::new(MemoryBackend::default());
-        let spawner = HuanxingNativeSpawner::new(config, Some(backend));
+        let spawner = HuanxingNativeSpawner::new(config, Some(backend), None);
 
         let rx1 = spawner
             .dispatch(inbound_context(agent_hasn_id, "c_reuse", "u_sender"))
@@ -798,7 +807,7 @@ mod tests {
     #[test]
     fn spawner_name_is_stable() {
         let mut registry = SpawnerRegistry::new();
-        let spawner = Arc::new(HuanxingNativeSpawner::new(Config::default(), None));
+        let spawner = Arc::new(HuanxingNativeSpawner::new(Config::default(), None, None));
         registry.register(spawner);
         assert!(registry.get("huanxing_native").is_some());
         assert_eq!(registry.list_names(), vec!["huanxing_native"]);

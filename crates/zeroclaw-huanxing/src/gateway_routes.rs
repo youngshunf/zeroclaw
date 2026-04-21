@@ -17,7 +17,7 @@
 //! - 【HASN 事件 WS】  /ws/hasn-events
 //! - 【Agent WS】      /ws/chat                hx_ws::handle_ws_chat
 
-use axum::routing::{delete, get, post};
+use axum::routing::{get, post};
 use axum::Router;
 use zeroclaw_gateway::AppState;
 
@@ -34,65 +34,15 @@ pub fn huanxing_routes() -> Router<AppState> {
         .merge(crate::api_sessions::session_routes())
         .merge(crate::sop_api::sop_routes())
         .merge(crate::hub_sync::hub_routes())
-        // ── HASN Agent 同步调用端点（桌面端 Sidecar 用） ──────────────
+        // ── HASN Agent 同步调用端点（桌面端 Runtime 层桥接，保留） ──────
         .route(
             "/api/v1/agent/hasn-invoke",
-            post(crate::hasn_invoke::hasn_invoke),
+            post(crate::hasn_bridge::invoke::hasn_invoke),
         )
-        // ── HASN 节点连接管理 API ────────────────────────────────────
-        .route("/api/v1/hasn/connect", post(crate::hasn_api::hasn_connect))
-        .route(
-            "/api/v1/hasn/disconnect",
-            post(crate::hasn_api::hasn_disconnect),
-        )
-        .route("/api/v1/hasn/status", get(crate::hasn_api::hasn_status))
-        .route("/api/v1/hasn/send", post(crate::hasn_api::hasn_send))
-        // ── HASN 本地 IM (chat_db) REST API ──────────────────────────
-        .route(
-            "/api/v1/hasn/chat/sessions",
-            get(crate::hasn_chat_api::hasn_chat_get_sessions),
-        )
-        .route(
-            "/api/v1/hasn/chat/messages",
-            get(crate::hasn_chat_api::hasn_chat_get_messages),
-        )
-        .route(
-            "/api/v1/hasn/chat/read",
-            post(crate::hasn_chat_api::hasn_chat_mark_read),
-        )
-        .route(
-            "/api/v1/hasn/chat/contacts",
-            get(crate::hasn_chat_api::hasn_chat_get_contacts),
-        )
-        .route(
-            "/api/v1/hasn/chat/contacts/detail",
-            get(crate::hasn_chat_api::hasn_chat_get_contact),
-        )
-        .route(
-            "/api/v1/hasn/chat/sync/status",
-            get(crate::hasn_chat_api::hasn_chat_sync_status),
-        )
-        // ── HASN 节点 Owner / Agent 管理 ─────────────────────────────
-        .route(
-            "/api/v1/hasn/node/owners",
-            post(crate::hasn_api::hasn_add_owner).get(crate::hasn_api::hasn_list_owners),
-        )
-        .route(
-            "/api/v1/hasn/node/owners/{owner_id}",
-            delete(crate::hasn_api::hasn_remove_owner),
-        )
-        .route(
-            "/api/v1/hasn/node/owners/{owner_id}/renew",
-            post(crate::hasn_api::hasn_renew_owner),
-        )
-        .route(
-            "/api/v1/hasn/node/agents",
-            post(crate::hasn_api::hasn_add_agent),
-        )
-        .route(
-            "/api/v1/hasn/node/agents/{agent_id}",
-            delete(crate::hasn_api::hasn_remove_agent),
-        )
+        // ── M3: 19 条 /api/v1/hasn/** 路由已迁移到 hasn-node ───────────
+        // 前端 HASN_NODE_BASE = http://127.0.0.1:42618/api/v1/hasn 直连 hasn-node，
+        // 不再经 Tauri gateway。WS /ws/hasn-events 同样迁到 hasn-node。
+        // 旧 handler 文件（hasn_api.rs / hasn_chat_api.rs）待本 commit 后删除。
         // ── WebSocket 端点 ──────────────────────────────────────────
         // Phase 05-04d 起，`huanxing` feature 通过
         // `zeroclaw-gateway/external_chat_ws` 让上游编译期不注册默认 /ws/chat，
@@ -100,6 +50,5 @@ pub fn huanxing_routes() -> Router<AppState> {
         // 不用改，tenant 自动从 WS query/headers 解析，api_key 从租户级
         // config.toml 自动注入到 reliability.api_keys。
         .route("/ws/chat", get(crate::hx_ws::handle_ws_chat))
-        .route("/ws/hasn-events", get(crate::hasn_api::hasn_events_ws))
 }
 

@@ -387,7 +387,7 @@ pub fn huanxing_all_tools(
     {
         let hasn_url = root_config.huanxing.hasn_url().to_string();
         let fallback_workspace = root_config.workspace_dir.clone();
-        tool_arcs.push(Arc::new(super::hasn_tools::HasnSend::new(
+        tool_arcs.push(Arc::new(crate::hasn_bridge::tools::HasnSend::new(
             hx_api.clone().unwrap_or_else(|| {
                 super::ApiClient::new(
                     root_config.huanxing.api_url(),
@@ -398,19 +398,19 @@ pub fn huanxing_all_tools(
             fallback_workspace.clone(),
             hasn_url.clone(),
         )));
-        tool_arcs.push(Arc::new(super::hasn_tools::HasnContacts::new(
+        tool_arcs.push(Arc::new(crate::hasn_bridge::tools::HasnContacts::new(
             fallback_workspace.clone(),
             hasn_url.clone(),
         )));
-        tool_arcs.push(Arc::new(super::hasn_tools::HasnAddFriend::new(
+        tool_arcs.push(Arc::new(crate::hasn_bridge::tools::HasnAddFriend::new(
             fallback_workspace.clone(),
             hasn_url.clone(),
         )));
-        tool_arcs.push(Arc::new(super::hasn_tools::HasnInbox::new(
+        tool_arcs.push(Arc::new(crate::hasn_bridge::tools::HasnInbox::new(
             fallback_workspace.clone(),
             hasn_url.clone(),
         )));
-        tool_arcs.push(Arc::new(super::hasn_tools::HasnRespondRequest::new(
+        tool_arcs.push(Arc::new(crate::hasn_bridge::tools::HasnRespondRequest::new(
             fallback_workspace,
             hasn_url,
         )));

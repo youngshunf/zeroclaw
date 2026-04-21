@@ -57,6 +57,12 @@ pub struct HasnAgentBridge {
     config: Config,
     session_backend: Option<Arc<dyn SessionBackend>>,
     chat_db: HasnChatDb,
+    /// hasn-node 全局 ChatStorage（多 Owner 隔离真源）
+    ///
+    /// M2.5 chat_db 真源改造：agent 回复在写入 legacy `hasn_chat.db` 的同时，
+    /// 双写到 `~/.hasn/hasn_db.sqlite`，确保前端（连 hasn-node HTTP）能看到新消息。
+    /// M3 legacy `hasn_chat.db` 删除后，这里退化为单写。
+    hasn_chat: Option<Arc<hasn_node::chat_db::ChatStorage>>,
     sessions: Arc<RwLock<HashMap<String, Arc<HasnAgentSession>>>>,
 }
 
@@ -65,12 +71,14 @@ impl HasnAgentBridge {
         config: Config,
         session_backend: Option<Arc<dyn SessionBackend>>,
         chat_db: HasnChatDb,
+        hasn_chat: Option<Arc<hasn_node::chat_db::ChatStorage>>,
         sessions: Arc<RwLock<HashMap<String, Arc<HasnAgentSession>>>>,
     ) -> Self {
         Self {
             config,
             session_backend,
             chat_db,
+            hasn_chat,
             sessions,
         }
     }
@@ -197,6 +205,7 @@ impl HasnAgentBridge {
         let session_backend = self.session_backend.clone();
         let sessions = self.sessions.clone();
         let db_clone = self.chat_db.clone();
+        let hasn_chat_clone = self.hasn_chat.clone();
 
         tokio::spawn(async move {
             let bridge = global_bridge();
@@ -312,6 +321,52 @@ impl HasnAgentBridge {
                             "[HasnAgentBridge] Failed to insert agent reply to hasn_chat.db: {}",
                             err
                         );
+                    }
+                    // M2.5 双写 hasn-node ChatStorage（~/.hasn/hasn_db.sqlite）
+                    // owner_id 通过 TenantDb::find_by_hasn_id(agent_hasn_id).hasn_id 反查
+                    if let Some(ref hasn_chat) = hasn_chat_clone {
+                        let config_dir = config
+                            .config_path
+                            .parent()
+                            .unwrap_or(&config.workspace_dir)
+                            .to_path_buf();
+                        let db_path = config.huanxing.resolve_db_path(&config_dir);
+                        let owner_id: Option<String> = match crate::db::TenantDb::open(&db_path) {
+                            Ok(td) => match td.find_by_hasn_id(&from_target).await {
+                                Ok(Some(rec)) => rec.hasn_id,
+                                _ => None,
+                            },
+                            Err(_) => None,
+                        };
+                        match owner_id {
+                            Some(oid) => {
+                                let hasn_record = hasn_node::chat_db::ChatMessageRecord {
+                                    id: 0,
+                                    owner_id: oid,
+                                    message_id: record.message_id.clone(),
+                                    conversation_id: record.conversation_id.clone(),
+                                    sender_id: record.sender_id.clone(),
+                                    receiver_id: record.receiver_id.clone(),
+                                    content_type: record.content_type.clone(),
+                                    content: record.content.clone(),
+                                    status: record.status.clone(),
+                                    is_outgoing: record.is_outgoing,
+                                    created_at: record.created_at.clone(),
+                                };
+                                if let Err(err) = hasn_chat.insert_message(&hasn_record).await {
+                                    tracing::error!(
+                                        "[HasnAgentBridge] Failed to mirror agent reply to hasn-node chat_db: {}",
+                                        err
+                                    );
+                                }
+                            }
+                            None => {
+                                tracing::warn!(
+                                    "[HasnAgentBridge] Skipped hasn-node mirror: owner_id not found for agent {}",
+                                    from_target
+                                );
+                            }
+                        }
                     }
                     let _ = tx.send(ReplyChunk::Text(full_reply)).await;
                     let _ = tx.send(ReplyChunk::Done).await;

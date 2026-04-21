@@ -72,10 +72,10 @@ class HasnWebSocket {
     const token = localStorage.getItem("hasn:platform_token") || "";
     const hasnId = localStorage.getItem("hasn:hasn_id") || "";
     
-    // 连接到 Sidecar 的 hasn-events 推流接口
-    // HTTP URL 形式如 http://localhost:42620
+    // 连接到 hasn-node 的 hasn-events 推流接口
+    // HTTP URL 形式如 http://127.0.0.1:42618
     import('../config').then(({ HUANXING_CONFIG }) => {
-      const urlObj = new URL(HUANXING_CONFIG.sidecarBaseUrl);
+      const urlObj = new URL(HUANXING_CONFIG.hasnNodeBaseUrl);
       const protocol = urlObj.protocol === "https:" ? "wss:" : "ws:";
       const searchParams = new URLSearchParams({ 
         token, 

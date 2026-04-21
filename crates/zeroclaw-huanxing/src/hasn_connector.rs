@@ -425,7 +425,7 @@ async fn handle_ws_frame(
                 let owner_id = params.owner_id.clone();
                 
                 // 启动当前用户的后台增量同步任务
-                crate::hasn_sync::spawn_periodic_sync(state.clone(), owner_id.clone());
+                crate::hasn_bridge::sync::spawn_periodic_sync(state.clone(), owner_id.clone());
 
                 let state_clone = state.clone();
                 let ws_clone = ws.clone();

@@ -9,7 +9,7 @@
 use zeroclaw_gateway::AppState;
 use crate::db::TenantDb;
 use crate::hasn_chat_db::{ChatMessageRecord, HasnChatDb};
-use crate::hasn_agent_bridge::HasnAgentBridge;
+use crate::hasn_bridge::agent_bridge::HasnAgentBridge;
 use crate::hasn_connector::HasnAgentSession;
 use anyhow::Result;
 use hasn_client_core::model::WsMessagePayload;
@@ -168,6 +168,7 @@ impl MessageRouter {
                     self.app_state.config.lock().clone(),
                     self.app_state.session_backend.clone(),
                     chat_db,
+                    None, // legacy router — M3 整体删除，不双写 hasn-node chat_db
                     sessions.clone(),
                 );
                 bridge
