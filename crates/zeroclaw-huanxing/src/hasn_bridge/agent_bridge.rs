@@ -3,14 +3,12 @@
 //! 职责:
 //! 1. 在消息到达 Agent 之前进行来源分类和权限校验 (系统层硬逻辑)
 //! 2. 构建标注化的注入提示词，让 Agent 能区分消息来源
-//! 3. 通过 Agent 运行时执行 turn 并将回复发回 HASN 网络
+//! 3. 通过 Agent 运行时执行 turn 并把回复写入 hasn-node ChatStorage
 
-use crate::hasn_bridge::chat_db::HasnChatDb;
-use crate::hasn_bridge::connector::HasnAgentSession;
 use crate::agent_bridge::global_bridge;
 use anyhow::Context;
-use hasn_client_core::model::{WsMessagePayload, build_send};
-use hasn_client_core::ws::HasnWsClient;
+use hasn_client_core::model::WsMessagePayload;
+use hasn_node::chat_db::{ChatMessageRecord, ChatStorage};
 use hasn_node::spawner::{InboundContext, ReplyChunk};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -18,6 +16,16 @@ use std::sync::Arc;
 use tokio::sync::{RwLock, mpsc};
 use zeroclaw_config::schema::Config;
 use zeroclaw_infra::session_backend::SessionBackend;
+
+// ═══════════════════════════════════════════════════════════════════
+// HASN Agent 专属多路复用会话状态
+// ═══════════════════════════════════════════════════════════════════
+
+pub struct HasnAgentSession {
+    pub agent: tokio::sync::Mutex<zeroclaw_runtime::agent::Agent>,
+    pub session_key: String,
+    pub session_backend: Option<Arc<dyn SessionBackend>>,
+}
 
 // ═══════════════════════════════════════════════════════════════════
 // 消息来源分类
@@ -56,13 +64,7 @@ pub struct AnnotatedMessage {
 pub struct HasnAgentBridge {
     config: Config,
     session_backend: Option<Arc<dyn SessionBackend>>,
-    chat_db: HasnChatDb,
-    /// hasn-node 全局 ChatStorage（多 Owner 隔离真源）
-    ///
-    /// M2.5 chat_db 真源改造：agent 回复在写入 legacy `hasn_chat.db` 的同时，
-    /// 双写到 `~/.hasn/hasn_db.sqlite`，确保前端（连 hasn-node HTTP）能看到新消息。
-    /// M3 legacy `hasn_chat.db` 删除后，这里退化为单写。
-    hasn_chat: Option<Arc<hasn_node::chat_db::ChatStorage>>,
+    chat_db: Arc<ChatStorage>,
     sessions: Arc<RwLock<HashMap<String, Arc<HasnAgentSession>>>>,
 }
 
@@ -70,42 +72,35 @@ impl HasnAgentBridge {
     pub fn new(
         config: Config,
         session_backend: Option<Arc<dyn SessionBackend>>,
-        chat_db: HasnChatDb,
-        hasn_chat: Option<Arc<hasn_node::chat_db::ChatStorage>>,
+        chat_db: Arc<ChatStorage>,
         sessions: Arc<RwLock<HashMap<String, Arc<HasnAgentSession>>>>,
     ) -> Self {
         Self {
             config,
             session_backend,
             chat_db,
-            hasn_chat,
             sessions,
         }
     }
 
-    fn config_dir(&self) -> std::path::PathBuf {
-        self.config
-            .config_path
-            .parent()
-            .unwrap_or(&self.config.workspace_dir)
-            .to_path_buf()
-    }
-
     /// 分类消息来源并生成标注
     ///
-    /// 通过 TenantDb 查询 agent_hasn_id 所属的 owner hasn_id，
-    /// 然后和 from_id 对比来判断是否为主人消息。
+    /// 通过 TenantDb 查询 agent_hasn_id 所属的 owner hasn_id 确认是否为主人消息；
+    /// 否则查 hasn-node ChatStorage 的联系人表（带 owner_id 逻辑隔离）。
     pub async fn classify_and_annotate(
         &self,
+        owner_id: &str,
         agent_hasn_id: &str,
         message: &WsMessagePayload,
     ) -> AnnotatedMessage {
-        // 检查发送者是否是 Agent 的 Owner
-        let config_dir = self.config_dir();
+        let config_dir = self
+            .config
+            .config_path
+            .parent()
+            .unwrap_or(&self.config.workspace_dir)
+            .to_path_buf();
         let db_path = self.config.huanxing.resolve_db_path(&config_dir);
 
-        // find_by_hasn_id(a_xxx) returns the TenantRecord of the owner
-        // TenantRecord.hasn_id is the owner's human hasn_id (h_xxx)
         let is_owner = if let Ok(tenant_db) = crate::db::TenantDb::open(&db_path) {
             if let Ok(Some(tenant)) = tenant_db.find_by_hasn_id(agent_hasn_id).await {
                 tenant.hasn_id.as_deref() == Some(&message.from_id)
@@ -123,8 +118,11 @@ impl HasnAgentBridge {
             };
         }
 
-        // 查询本地联系人 trust_level
-        let contact = self.chat_db.get_contact(&message.from_id).await.unwrap_or(None);
+        let contact = self
+            .chat_db
+            .get_contact(owner_id, &message.from_id)
+            .await
+            .unwrap_or(None);
         if let Some(c) = contact {
             match c.trust_level {
                 0 => AnnotatedMessage {
@@ -141,7 +139,6 @@ impl HasnAgentBridge {
                 },
             }
         } else {
-            // 本地无联系人记录 = 陌生人
             AnnotatedMessage {
                 source: MessageSource::Stranger,
                 handling_instruction: HandlingInstruction::ScreenFirst,
@@ -182,10 +179,13 @@ impl HasnAgentBridge {
 
     async fn dispatch_message_to_reply_chunks(
         &self,
+        owner_id: &str,
         target_agent_id: &str,
         message: WsMessagePayload,
     ) -> anyhow::Result<mpsc::Receiver<ReplyChunk>> {
-        let annotated = self.classify_and_annotate(target_agent_id, &message).await;
+        let annotated = self
+            .classify_and_annotate(owner_id, target_agent_id, &message)
+            .await;
         let (tx, rx) = mpsc::channel(32);
 
         if let HandlingInstruction::SilentDrop = annotated.handling_instruction {
@@ -201,11 +201,11 @@ impl HasnAgentBridge {
         let session_id = message.conversation_id.clone();
         let from_id = message.from_id.clone();
         let from_target = target_agent_id.to_string();
+        let owner_id = owner_id.to_string();
         let config = self.config.clone();
         let session_backend = self.session_backend.clone();
         let sessions = self.sessions.clone();
-        let db_clone = self.chat_db.clone();
-        let hasn_chat_clone = self.hasn_chat.clone();
+        let chat_db = self.chat_db.clone();
 
         tokio::spawn(async move {
             let bridge = global_bridge();
@@ -300,10 +300,10 @@ impl HasnAgentBridge {
                         let _ = backend.append(&session.session_key, &ast_msg);
                     }
 
-                    let msg_id_str = format!("msg_{}", uuid::Uuid::new_v4());
-                    let record = crate::hasn_bridge::chat_db::ChatMessageRecord {
+                    let record = ChatMessageRecord {
                         id: 0,
-                        message_id: msg_id_str,
+                        owner_id: owner_id.clone(),
+                        message_id: format!("msg_{}", uuid::Uuid::new_v4()),
                         conversation_id: session_id.clone(),
                         sender_id: from_target.clone(),
                         receiver_id: from_id.clone(),
@@ -316,57 +316,11 @@ impl HasnAgentBridge {
                             .format("%Y-%m-%d %H:%M:%S")
                             .to_string(),
                     };
-                    if let Err(err) = db_clone.insert_message(&record).await {
+                    if let Err(err) = chat_db.insert_message(&record).await {
                         tracing::error!(
-                            "[HasnAgentBridge] Failed to insert agent reply to hasn_chat.db: {}",
+                            "[HasnAgentBridge] Failed to insert agent reply to hasn-node chat_db: {}",
                             err
                         );
-                    }
-                    // M2.5 双写 hasn-node ChatStorage（~/.hasn/hasn_db.sqlite）
-                    // owner_id 通过 TenantDb::find_by_hasn_id(agent_hasn_id).hasn_id 反查
-                    if let Some(ref hasn_chat) = hasn_chat_clone {
-                        let config_dir = config
-                            .config_path
-                            .parent()
-                            .unwrap_or(&config.workspace_dir)
-                            .to_path_buf();
-                        let db_path = config.huanxing.resolve_db_path(&config_dir);
-                        let owner_id: Option<String> = match crate::db::TenantDb::open(&db_path) {
-                            Ok(td) => match td.find_by_hasn_id(&from_target).await {
-                                Ok(Some(rec)) => rec.hasn_id,
-                                _ => None,
-                            },
-                            Err(_) => None,
-                        };
-                        match owner_id {
-                            Some(oid) => {
-                                let hasn_record = hasn_node::chat_db::ChatMessageRecord {
-                                    id: 0,
-                                    owner_id: oid,
-                                    message_id: record.message_id.clone(),
-                                    conversation_id: record.conversation_id.clone(),
-                                    sender_id: record.sender_id.clone(),
-                                    receiver_id: record.receiver_id.clone(),
-                                    content_type: record.content_type.clone(),
-                                    content: record.content.clone(),
-                                    status: record.status.clone(),
-                                    is_outgoing: record.is_outgoing,
-                                    created_at: record.created_at.clone(),
-                                };
-                                if let Err(err) = hasn_chat.insert_message(&hasn_record).await {
-                                    tracing::error!(
-                                        "[HasnAgentBridge] Failed to mirror agent reply to hasn-node chat_db: {}",
-                                        err
-                                    );
-                                }
-                            }
-                            None => {
-                                tracing::warn!(
-                                    "[HasnAgentBridge] Skipped hasn-node mirror: owner_id not found for agent {}",
-                                    from_target
-                                );
-                            }
-                        }
                     }
                     let _ = tx.send(ReplyChunk::Text(full_reply)).await;
                     let _ = tx.send(ReplyChunk::Done).await;
@@ -390,99 +344,8 @@ impl HasnAgentBridge {
         message.from_id = ctx.from_hasn_id.clone();
         message.to_id = Some(ctx.agent_hasn_id.clone());
         message.content = serde_json::json!({ "text": ctx.user_message });
-        self.dispatch_message_to_reply_chunks(&ctx.agent_hasn_id, message)
+        self.dispatch_message_to_reply_chunks(&ctx.owner_id, &ctx.agent_hasn_id, message)
             .await
-    }
-
-    /// 注入消息到 Agent 运行时并流式回复
-    ///
-    /// Phase 05-05 — 本入口已 deprecated：hasn-node router 取而代之。
-    /// `dispatch_to_reply_chunks` 仍保留（HuanxingNativeSpawner 通过它调本
-    /// bridge 的 tenant lookup + agent runtime 能力），这里只对 WS 出站那层
-    /// 加 debug_assert 防止生产调用 fall through。
-    pub async fn inject_and_stream(
-        &self,
-        target_agent_id: &str,
-        message: WsMessagePayload,
-        ws: Arc<HasnWsClient>,
-    ) {
-        // Phase 05-05 Task 5 — legacy WS 出站 deprecated
-        debug_assert!(
-            false,
-            "Phase 05-05: legacy path deprecated, use hasn-node connector"
-        );
-
-        let Ok(mut receiver) = self
-            .dispatch_message_to_reply_chunks(target_agent_id, message.clone())
-            .await
-        else {
-            let frame = build_send(
-                target_agent_id,
-                &message.from_id,
-                serde_json::json!({"text": "huanxing dispatch failed: tenant lookup"}),
-                Some(1),
-                Some("error"),
-                None,
-                None,
-            );
-            let _ = ws.send_frame(&frame).await;
-            return;
-        };
-
-        let from_target = target_agent_id.to_string();
-        let to_target = message.from_id.clone();
-        tokio::spawn(async move {
-            while let Some(chunk) = receiver.recv().await {
-                match chunk {
-                    ReplyChunk::Text(text) => {
-                        let frame = build_send(
-                            &from_target,
-                            &to_target,
-                            serde_json::json!({ "text": text }),
-                            Some(1),
-                            None,
-                            None,
-                            None,
-                        );
-                        let _ = ws.send_frame(&frame).await;
-                    }
-                    ReplyChunk::ToolCall {
-                        tool_id: _tool_id,
-                        tool_name,
-                        status,
-                        result,
-                    } => {
-                        let frame = build_send(
-                            &from_target,
-                            &to_target,
-                            serde_json::json!({
-                                "tool_name": tool_name,
-                                "status": status,
-                                "result": result,
-                            }),
-                            Some(6),
-                            None,
-                            None,
-                            None,
-                        );
-                        let _ = ws.send_frame(&frame).await;
-                    }
-                    ReplyChunk::Error(err) => {
-                        let frame = build_send(
-                            &from_target,
-                            &to_target,
-                            serde_json::json!({ "text": err }),
-                            Some(1),
-                            Some("error"),
-                            None,
-                            None,
-                        );
-                        let _ = ws.send_frame(&frame).await;
-                    }
-                    ReplyChunk::Done => break,
-                }
-            }
-        });
     }
 }
 

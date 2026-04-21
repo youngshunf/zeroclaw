@@ -44,9 +44,8 @@ use tokio::sync::{RwLock, mpsc};
 use zeroclaw_config::schema::Config;
 use zeroclaw_infra::session_backend::SessionBackend;
 
-use crate::hasn_bridge::agent_bridge::HasnAgentBridge;
-use crate::hasn_bridge::chat_db::HasnChatDb;
-use crate::hasn_bridge::connector::HasnAgentSession;
+use crate::hasn_bridge::agent_bridge::{HasnAgentBridge, HasnAgentSession};
+use hasn_node::chat_db::ChatStorage;
 
 #[derive(Clone)]
 struct HuanxingNativeRuntime {
@@ -275,8 +274,8 @@ fn spawn_embedded_http_server(node: Arc<Node>, addr: String) {
 pub struct HuanxingNativeSpawner {
     config: Config,
     session_backend: Option<Arc<dyn SessionBackend>>,
-    /// hasn-node 全局 ChatStorage（M2.5 双写目标，M3 后单写）
-    hasn_chat: Option<Arc<hasn_node::chat_db::ChatStorage>>,
+    /// hasn-node 全局 ChatStorage（单源 `~/.hasn/hasn_db.sqlite`）
+    chat_db: Arc<ChatStorage>,
     sessions: Arc<RwLock<HashMap<String, Arc<HasnAgentSession>>>>,
 }
 
@@ -284,12 +283,12 @@ impl HuanxingNativeSpawner {
     pub fn new(
         config: Config,
         session_backend: Option<Arc<dyn SessionBackend>>,
-        hasn_chat: Option<Arc<hasn_node::chat_db::ChatStorage>>,
+        chat_db: Arc<ChatStorage>,
     ) -> Self {
         Self {
             config,
             session_backend,
-            hasn_chat,
+            chat_db,
             sessions: Arc::new(RwLock::new(HashMap::new())),
         }
     }
@@ -302,43 +301,13 @@ impl HuanxingNativeSpawner {
             .to_path_buf()
     }
 
-    fn fallback_chat_db_path(&self) -> std::path::PathBuf {
-        self.config_dir().join("data").join("hasn_chat.db")
-    }
-
-    async fn chat_db_for_hasn_id(&self, hasn_id: &str) -> anyhow::Result<HasnChatDb> {
-        let config_dir = self.config_dir();
-        let db_path = self.config.huanxing.resolve_db_path(&config_dir);
-        let chat_db_path = match crate::db::TenantDb::open(&db_path) {
-            Ok(db) => match db.find_by_hasn_id(hasn_id).await {
-                Ok(Some(record)) => self
-                    .config
-                    .huanxing
-                    .resolve_tenant_root(&config_dir, record.tenant_dir.as_deref())
-                    .join("data")
-                    .join("hasn_chat.db"),
-                _ => self.fallback_chat_db_path(),
-            },
-            Err(_) => self.fallback_chat_db_path(),
-        };
-        HasnChatDb::open(&chat_db_path)
-    }
-
-    fn bridge(&self, chat_db: HasnChatDb) -> HasnAgentBridge {
+    fn bridge(&self) -> HasnAgentBridge {
         HasnAgentBridge::new(
             self.config.clone(),
             self.session_backend.clone(),
-            chat_db,
-            self.hasn_chat.clone(),
+            self.chat_db.clone(),
             self.sessions.clone(),
         )
-    }
-}
-
-impl Default for HuanxingNativeSpawner {
-    fn default() -> Self {
-        let runtime = current_runtime().expect("huanxing native runtime must be configured");
-        Self::new(runtime.config, runtime.session_backend, None)
     }
 }
 
@@ -347,7 +316,7 @@ pub async fn register_huanxing_native_spawner(node: Arc<Node>) -> anyhow::Result
     let spawner = Arc::new(HuanxingNativeSpawner::new(
         runtime.config,
         runtime.session_backend,
-        Some(node.chat_db.clone()),
+        node.chat_db.clone(),
     ));
     node.register_spawner(spawner).await
 }
@@ -359,8 +328,7 @@ impl AgentSpawner for HuanxingNativeSpawner {
     }
 
     async fn dispatch(&self, ctx: InboundContext) -> anyhow::Result<mpsc::Receiver<ReplyChunk>> {
-        let chat_db = self.chat_db_for_hasn_id(&ctx.agent_hasn_id).await?;
-        self.bridge(chat_db).dispatch_to_reply_chunks(&ctx).await
+        self.bridge().dispatch_to_reply_chunks(&ctx).await
     }
 
     async fn probe(&self) -> bool {
@@ -528,6 +496,8 @@ mod tests {
                 native_project_path: None,
                 system_prompt_path: None,
                 metadata_json: serde_json::json!({"tenant_dir": "001-13800000000"}),
+                frozen_reason: None,
+                frozen_until: None,
             },
             raw: serde_json::json!({
                 "id": 1,
@@ -786,17 +756,12 @@ mod tests {
         create_workspace_tree(temp.path(), tenant_dir, agent_id).await;
         seed_tenant(temp.path(), tenant_dir, agent_id, "h_owner_demo", agent_hasn_id).await;
 
-        let chat_db = HasnChatDb::open(
-            &temp
-                .path()
-                .join("users")
-                .join(tenant_dir)
-                .join("data")
-                .join("hasn_chat.db"),
-        )
-        .unwrap();
+        let chat_db = Arc::new(
+            ChatStorage::open(&temp.path().join("hasn-node").join("hasn_db.sqlite")).unwrap(),
+        );
         chat_db
-            .upsert_contact(&crate::hasn_bridge::chat_db::ContactRecord {
+            .upsert_contact(&hasn_node::chat_db::ContactRecord {
+                owner_id: "h_owner_demo".to_string(),
                 hasn_id: "u_blocked".to_string(),
                 nickname: Some("Blocked".to_string()),
                 avatar_url: None,
@@ -809,7 +774,7 @@ mod tests {
             .await
             .unwrap();
 
-        let spawner = HuanxingNativeSpawner::new(config, None, None);
+        let spawner = HuanxingNativeSpawner::new(config, None, chat_db);
         let rx = spawner
             .dispatch(inbound_context(agent_hasn_id, "c_silent", "u_blocked"))
             .await
@@ -826,7 +791,10 @@ mod tests {
         let config = test_config(temp.path());
         write_node_config(&config, &temp.path().join("hasn-node"));
 
-        let spawner = HuanxingNativeSpawner::new(config, None, None);
+        let chat_db = Arc::new(
+            ChatStorage::open(&temp.path().join("hasn-node").join("hasn_db.sqlite")).unwrap(),
+        );
+        let spawner = HuanxingNativeSpawner::new(config, None, chat_db);
         let mut rx = spawner
             .dispatch(inbound_context("a_missing_agent", "c_missing", "u_sender"))
             .await
@@ -854,7 +822,10 @@ mod tests {
         seed_tenant(temp.path(), tenant_dir, agent_id, "h_owner_demo", agent_hasn_id).await;
 
         let backend: Arc<dyn SessionBackend> = Arc::new(MemoryBackend::default());
-        let spawner = HuanxingNativeSpawner::new(config, Some(backend), None);
+        let chat_db = Arc::new(
+            ChatStorage::open(&temp.path().join("hasn-node").join("hasn_db.sqlite")).unwrap(),
+        );
+        let spawner = HuanxingNativeSpawner::new(config, Some(backend), chat_db);
 
         let rx1 = spawner
             .dispatch(inbound_context(agent_hasn_id, "c_reuse", "u_sender"))
@@ -966,8 +937,12 @@ mod tests {
 
     #[test]
     fn spawner_name_is_stable() {
+        let temp = tempfile::tempdir().unwrap();
+        let chat_db = Arc::new(
+            ChatStorage::open(&temp.path().join("hasn_db.sqlite")).unwrap(),
+        );
         let mut registry = SpawnerRegistry::new();
-        let spawner = Arc::new(HuanxingNativeSpawner::new(Config::default(), None, None));
+        let spawner = Arc::new(HuanxingNativeSpawner::new(Config::default(), None, chat_db));
         registry.register(spawner);
         assert!(registry.get("huanxing_native").is_some());
         assert_eq!(registry.list_names(), vec!["huanxing_native"]);
