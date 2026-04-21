@@ -8,9 +8,9 @@
 
 use zeroclaw_gateway::AppState;
 use crate::db::TenantDb;
-use crate::hasn_chat_db::{ChatMessageRecord, HasnChatDb};
+use crate::hasn_bridge::chat_db::{ChatMessageRecord, HasnChatDb};
 use crate::hasn_bridge::agent_bridge::HasnAgentBridge;
-use crate::hasn_connector::HasnAgentSession;
+use crate::hasn_bridge::connector::HasnAgentSession;
 use anyhow::Result;
 use hasn_client_core::model::WsMessagePayload;
 use hasn_client_core::ws::HasnWsClient;

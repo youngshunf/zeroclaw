@@ -45,8 +45,8 @@ use zeroclaw_config::schema::Config;
 use zeroclaw_infra::session_backend::SessionBackend;
 
 use crate::hasn_bridge::agent_bridge::HasnAgentBridge;
-use crate::hasn_chat_db::HasnChatDb;
-use crate::hasn_connector::HasnAgentSession;
+use crate::hasn_bridge::chat_db::HasnChatDb;
+use crate::hasn_bridge::connector::HasnAgentSession;
 
 #[derive(Clone)]
 struct HuanxingNativeRuntime {
@@ -84,14 +84,54 @@ pub fn configure_huanxing_native_runtime(
     });
 }
 
-pub fn initialize_embedded_huanxing_node(config: &Config) -> anyhow::Result<Arc<Node>> {
+pub async fn initialize_embedded_huanxing_node(config: &Config) -> anyhow::Result<Arc<Node>> {
     if let Some(node) = embedded_node_slot().lock().unwrap().clone() {
         return Ok(node);
     }
 
     let config_path = config.config_path.to_string_lossy().to_string();
-    let node_config = hasn_node::config::NodeConfig::load(&config_path)?;
+    let mut node_config = hasn_node::config::NodeConfig::load(&config_path)?;
+
+    // 从 `[huanxing] hasn_base_url`（或兜底 api_base_url）自动推导 HASN WS URL，
+    // 注入 hasn-node NodeConfig。用户安装桌面端后由 onboarding 写入 `hasn_base_url`，
+    // 无需手动配置 hasn-node 独立字段。
+    // 推导规则：
+    //   http://host[:port]   → ws://host[:port]/api/v1/hasn/ws/node
+    //   https://host[:port]  → wss://host[:port]/api/v1/hasn/ws/node
+    //   ws://* / wss://*     → 原样使用
+    if node_config.hasn.central_url.is_none()
+        && node_config.connection.server_url.is_none()
+        && node_config.server.url.is_none()
+    {
+        let derived = derive_hasn_ws_url(config.huanxing.hasn_url());
+        tracing::info!(
+            base_url = config.huanxing.hasn_url(),
+            ws_url = %derived,
+            "[HASN] 从 [huanxing] hasn_base_url 推导 WS URL，覆盖 hasn-node 默认地址"
+        );
+        node_config.hasn.central_url = Some(derived);
+    }
+    if node_config.hasn.api_key.is_none()
+        && node_config.connection.owner_api_key.is_none()
+        && node_config.server.api_key.is_none()
+    {
+        if let Some(key) = config.huanxing.hasn.api_key.as_deref() {
+            let trimmed = key.trim();
+            if !trimmed.is_empty() {
+                node_config.hasn.api_key = Some(trimmed.to_string());
+            }
+        }
+    }
+
+    let http_addr = format!("{}:{}", node_config.http.host, node_config.http.port);
     let node = Arc::new(Node::new(node_config)?);
+
+    // 注册内置 spawner（ClaudeCode / Webhook）——桌面端 HTTP API
+    // `/api/v1/hasn/node/agents` 等依赖这些 spawner 的存在。
+    if let Err(err) = node.register_builtin_spawners().await {
+        tracing::warn!(error = %err, "注册 hasn-node 内置 spawner 失败（非阻塞）");
+    }
+
     if let Err(err) = node.load_spawners_from_db() {
         tracing::warn!(error = %err, "加载 hasn-node spawner 配置失败（非阻塞）");
     }
@@ -107,8 +147,128 @@ pub fn initialize_embedded_huanxing_node(config: &Config) -> anyhow::Result<Arc<
         tracing::debug!("[HASN] hasn-node 全局 connector 已初始化过，跳过（幂等）");
     }
 
+    // 计划 14.4 —— embedded 模式下 hasn-node 必须在 127.0.0.1:42618 监听，
+    // 前端 `HASN_NODE_BASE` 直连此端口。仅 spawn 一次（进程级 flag 幂等）。
+    spawn_embedded_http_server(node.clone(), http_addr);
+
     *embedded_node_slot().lock().unwrap() = Some(node.clone());
     Ok(node)
+}
+
+fn embedded_http_started() -> &'static std::sync::atomic::AtomicBool {
+    static FLAG: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    &FLAG
+}
+
+/// 把 `hasn_base_url`（HTTP[S] 基址）转换为 HASN WS URL。
+///
+/// 规则：
+/// - `http://host[:port][/path]` → `ws://host[:port]/api/v1/hasn/ws/node`
+/// - `https://host[:port][/path]` → `wss://host[:port]/api/v1/hasn/ws/node`
+/// - 已是 `ws://` / `wss://` 的原样保留
+/// - 解析失败或空 → 沿用 hasn-node 的默认常量（由调用方兜底）
+pub(crate) fn derive_hasn_ws_url(base: &str) -> String {
+    const WS_PATH: &str = "/api/v1/hasn/ws/node";
+    let trimmed = base.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return format!("wss://hasn.huanxing.dcfuture.cn{WS_PATH}");
+    }
+    if let Some(rest) = trimmed.strip_prefix("https://") {
+        let host = rest.split('/').next().unwrap_or(rest);
+        return format!("wss://{host}{WS_PATH}");
+    }
+    if let Some(rest) = trimmed.strip_prefix("http://") {
+        let host = rest.split('/').next().unwrap_or(rest);
+        return format!("ws://{host}{WS_PATH}");
+    }
+    if trimmed.starts_with("ws://") || trimmed.starts_with("wss://") {
+        return trimmed.to_string();
+    }
+    // 无 scheme 兜底：按 https 处理
+    format!("wss://{trimmed}{WS_PATH}")
+}
+
+#[cfg(test)]
+mod url_tests {
+    use super::derive_hasn_ws_url;
+
+    #[test]
+    fn http_to_ws() {
+        assert_eq!(
+            derive_hasn_ws_url("http://127.0.0.1:8020"),
+            "ws://127.0.0.1:8020/api/v1/hasn/ws/node"
+        );
+    }
+
+    #[test]
+    fn https_to_wss() {
+        assert_eq!(
+            derive_hasn_ws_url("https://api.huanxing.dcfuture.cn"),
+            "wss://api.huanxing.dcfuture.cn/api/v1/hasn/ws/node"
+        );
+    }
+
+    #[test]
+    fn strip_trailing_slash_and_path() {
+        assert_eq!(
+            derive_hasn_ws_url("http://127.0.0.1:8020/api/"),
+            "ws://127.0.0.1:8020/api/v1/hasn/ws/node"
+        );
+    }
+
+    #[test]
+    fn ws_passthrough() {
+        assert_eq!(
+            derive_hasn_ws_url("ws://localhost:9000/custom/path"),
+            "ws://localhost:9000/custom/path"
+        );
+    }
+
+    #[test]
+    fn empty_fallback() {
+        assert_eq!(
+            derive_hasn_ws_url(""),
+            "wss://hasn.huanxing.dcfuture.cn/api/v1/hasn/ws/node"
+        );
+    }
+}
+
+fn spawn_embedded_http_server(node: Arc<Node>, addr: String) {
+    use std::sync::atomic::Ordering;
+    if embedded_http_started()
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        tracing::debug!(
+            "[HASN] embedded HTTP server 已启动过（addr={}），跳过",
+            addr
+        );
+        return;
+    }
+
+    tokio::spawn(async move {
+        let api_state = hasn_node::api::ApiState {
+            node: node.clone(),
+            chat_db: node.chat_db.clone(),
+        };
+        let router = hasn_node::http::build_router(api_state);
+        let listener = match tokio::net::TcpListener::bind(&addr).await {
+            Ok(l) => l,
+            Err(err) => {
+                embedded_http_started().store(false, std::sync::atomic::Ordering::SeqCst);
+                tracing::error!(
+                    error = %err,
+                    addr = %addr,
+                    "[HASN] embedded hasn-node HTTP bind 失败"
+                );
+                return;
+            }
+        };
+        tracing::info!("[HASN] embedded hasn-node HTTP 启动于 {}", addr);
+        if let Err(err) = axum::serve(listener, router).await {
+            tracing::error!(error = %err, "[HASN] embedded hasn-node HTTP 异常退出");
+        }
+    });
 }
 
 /// 唤星原生 Spawner —— 复用既有桥接逻辑的薄 trait 壳
@@ -636,7 +796,7 @@ mod tests {
         )
         .unwrap();
         chat_db
-            .upsert_contact(&crate::hasn_chat_db::ContactRecord {
+            .upsert_contact(&crate::hasn_bridge::chat_db::ContactRecord {
                 hasn_id: "u_blocked".to_string(),
                 nickname: Some("Blocked".to_string()),
                 avatar_url: None,

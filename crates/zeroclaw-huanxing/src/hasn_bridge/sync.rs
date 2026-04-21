@@ -7,8 +7,8 @@
 //! 对齐设计文档第八节
 
 use zeroclaw_gateway::AppState;
-use crate::hasn_chat_db::{ContactRecord, HasnChatDb};
-use crate::hasn_router::MessageRouter;
+use crate::hasn_bridge::chat_db::{ContactRecord, HasnChatDb};
+use crate::hasn_bridge::router::MessageRouter;
 use hasn_client_core::api::HasnApiClient;
 use std::sync::Arc;
 

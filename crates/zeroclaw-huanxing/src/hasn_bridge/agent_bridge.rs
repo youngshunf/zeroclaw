@@ -5,8 +5,8 @@
 //! 2. 构建标注化的注入提示词，让 Agent 能区分消息来源
 //! 3. 通过 Agent 运行时执行 turn 并将回复发回 HASN 网络
 
-use crate::hasn_chat_db::HasnChatDb;
-use crate::hasn_connector::HasnAgentSession;
+use crate::hasn_bridge::chat_db::HasnChatDb;
+use crate::hasn_bridge::connector::HasnAgentSession;
 use crate::agent_bridge::global_bridge;
 use anyhow::Context;
 use hasn_client_core::model::{WsMessagePayload, build_send};
@@ -301,7 +301,7 @@ impl HasnAgentBridge {
                     }
 
                     let msg_id_str = format!("msg_{}", uuid::Uuid::new_v4());
-                    let record = crate::hasn_chat_db::ChatMessageRecord {
+                    let record = crate::hasn_bridge::chat_db::ChatMessageRecord {
                         id: 0,
                         message_id: msg_id_str,
                         conversation_id: session_id.clone(),

@@ -24,8 +24,8 @@
 //! `build_local_loopback_payload_dispatches_without_errors` + Task 2 的
 //! `outbound_same_owner_skips_ws`），无重复覆盖缺口。
 
-use zeroclaw_huanxing::hasn_chat_db::{ChatMessageRecord, HasnChatDb};
-use zeroclaw_huanxing::hasn_connector::test_harness as legacy_harness;
+use zeroclaw_huanxing::hasn_bridge::chat_db::{ChatMessageRecord, HasnChatDb};
+use zeroclaw_huanxing::hasn_bridge::connector::test_harness as legacy_harness;
 
 #[tokio::test]
 async fn owner_to_own_agent_roundtrip_is_local_only() {

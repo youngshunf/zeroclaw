@@ -1798,6 +1798,7 @@ async fn main() -> Result<()> {
                     None,
                 );
                 match zeroclaw_huanxing::hasn_bridge::initialize_embedded_huanxing_node(&config)
+                    .await
                 {
                     Ok(node) => {
                         match zeroclaw_huanxing::hasn_bridge::register_huanxing_native_spawner(

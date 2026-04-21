@@ -19,6 +19,15 @@ pub mod spawner;
 pub mod sync;
 pub mod tools;
 
+// Phase 14.2 M3：从 `crates/zeroclaw-huanxing/src/hasn_{chat_db,connector,router}.rs`
+// 物理搬迁进来的 legacy 模型层。桌面端本地 `~/.huanxing/users/*/data/hasn_chat.db`
+// 仍由 chat_db 管理；WS 入站/出站热路径已由 hasn-node 接管（见 spawner.rs
+// 顶部 cutover 表）。这三个模块保留在 hasn_bridge 命名空间下是为了满足
+// 14.9 验收：`huanxing-zeroclaw/src/` 零 `hasn_` 前缀模块（除 `hasn_bridge/`）。
+pub mod chat_db;
+pub mod connector;
+pub mod router;
+
 // Phase 6+ 占位
 pub mod discovery;
 pub mod provisioner;

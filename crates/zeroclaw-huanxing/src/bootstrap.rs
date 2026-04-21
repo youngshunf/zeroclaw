@@ -3,7 +3,7 @@ use tracing::{error, info, warn};
 
 use crate::context_resolver::MessageContextResolver;
 use crate::db::{TenantDb, UserFilter};
-use crate::hasn_chat_db::HasnChatDb;
+use crate::hasn_bridge::chat_db::HasnChatDb;
 use crate::MultiTenantResolver;
 use crate::TenantRouter;
 use zeroclaw_config::schema::Config;

@@ -498,7 +498,7 @@ async fn handle_ws_frame(
                 }
 
                 if is_local {
-                    let router = crate::hasn_router::MessageRouter::new(
+                    let router = crate::hasn_bridge::router::MessageRouter::new(
                         state.clone(),
                         ws.clone(),
                         sessions.clone(),
