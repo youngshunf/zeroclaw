@@ -102,6 +102,20 @@ impl SqliteSessionBackend {
             );
         }
 
+        // Migration: add `metadata` column to `sessions` (JSON string, nullable).
+        // api_sessions.rs 分页查询 SELECT id, role, content, created_at, metadata FROM sessions
+        // 依赖此列；未加时会报 `no such column: metadata` 导致 ChatLayout 历史加载失败。
+        let has_sessions_metadata: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('sessions') WHERE name = 'metadata'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+        if !has_sessions_metadata {
+            let _ = conn.execute("ALTER TABLE sessions ADD COLUMN metadata TEXT", []);
+        }
+
         Ok(Self {
             conn: Mutex::new(conn),
             db_path,
