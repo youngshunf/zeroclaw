@@ -312,9 +312,7 @@ impl HasnAgentBridge {
                             .unwrap_or_default(),
                         status: "delivered".to_string(),
                         is_outgoing: true,
-                        created_at: chrono::Local::now()
-                            .format("%Y-%m-%d %H:%M:%S")
-                            .to_string(),
+                        created_at: chrono::Utc::now().to_rfc3339(),
                     };
                     if let Err(err) = chat_db.insert_message(&record).await {
                         tracing::error!(

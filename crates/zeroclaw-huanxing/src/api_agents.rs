@@ -1062,17 +1062,7 @@ pub async fn upsert_huanxing_native_local_agent(
         .huanxing
         .resolve_owner_dir(&config_dir, record.tenant_dir.as_deref());
     let workspace_config = load_workspace_config(&workspace).await;
-    let display_name = workspace_config
-        .display_name
-        .clone()
-        .or_else(|| workspace_config.name.clone())
-        .or_else(|| {
-            workspace_config
-                .identity
-                .as_ref()
-                .and_then(|identity| identity.name.clone())
-        })
-        .unwrap_or_else(|| agent_name.to_string());
+    // US-003 后 local_agents 不再承载 display_name —— 身份信息由 hasn_contacts 表承担。
     let system_prompt_path = {
         let path = workspace.join("SOUL.md");
         path.exists().then(|| path.display().to_string())
@@ -1101,7 +1091,6 @@ pub async fn upsert_huanxing_native_local_agent(
         &owner_id,
         Some(hasn_id),
         agent_name,
-        &display_name,
         "huanxing_native",
         Some("assistant"),
         Some(&workspace_path),

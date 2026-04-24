@@ -489,7 +489,6 @@ mod tests {
                 owner_id: "h_owner_demo".to_string(),
                 hasn_id: Some(agent_hasn_id.to_string()),
                 agent_name: "default".to_string(),
-                display_name: "Default Agent".to_string(),
                 source_type: "huanxing_native".to_string(),
                 role: Some("assistant".to_string()),
                 workspace_path: None,
@@ -759,17 +758,29 @@ mod tests {
         let chat_db = Arc::new(
             ChatStorage::open(&temp.path().join("hasn-node").join("hasn_db.sqlite")).unwrap(),
         );
+        let now = chrono::Utc::now().to_rfc3339();
         chat_db
             .upsert_contact(&hasn_node::chat_db::ContactRecord {
                 owner_id: "h_owner_demo".to_string(),
-                hasn_id: "u_blocked".to_string(),
-                nickname: Some("Blocked".to_string()),
-                avatar_url: None,
-                contact_type: "human".to_string(),
+                peer_hasn_id: "u_blocked".to_string(),
+                peer_owner_id: None,
+                peer_type: "human".to_string(),
                 relation_type: "social".to_string(),
                 trust_level: 0,
+                scope: None,
+                custom_permissions: "{}".to_string(),
+                nickname: Some("Blocked".to_string()),
+                avatar_url: None,
+                tags: None,
+                subscription: false,
                 status: "blocked".to_string(),
-                created_at: "2026-04-19 00:00:00".to_string(),
+                request_message: None,
+                auto_expire: None,
+                connected_at: None,
+                last_interaction_at: None,
+                interaction_count: 0,
+                created_at: now.clone(),
+                updated_at: now,
             })
             .await
             .unwrap();
