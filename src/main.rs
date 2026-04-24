@@ -1010,6 +1010,9 @@ async fn main() -> Result<()> {
     // 运维不易抓取；本段同时把所有 tracing 事件写到
     // `{config_dir}/logs/huanxing.log.YYYY-MM-DD` 日滚动文件。
     // 日志目录解析顺序：$ZEROCLAW_CONFIG_DIR → CLI `--config-dir[=]` → ~/.huanxing。
+    //
+    // TODO（2026-04-21 上游合并）：上游引入 ACP 模式 stdio 污染保护
+    // （warn 默认级别 + stderr 写入器），需另起 commit 适配我们的 file appender 架构。
     let log_dir = {
         let mut resolved: Option<PathBuf> = std::env::var("ZEROCLAW_CONFIG_DIR")
             .ok()
@@ -2524,19 +2527,16 @@ async fn main() -> Result<()> {
                 } else if let Some(val) = value {
                     config.set_prop(&path, &val)?;
                 } else {
-                    let variants = config
-                        .prop_fields()
-                        .into_iter()
-                        .find(|f| f.name == path)
-                        .and_then(|info| {
-                            let get_variants = info.enum_variants?;
-                            let variants = get_variants();
-                            let current_index = variants
-                                .iter()
-                                .position(|v| v == &info.display_value)
-                                .unwrap_or(0);
-                            Some((variants, current_index))
-                        });
+                    let field_info = config.prop_fields().into_iter().find(|f| f.name == path);
+                    let variants = field_info.as_ref().and_then(|info| {
+                        let get_variants = info.enum_variants?;
+                        let variants = get_variants();
+                        let current_index = variants
+                            .iter()
+                            .position(|v| v == &info.display_value)
+                            .unwrap_or(0);
+                        Some((variants, current_index))
+                    });
                     if let Some((variants, current_index)) = variants {
                         let selected = Select::new()
                             .with_prompt(format!("Select value for {path}"))
@@ -2544,6 +2544,42 @@ async fn main() -> Result<()> {
                             .default(current_index)
                             .interact()?;
                         config.set_prop(&path, &variants[selected])?;
+                    } else if field_info
+                        .as_ref()
+                        .is_some_and(|f| f.kind == crate::config::PropKind::StringArray)
+                    {
+                        let current_items: Vec<String> = field_info
+                            .as_ref()
+                            .and_then(|f| {
+                                let raw = toml::from_str::<toml::Value>(&format!(
+                                    "v = {}",
+                                    if f.display_value == "<unset>" {
+                                        "[]".to_string()
+                                    } else {
+                                        f.display_value.clone()
+                                    }
+                                ))
+                                .ok();
+                                raw.and_then(|v| v.get("v").cloned())
+                                    .and_then(|v| v.as_array().cloned())
+                                    .map(|arr| {
+                                        arr.iter()
+                                            .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                                            .collect()
+                                    })
+                            })
+                            .unwrap_or_default();
+                        let editor_content = current_items.join("\n");
+                        let edited = dialoguer::Editor::new()
+                            .edit(&editor_content)?
+                            .unwrap_or(editor_content);
+                        let val = edited
+                            .lines()
+                            .map(|l| l.trim())
+                            .filter(|l| !l.is_empty())
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        config.set_prop(&path, &val)?;
                     } else {
                         anyhow::bail!("Value required. Usage: zeroclaw config set {path} <value>");
                     }
@@ -2668,204 +2704,7 @@ async fn main() -> Result<()> {
 fn build_wizard_callbacks() -> onboard::WizardCallbacks {
     onboard::WizardCallbacks {
         #[cfg(feature = "hardware")]
-        hardware_setup: Some(Box::new(|| {
-            use console::style;
-            use dialoguer::{Confirm, Select};
-
-            println!(
-                "  {} {}",
-                style("ℹ").dim(),
-                style("ZeroClaw can talk to physical hardware (LEDs, sensors, motors).").dim()
-            );
-            println!(
-                "  {} {}",
-                style("ℹ").dim(),
-                style("Scanning for connected devices...").dim()
-            );
-            println!();
-
-            let devices = zeroclaw_hardware::discover_hardware();
-
-            if devices.is_empty() {
-                println!(
-                    "  {} {}",
-                    style("ℹ").dim(),
-                    style("No hardware devices detected on this system.").dim()
-                );
-                println!(
-                    "  {} {}",
-                    style("ℹ").dim(),
-                    style("You can enable hardware later in config.toml under [hardware].").dim()
-                );
-            } else {
-                println!(
-                    "  {} {} device(s) found:",
-                    style("✓").green().bold(),
-                    devices.len()
-                );
-                for device in &devices {
-                    let detail = device
-                        .detail
-                        .as_deref()
-                        .map(|d| format!(" ({d})"))
-                        .unwrap_or_default();
-                    let path = device
-                        .device_path
-                        .as_deref()
-                        .map(|p| format!(" → {p}"))
-                        .unwrap_or_default();
-                    println!(
-                        "    {} {}{}{} [{}]",
-                        style("›").cyan(),
-                        style(&device.name).green(),
-                        style(&detail).dim(),
-                        style(&path).dim(),
-                        style(device.transport.to_string()).cyan()
-                    );
-                }
-            }
-            println!();
-
-            let options = vec![
-                "🚀 Native — direct GPIO on this Linux board (Raspberry Pi, Orange Pi, etc.)",
-                "🔌 Tethered — control an Arduino/ESP32/Nucleo plugged into USB",
-                "🔬 Debug Probe — flash/read MCUs via SWD/JTAG (probe-rs)",
-                "☁️  Software Only — no hardware access (default)",
-            ];
-
-            let recommended = zeroclaw_hardware::recommended_wizard_default(&devices);
-
-            let choice = Select::new()
-                .with_prompt("  How should ZeroClaw interact with the physical world?")
-                .items(&options)
-                .default(recommended)
-                .interact()?;
-
-            let mut hw_config = zeroclaw_hardware::config_from_wizard_choice(choice, &devices);
-
-            use zeroclaw_config::schema::HardwareTransport;
-
-            // Serial: pick a port if multiple found
-            if hw_config.transport_mode() == HardwareTransport::Serial {
-                let serial_devices: Vec<&zeroclaw_hardware::DiscoveredDevice> = devices
-                    .iter()
-                    .filter(|d| d.transport == HardwareTransport::Serial)
-                    .collect();
-
-                if serial_devices.len() > 1 {
-                    let port_labels: Vec<String> = serial_devices
-                        .iter()
-                        .map(|d| {
-                            format!(
-                                "{} ({})",
-                                d.device_path.as_deref().unwrap_or("unknown"),
-                                d.name
-                            )
-                        })
-                        .collect();
-
-                    let port_idx = Select::new()
-                        .with_prompt("  Multiple serial devices found — select one")
-                        .items(&port_labels)
-                        .default(0)
-                        .interact()?;
-
-                    hw_config.serial_port = serial_devices[port_idx].device_path.clone();
-                } else if serial_devices.is_empty() {
-                    let manual_port: String = dialoguer::Input::new()
-                        .with_prompt("  Serial port path (e.g. /dev/ttyUSB0)")
-                        .default("/dev/ttyUSB0".into())
-                        .interact_text()?;
-                    hw_config.serial_port = Some(manual_port);
-                }
-
-                // Baud rate
-                let baud_options = vec![
-                    "115200 (default, recommended)",
-                    "9600 (legacy Arduino)",
-                    "57600",
-                    "230400",
-                    "Custom",
-                ];
-                let baud_idx = Select::new()
-                    .with_prompt("  Serial baud rate")
-                    .items(&baud_options)
-                    .default(0)
-                    .interact()?;
-
-                hw_config.baud_rate = match baud_idx {
-                    1 => 9600,
-                    2 => 57600,
-                    3 => 230_400,
-                    4 => {
-                        let custom: String = dialoguer::Input::new()
-                            .with_prompt("  Custom baud rate")
-                            .default("115200".into())
-                            .interact_text()?;
-                        custom.parse::<u32>().unwrap_or(115_200)
-                    }
-                    _ => 115_200,
-                };
-            }
-
-            // Probe: ask for target chip
-            if hw_config.transport_mode() == HardwareTransport::Probe
-                && hw_config.probe_target.is_none()
-            {
-                let target: String = dialoguer::Input::new()
-                    .with_prompt("  Target MCU chip (e.g. STM32F411CEUx, nRF52840_xxAA)")
-                    .default("STM32F411CEUx".into())
-                    .interact_text()?;
-                hw_config.probe_target = Some(target);
-            }
-
-            // Datasheet RAG
-            if hw_config.enabled {
-                let datasheets = Confirm::new()
-                    .with_prompt(
-                        "  Enable datasheet RAG? (index PDF schematics for AI pin lookups)",
-                    )
-                    .default(true)
-                    .interact()?;
-                hw_config.workspace_datasheets = datasheets;
-            }
-
-            // Summary
-            if hw_config.enabled {
-                let transport_label = match hw_config.transport_mode() {
-                    HardwareTransport::Native => "Native GPIO".to_string(),
-                    HardwareTransport::Serial => format!(
-                        "Serial → {} @ {} baud",
-                        hw_config.serial_port.as_deref().unwrap_or("?"),
-                        hw_config.baud_rate
-                    ),
-                    HardwareTransport::Probe => format!(
-                        "Probe (SWD/JTAG) → {}",
-                        hw_config.probe_target.as_deref().unwrap_or("?")
-                    ),
-                    HardwareTransport::None => "Software Only".to_string(),
-                };
-
-                println!(
-                    "  {} Hardware: {} | datasheets: {}",
-                    style("✓").green().bold(),
-                    style(&transport_label).green(),
-                    if hw_config.workspace_datasheets {
-                        style("on").green().to_string()
-                    } else {
-                        style("off").dim().to_string()
-                    }
-                );
-            } else {
-                println!(
-                    "  {} Hardware: {}",
-                    style("✓").green().bold(),
-                    style("disabled (software only)").dim()
-                );
-            }
-
-            Ok(hw_config)
-        })),
+        hardware_setup: Some(Box::new(zeroclaw_hardware::wizard::run_setup)),
         #[cfg(not(feature = "hardware"))]
         hardware_setup: None,
 

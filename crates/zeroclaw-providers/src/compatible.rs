@@ -3346,7 +3346,7 @@ mod tests {
             ChatMessage::assistant("post-user"),
         ];
 
-        let output = OpenAiCompatibleProvider::flatten_system_messages(&input, false);
+        let output = OpenAiCompatibleProvider::flatten_system_messages(&input, true);
         assert_eq!(output.len(), 3);
         assert_eq!(output[0].role, "assistant");
         assert_eq!(output[0].content, "ack");
@@ -3364,7 +3364,7 @@ mod tests {
             ChatMessage::assistant("ack"),
         ];
 
-        let output = OpenAiCompatibleProvider::flatten_system_messages(&input, false);
+        let output = OpenAiCompatibleProvider::flatten_system_messages(&input, true);
         assert_eq!(output.len(), 2);
         assert_eq!(output[0].role, "user");
         assert_eq!(output[0].content, "core policy");
@@ -3958,7 +3958,7 @@ mod tests {
             ChatMessage::tool(r#"{"ok":true}"#),
         ];
 
-        let flattened = OpenAiCompatibleProvider::flatten_system_messages(&messages, false);
+        let flattened = OpenAiCompatibleProvider::flatten_system_messages(&messages, true);
         assert_eq!(flattened.len(), 3);
         assert_eq!(flattened[0].role, "assistant");
         assert_eq!(
@@ -3977,7 +3977,7 @@ mod tests {
             ChatMessage::system("Synthetic system"),
         ];
 
-        let flattened = OpenAiCompatibleProvider::flatten_system_messages(&messages, false);
+        let flattened = OpenAiCompatibleProvider::flatten_system_messages(&messages, true);
         assert_eq!(flattened.len(), 2);
         assert_eq!(flattened[0].role, "user");
         assert_eq!(flattened[0].content, "Synthetic system");
