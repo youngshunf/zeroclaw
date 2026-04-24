@@ -71,6 +71,16 @@ impl Database {
                 tags,
                 status: row.get(10)?,
                 connected_at: row.get(11)?,
+                // US-004：二级缓存旧 contacts 表不保存以下字段；保留默认值，
+                // 写入路径统一走 hasn-node HTTP 同步链路。
+                peer_owner_id: None,
+                custom_permissions: None,
+                scope: None,
+                subscription: false,
+                request_message: None,
+                auto_expire: None,
+                last_interaction_at: None,
+                interaction_count: 0,
             })
         })?;
 
