@@ -42,9 +42,12 @@ CREATE INDEX IF NOT EXISTS idx_msg_conv ON messages(conversation_id, created_at 
 CREATE INDEX IF NOT EXISTS idx_msg_from_owner ON messages(from_owner_id);
 CREATE INDEX IF NOT EXISTS idx_msg_send_status ON messages(send_status) WHERE send_status IN ('sending', 'failed');
 
--- 联系人表
+-- 联系人表（US-006：新增 owner_id 列，UNIQUE 从 (peer_hasn_id, relation_type)
+-- 扩展到 (owner_id, peer_hasn_id, relation_type)，与 hasn-node contacts 表和
+-- 服务端 hasn_contacts 表保持三层 UNIQUE 语义一致）
 CREATE TABLE IF NOT EXISTS contacts (
     id              INTEGER PRIMARY KEY,
+    owner_id        TEXT NOT NULL DEFAULT '',
     peer_hasn_id    TEXT NOT NULL,
     peer_star_id    TEXT NOT NULL,
     peer_name       TEXT NOT NULL,
@@ -58,7 +61,7 @@ CREATE TABLE IF NOT EXISTS contacts (
     status          TEXT DEFAULT 'pending',
     connected_at    TEXT,
     updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(peer_hasn_id, relation_type)
+    UNIQUE(owner_id, peer_hasn_id, relation_type)
 );
 
 -- 同步游标表
